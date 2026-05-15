@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>台股公司查詢 · TWStock</title>
+<link rel="preconnect" href="https://api.fontshare.com" />
+<link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&f[]=jetbrains-mono@400,500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5">
+      <path d="M4 24 L12 14 L18 20 L28 8" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="28" cy="8" r="2" fill="currentColor" stroke="none"/>
+    </svg>
+    <span>TWStock Query</span>
+  </div>
+  <div class="hint">免費公開來源 · TWSE / TPEx / FinMind</div>
+</header>
+
+<main>
+  <section class="hero">
+    <h1>台灣上市櫃公司資訊查詢</h1>
+    <p class="sub">輸入股票代號或公司名稱，可指定基準日（as_of）回推當日的 TTM / 年化財務數據。</p>
+    <form id="searchForm" class="search">
+      <input id="kw" type="text" placeholder="例如 2330、台積電、聯發科" autocomplete="off" />
+      <input id="asof" type="date" />
+      <button type="submit">查詢</button>
+    </form>
+    <div id="suggest" class="suggest"></div>
+  </section>
+
+  <section id="result" class="result hidden"></section>
+  <section id="empty" class="empty">
+    <p>常用範例：<a href="#" data-q="2330">2330 台積電</a> · <a href="#" data-q="2454">2454 聯發科</a> · <a href="#" data-q="2317">2317 鴻海</a> · <a href="#" data-q="2412">2412 中華電</a> · <a href="#" data-q="6488">6488 環球晶</a></p>
+  </section>
+</main>
+
+<footer>
+  <span>資料來源：</span>
+  <a href="https://openapi.twse.com.tw/" target="_blank" rel="noopener">TWSE OpenAPI</a>
+  ·
+  <a href="https://www.tpex.org.tw/openapi/" target="_blank" rel="noopener">TPEx OpenAPI</a>
+  ·
+  <a href="https://finmind.github.io/" target="_blank" rel="noopener">FinMind</a>
+</footer>
+
+<script src="./app.js"></script>
+</body>
+</html>
