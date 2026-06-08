@@ -441,3 +441,122 @@ class ChainResponse(BaseModel):
             "再列出該段位下的 `ic_link_{top_code}` 節點。"
         ),
     )
+
+
+# =====================================================================
+# 6 個拆分後的獨立 endpoints
+# =====================================================================
+class CompanyBasicResponse(BaseModel):
+    """`GET /api/company/{stock_id}/basic` 回應。"""
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否找到這家公司的上市/上櫃基本資料。")
+    stock_id: str = Field(..., description="查詢使用的股票代號。")
+    market: Optional[str] = Field(None, description="`上市` / `上櫃`。")
+    company_name: Optional[str] = Field(None, description=_TWSE_BASIC_DESC + "。`公司名稱` / " + _TPEX_BASIC_DESC + " `CompanyName`。")
+    short_name: Optional[str] = Field(None, description="公司簡稱。`公司簡稱` / `CompanyAbbreviation`。")
+    english_name: Optional[str] = Field(None, description="英文簡稱。`英文簡稱` / `Symbol`。")
+    tax_id: Optional[str] = Field(None, description="營利事業統一編號（8 碼）。`營利事業統一編號` / `UnifiedBusinessNo.`。")
+    paid_in_capital: Optional[int] = Field(None, description="實收資本額（新台幣元）。`實收資本額` / `Paidin.Capital.NTDollars`，字串去逗號轉 int。")
+    industry_code: Optional[str] = Field(None, description="TWSE/TPEx 產業別代碼。")
+    industry_name: Optional[str] = Field(None, description="產業別中文名（代碼經 `app/industry.py` 對照表轉換）。")
+    general_manager: Optional[str] = Field(None, description="總經理。")
+    chairman: Optional[str] = Field(None, description="董事長。")
+    incorporation_date: Optional[str] = Field(None, description="公司成立日（民國年或西元統一轉 `YYYY-MM-DD`）。")
+    listing_date: Optional[str] = Field(None, description="上市/上櫃日期。")
+    website: Optional[str] = Field(None, description="公司網址。")
+    address: Optional[str] = Field(None, description="公司住址。")
+    source: Optional[str] = Field(None, description="本筆資料來源註記。")
+    error: Optional[str] = Field(None, description="查無資料時的說明（作為 200 + found=false 返回者的補充）。")
+
+
+class BusinessItemsResponse(BaseModel):
+    """`GET /api/company/{stock_id}/business-items` 回應。"""
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否找到公司。")
+    stock_id: str = Field(..., description="查詢股票代號。")
+    tax_id: Optional[str] = Field(None, description="營利事業統一編號（由 TWSE/TPEx 基本資料讀出，再用來查商工 API）。")
+    narrative: list[str] = Field(
+        default_factory=list,
+        description=(
+            "公司自行撰寫的敗述條目。\n" + _GCIS_DESC + "\n"
+            "→ `Cmp_Business` 陣列中 `Business_Item` 為空字串的元素的 `Business_Item_Desc`，去除前綴序號。"
+        ),
+    )
+    categories: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "中華民國行業標準分類代碼。\n" + _GCIS_DESC + "\n"
+            "→ `Cmp_Business` 陣列中 `Business_Item` 為純行業代碼的元素，輸出 `{code, desc}`。"
+        ),
+    )
+    source: Optional[str] = Field(None, description="本筆資料來源註記。")
+    error: Optional[str] = Field(None, description="查無資料時的說明。")
+
+
+class FinancialsResponse(BaseModel):
+    """`GET /api/company/{stock_id}/financials` 回應。"""
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否有資料。")
+    stock_id: str = Field(..., description="查詢股票代號。")
+    as_of: str = Field(..., description="查詢基準日。")
+    eps: EpsSection = Field(..., description="EPS 區塊（FinMind `TaiwanStockFinancialStatements` `type='EPS'`，最近 4 季加總）。")
+    net_income: NetIncomeSection = Field(..., description="稅後淨利區塊（`type='IncomeAfterTaxes'`）。")
+    operating_margin_pct: Optional[float] = Field(
+        None,
+        description="營業利潤率 %。`OperatingIncome(TTM) / Revenue(TTM) × 100`，兩端都來自 FinMind `TaiwanStockFinancialStatements`。",
+    )
+    revenue_ttm_from_financial_statements: Optional[float] = Field(
+        None,
+        description="從季財報 `Revenue` 加總出來的 TTM 營收（與 `revenue.ttm_value` 來源不同；外顯出來供比對、用於算營業利潤率）。",
+    )
+    source: Optional[str] = Field(None, description="本筆資料來源註記。")
+
+
+class RevenueResponse(BaseModel):
+    """`GET /api/company/{stock_id}/revenue` 回應。"""
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否有資料。")
+    stock_id: str = Field(..., description="查詢股票代號。")
+    as_of: str = Field(..., description="查詢基準日。")
+    latest_month_label: Optional[str] = Field(None, description="最近一個月的年/月標籤（例 `2026/04`）。")
+    latest_month_value: Optional[int] = Field(None, description="最近一個月營收（新台幣元）。")
+    latest_month_yoy_pct: Optional[float] = Field(None, description="該月年增率 %。")
+    ttm_value: Optional[int] = Field(None, description="最近 12 個完整月份營收加總（TTM 月營收）。")
+    ttm_yoy_pct: Optional[float] = Field(None, description="TTM 營收年增率：最近 12 月 vs. 再往前 12 月。")
+    source: Optional[str] = Field(None, description="本筆資料來源註記。")
+
+
+class DividendResponse(BaseModel):
+    """`GET /api/company/{stock_id}/dividend` 回應。"""
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否有資料。")
+    stock_id: str = Field(..., description="查詢股票代號。")
+    as_of: str = Field(..., description="查詢基準日。")
+    dividend: Optional[DividendSection] = Field(
+        None,
+        description="「除息日 ≤ as_of」最後一次股利；FinMind `TaiwanStockDividend`。無合適股利時為 null。",
+    )
+    source: Optional[str] = Field(None, description="本筆資料來源註記。")
+
+
+class CompanyValueChainResponse(BaseModel):
+    """`GET /api/company/{stock_id}/value-chain` 回應。"""
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否有資料。")
+    stock_id: str = Field(..., description="查詢股票代號。")
+    status: str = Field(..., description="載入狀態：`ready` / `loading` / `unavailable`。")
+    memberships: list[ChainMembership] = Field(
+        default_factory=list,
+        description="本公司出現在哪些產業鏈、上中下游、子分類。",
+    )
+    neighbors_by_chain: dict[str, ChainNeighbors] = Field(
+        default_factory=dict,
+        description="依產業鏈代碼分組，列出該鏈所有上/中/下游公司。",
+    )
+    source: Optional[str] = Field(None, description="本筆資料來源註記。")

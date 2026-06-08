@@ -15,13 +15,28 @@ from pathlib import Path
 
 from . import icchain
 from .schemas import (
+    BusinessItemsResponse,
     ChainResponse,
     ChainsListResponse,
+    CompanyBasicResponse,
     CompanyResponse,
+    CompanyValueChainResponse,
+    DividendResponse,
+    FinancialsResponse,
     HealthResponse,
+    RevenueResponse,
     SearchResponse,
 )
-from .service import query, search_companies
+from .service import (
+    query,
+    query_basic,
+    query_business_items,
+    query_dividend,
+    query_financials,
+    query_revenue,
+    query_value_chain,
+    search_companies,
+)
 
 # ---- OpenAPI 描述 ----
 API_DESCRIPTION = """
@@ -55,7 +70,9 @@ app = FastAPI(
         "url": "https://ic.tpex.org.tw/",
     },
     openapi_tags=[
-        {"name": "Company", "description": "公司資料 / 搜尋"},
+        {"name": "Company (aggregated)", "description": "聚合 endpoint：一次拿齊六項資訊"},
+        {"name": "Company (per-source)", "description": "按資料源拆分的 6 個獨立 endpoint"},
+        {"name": "Search", "description": "公司搜尋"},
         {"name": "Value Chain", "description": "產業價值鏈（櫃買中心 ic.tpex.org.tw）"},
         {"name": "System", "description": "健康檢查"},
     ],
@@ -159,7 +176,7 @@ async def api_chain(ic_code: str):
 @app.get(
     "/api/search",
     response_model=SearchResponse,
-    tags=["Company"],
+    tags=["Search"],
     summary="模糊搜尋公司（代號 / 中文名 / 簡稱 / 英文簡稱）",
     description=(
         "**資料源**：\n"
@@ -185,9 +202,19 @@ async def api_search(
 @app.get(
     "/api/company/{stock_id}",
     response_model=CompanyResponse,
-    tags=["Company"],
-    summary="查詢一家公司的基本資料 + KPI + 產業價值鏈定位",
+    tags=["Company (aggregated)"],
+    summary="一次查詢一家公司的六項資訊（聚合 endpoint）",
     description=(
+        "本 endpoint 為「聚合 endpoint」，內部平行呼叫以下 6 個獨立 endpoint 後組合回傳：\n"
+        "| 資料區塊 | 獨立 endpoint |\n"
+        "| --- | --- |\n"
+        "| `basic.*`（除 business_items） | `GET /api/company/{stock_id}/basic` |\n"
+        "| `basic.business_items` | `GET /api/company/{stock_id}/business-items` |\n"
+        "| `eps` / `net_income` / `operating_margin_pct` | `GET /api/company/{stock_id}/financials` |\n"
+        "| `revenue` | `GET /api/company/{stock_id}/revenue` |\n"
+        "| `dividend` | `GET /api/company/{stock_id}/dividend` |\n"
+        "| `value_chain` | `GET /api/company/{stock_id}/value-chain` |\n\n"
+        "需要微服務式各自拉資料、或快取粒度更細的使用者請改用上表列出的 6 個 endpoint。以下是各區塊與上游資料源的對應說明：\n\n"
         "整合 5 個免費公開資料源，回傳一份綜合資料。各區塊上游與處理規則：\n\n"
         "### 1. `basic.*` — 公司基本資料\n"
         "- 來源：**TWSE OpenAPI t187ap03_L** 與 **TPEx OpenAPI mopsfin_t187ap03_O**。\n"
@@ -243,6 +270,159 @@ async def api_company(
     if not result.get("found"):
         raise HTTPException(status_code=404, detail=result.get("error", "查無資料"))
     return result
+
+
+# =====================================================================
+# 6 個拆分後的獨立 endpoint
+# =====================================================================
+_AS_OF_DESC = (
+    "查詢基準日 `YYYY-MM-DD`；省略則用今天。回傳的 TTM/月營收皆以此日往前回推。"
+)
+
+
+@app.get(
+    "/api/company/{stock_id}/basic",
+    response_model=CompanyBasicResponse,
+    tags=["Company (per-source)"],
+    summary="公司基本資料（TWSE / TPEx OpenAPI）",
+    description=(
+        "**資料來源網站正式名稱**：證券交易所 (TWSE) OpenAPI、櫃買中心 (TPEx) OpenAPI。\n\n"
+        "**資料源 API URL 與呼叫方法**：\n"
+        "- `GET https://openapi.twse.com.tw/v1/opendata/t187ap03_L`（上市）\n"
+        "- `GET https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O`（上櫃）\n"
+        "- Input：無參數、無 token。\n"
+        "- Output：JSON Array，每筆是一家公司的資料 dict。\n\n"
+        "**處理邏輯**：\n"
+        "1. 並行拉上述兩個端點並合併（24h TTL 快取）為 `stock_id -> 公司資料` dict。\n"
+        "2. 本 endpoint 隨 stock_id 查表。\n"
+        "3. 中/英文 key 統一到內部標準欄位；民國年日期轉 `YYYY-MM-DD`；`industry_code` 透過 `app/industry.py` 轉中文。\n\n"
+        "查無公司時：200 + `found=false` + `error`。"
+    ),
+)
+async def api_company_basic(stock_id: str):
+    return await query_basic(stock_id)
+
+
+@app.get(
+    "/api/company/{stock_id}/business-items",
+    response_model=BusinessItemsResponse,
+    tags=["Company (per-source)"],
+    summary="主要營業項目 / 所營事業（經濟部商工登記 GCIS）",
+    description=(
+        "**資料來源網站正式名稱**：經濟部商工登記公示資料 (GCIS) · 公司登記基本資料（資料集 `236EE382-...025E7C`）。\n\n"
+        "**資料源 API URL 與呼叫方法**：\n"
+        "- `GET https://data.gcis.nat.gov.tw/od/data/api/236EE382-4942-41A9-BD03-CA0709025E7C"
+        "?$format=json&$filter=Business_Accounting_NO eq {TAX_ID}`\n"
+        "- Input：OData filter 帶公司統一編號（`$` 需 URL-encode 為 `%24`）。\n"
+        "- Output：JSON Array，內含 `Cmp_Business` 陣列。\n\n"
+        "**處理邏輯**：\n"
+        "1. 先從 TWSE/TPEx 基本資料中讀出 `tax_id`。\n"
+        "2. 以 `tax_id` 並帶 OData filter 呼叫商工 API（24h 快取）。\n"
+        "3. `Cmp_Business` 中 `Business_Item=''` 列為「敗述條目」，其他列為「行業分類」。\n"
+        "4. 去除「１．」「2.」等前綴序號後輸出。"
+    ),
+)
+async def api_company_business_items(stock_id: str):
+    return await query_business_items(stock_id)
+
+
+@app.get(
+    "/api/company/{stock_id}/financials",
+    response_model=FinancialsResponse,
+    tags=["Company (per-source)"],
+    summary="EPS / 淨利 / 營業利潤率（FinMind 季財報）",
+    description=(
+        "**資料來源網站正式名稱**：FinMind v4（免費 300 req/hr，無需 token）。\n\n"
+        "**資料源 API URL 與呼叫方法**：\n"
+        "- `GET https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements"
+        "&data_id={stock_id}&start_date={as_of-5y}&end_date={as_of}`\n"
+        "- Output：`{msg:'success', data:[{date, type, value}]}`。\n\n"
+        "**處理邏輯**：\n"
+        "1. 拉近 5 年資料（1h 快取）。\n"
+        "2. 轉為 `{date: {type: value}}` map。\n"
+        "3. `EPS` / `IncomeAfterTaxes` / `OperatingIncome` / `Revenue` 各別取 `date ≤ as_of` 最近 4 季 value 加總為 TTM；不足 4 季回 null。\n"
+        "4. `operating_margin_pct = OperatingIncome(TTM) / Revenue(TTM) × 100`。"
+    ),
+)
+async def api_company_financials(
+    stock_id: str,
+    as_of: str | None = Query(None, description=_AS_OF_DESC),
+):
+    return await query_financials(stock_id, as_of)
+
+
+@app.get(
+    "/api/company/{stock_id}/revenue",
+    response_model=RevenueResponse,
+    tags=["Company (per-source)"],
+    summary="月營收 + YoY + TTM（FinMind）",
+    description=(
+        "**資料來源網站正式名稱**：FinMind v4。\n\n"
+        "**資料源 API URL 與呼叫方法**：\n"
+        "- `GET https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue"
+        "&data_id={stock_id}&start_date={as_of-5y}&end_date={as_of}`\n"
+        "- Output：`data:[{date, revenue_year, revenue_month, revenue}]`。\n\n"
+        "**處理邏輯**：\n"
+        "1. 取 `date ≤ as_of` 排序後最新一筆 → `latest_month_*`。\n"
+        "2. 找去年同月計算 `latest_month_yoy_pct = (本月 - 去年同月) / 去年同月 × 100`。\n"
+        "3. 最近 12 個月加總 → `ttm_value`；再往前 12 個月加總 → 用來算 `ttm_yoy_pct`。\n"
+        "4. 月份不足長度時個別欄位回 null。"
+    ),
+)
+async def api_company_revenue(
+    stock_id: str,
+    as_of: str | None = Query(None, description=_AS_OF_DESC),
+):
+    return await query_revenue(stock_id, as_of)
+
+
+@app.get(
+    "/api/company/{stock_id}/dividend",
+    response_model=DividendResponse,
+    tags=["Company (per-source)"],
+    summary="股利資訊（FinMind Dividend）",
+    description=(
+        "**資料來源網站正式名稱**：FinMind v4。\n\n"
+        "**資料源 API URL 與呼叫方法**：\n"
+        "- `GET https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividend"
+        "&data_id={stock_id}&start_date={as_of-5y}&end_date={as_of}`\n"
+        "- Output：`data:[{year, date, CashEarningsDistribution, CashStatutorySurplus, "
+        "StockEarningsDistribution, StockStatutorySurplus, CashExDividendTradingDate, "
+        "StockExDividendTradingDate, ...}]`。\n\n"
+        "**處理邏輯**：\n"
+        "1. 依 `CashExDividendTradingDate` / `StockExDividendTradingDate` / `date` 依序選「除息日 ≤ as_of」最後一次。\n"
+        "2. 現金股利 = `CashEarningsDistribution + CashStatutorySurplus`；\n"
+        "   股票股利 = `StockEarningsDistribution + StockStatutorySurplus`。\n"
+        "3. 無合適股利時 `dividend=null`。"
+    ),
+)
+async def api_company_dividend(
+    stock_id: str,
+    as_of: str | None = Query(None, description=_AS_OF_DESC),
+):
+    return await query_dividend(stock_id, as_of)
+
+
+@app.get(
+    "/api/company/{stock_id}/value-chain",
+    response_model=CompanyValueChainResponse,
+    tags=["Company (per-source)"],
+    summary="產業價值鏈定位 + 上下游鄰居（櫃買中心）",
+    description=(
+        "**資料來源網站正式名稱**：櫃買中心 · 產業價值鏈資訊平台 <https://ic.tpex.org.tw/>。\n\n"
+        "**資料源 API URL 與呼叫方法**：\n"
+        "- `GET https://ic.tpex.org.tw/introduce.php?ic={IC_CODE}`（server-rendered HTML、無 JSON API）。\n"
+        "- Output：HTML 頁面，以 BeautifulSoup(lxml) 解析。\n\n"
+        "**處理邏輯**：\n"
+        "1. 首次查詢觸發 `ensure_loaded(background=True)`：以 semaphore=6 並行下載 47 條鏈頁面（~8 秒）。\n"
+        "2. 解析 `main_ic_panel` / `sc-ind-pnl_{top}` / `sc_company_{sub}` 結構；有 `<b>本國</b>`、跳過 `<b>外國</b>`。\n"
+        "3. 結果落盤至 `data/icchain.json`（TTL 7 天）。\n"
+        "4. 本 endpoint：以 `stk_code` 反查 `company_index` 取出 `memberships`；再由 `chain_tree[ic_code]` 走訪出 `neighbors_by_chain`。\n\n"
+        "**載入未完成時**：200 + `status='loading'` + `memberships=[]`。"
+    ),
+)
+async def api_company_value_chain(stock_id: str):
+    return await query_value_chain(stock_id)
 
 
 # =====================================================================

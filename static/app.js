@@ -17,6 +17,7 @@ const suggestEl = $("#suggest");
 // 預設今天
 asof.valueAsDate = new Date();
 
+// ---------- 共用 ----------
 const fmtInt = (n) =>
   n == null || isNaN(n) ? "—" : Number(n).toLocaleString("en-US");
 const fmtFloat = (n, digits = 2) =>
@@ -39,7 +40,6 @@ function fmtPct(p) {
 
 function gmLabel(s) {
   if (!s) return "總經理";
-  // TWSE 偶會在欄位前加職稱（總裁:、執行長:），呈現出來
   const m = s.match(/^(總裁|執行長|CEO)[:：]/i);
   return m ? `總經理 / ${m[1]}` : "總經理";
 }
@@ -48,6 +48,15 @@ function gmValue(s) {
   return s.replace(/^(總裁|執行長|CEO)[:：]\s*/i, "");
 }
 
+function escapeHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// ---------- 搜尋建議 ----------
 let searchTimer = null;
 kw.addEventListener("input", () => {
   clearTimeout(searchTimer);
@@ -87,100 +96,344 @@ document.querySelectorAll('.empty a[data-q]').forEach((a) =>
   })
 );
 
+// ---------- 主流程 ----------
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const q = kw.value.trim();
   if (!q) return;
-  // 若是純數字當作代號；否則先呼叫 search 拿第一筆
   let stockId = q;
   if (!/^\d{4,6}[A-Z]?$/.test(q)) {
     const r = await fetch(api(`/api/search?q=${encodeURIComponent(q)}&limit=1`));
     const data = await r.json();
     if (!data.results || data.results.length === 0) {
-      renderError(`查無「${q}」相關公司`);
+      renderFatalError(`查無「${q}」相關公司`);
       return;
     }
     stockId = data.results[0].stock_id;
   }
-  await loadCompany(stockId, asof.value);
+  await loadCompanyParallel(stockId, asof.value);
 });
 
-async function loadCompany(stockId, asOf) {
+function renderFatalError(msg) {
   emptyEl.classList.add("hidden");
   resultEl.classList.remove("hidden");
-  resultEl.innerHTML = `<div class="card"><div class="muted">查詢中…</div></div>`;
-  try {
-    const url = api(`/api/company/${encodeURIComponent(stockId)}${asOf ? `?as_of=${asOf}` : ""}`);
-    const r = await fetch(url);
-    if (!r.ok) {
-      const errBody = await r.json().catch(() => ({}));
-      renderError(errBody.detail || `HTTP ${r.status}`);
-      return;
+  resultEl.innerHTML = `<div class="card"><div class="error">${escapeHtml(msg)}</div></div>`;
+}
+
+/**
+ * 平行呼叫 6 個分項 endpoint，每張卡片各自獨立顯示載入/錯誤/結果。
+ * basic 是骨架的關鍵：拿到後立刻填頭部；其他 5 個卡片獨立更新。
+ */
+async function loadCompanyParallel(stockId, asOf) {
+  emptyEl.classList.add("hidden");
+  resultEl.classList.remove("hidden");
+
+  // 1. 立刻渲染所有區塊的 skeleton
+  resultEl.innerHTML = renderSkeleton(stockId, asOf);
+  resetSources();
+  resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  // 2. 平行呼叫六個 endpoint
+  const asOfQS = asOf ? `?as_of=${encodeURIComponent(asOf)}` : "";
+  const stockEnc = encodeURIComponent(stockId);
+
+  const endpoints = [
+    { key: "basic",         url: `/api/company/${stockEnc}/basic`,           asOf: false },
+    { key: "businessItems", url: `/api/company/${stockEnc}/business-items`,  asOf: false },
+    { key: "valueChain",    url: `/api/company/${stockEnc}/value-chain`,     asOf: false },
+    { key: "financials",    url: `/api/company/${stockEnc}/financials`,      asOf: true  },
+    { key: "revenue",       url: `/api/company/${stockEnc}/revenue`,         asOf: true  },
+    { key: "dividend",      url: `/api/company/${stockEnc}/dividend`,        asOf: true  },
+  ];
+
+  // 啟動 6 個非阻塞請求；每個獨立 then() 更新對應卡片
+  for (const ep of endpoints) {
+    const url = api(ep.url + (ep.asOf ? asOfQS : ""));
+    fetch(url)
+      .then(async (r) => {
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          updateCardError(ep.key, body.detail || `HTTP ${r.status}`);
+          return;
+        }
+        updateCard(ep.key, body, stockId);
+      })
+      .catch((e) => {
+        updateCardError(ep.key, e.message || "網路錯誤");
+      });
+  }
+}
+
+// ---------- Skeleton ----------
+function renderSkeleton(stockId, asOf) {
+  return `
+    <div class="card" id="card-basic" data-loading="1">
+      <div class="head skeleton-head">
+        <span class="code">${escapeHtml(stockId)}</span>
+        <span class="name skel skel-text" style="width:200px"></span>
+        <span class="market skel skel-text" style="width:48px"></span>
+        <span class="asof">基準日 ${escapeHtml(asOf || "—")}</span>
+      </div>
+      <div class="kv">${skelKvRows(12)}</div>
+    </div>
+
+    <div class="card" id="card-value-chain" data-loading="1">
+      <h3 class="section-title">產業鏈上下游定位</h3>
+      <div class="muted skel-line">載入中…</div>
+    </div>
+
+    <div class="card" id="card-business-items" data-loading="1">
+      <h3 class="section-title">主要營業項目（公司登記所營事業）</h3>
+      <div class="muted skel-line">載入中…</div>
+    </div>
+
+    <div class="card" id="card-financials" data-loading="1">
+      <h3 class="section-title">獲利（TTM 滾動四季）</h3>
+      <div class="kv">${skelKvRows(5)}</div>
+    </div>
+
+    <div class="card" id="card-revenue" data-loading="1">
+      <h3 class="section-title">營收</h3>
+      <div class="kv">${skelKvRows(3)}</div>
+    </div>
+
+    <div class="card" id="card-dividend" data-loading="1">
+      <h3 class="section-title">股利股息</h3>
+      <div class="kv">${skelKvRows(4)}</div>
+    </div>
+
+    <div class="card" id="card-sources">
+      <h3 class="section-title">資料來源</h3>
+      <div class="muted" id="sources-list" style="font-size:13px">—</div>
+      <div class="muted" style="font-size:12px;margin-top:6px">註：TTM = trailing twelve months，回溯基準日往前的滾動四季 / 十二個月加總。基準日設為過去日期時，會以該日「已公告」的最後一份資料為準。前端會平行呼叫 6 個分項 endpoint，各區塊獨立載入與顯示錯誤。</div>
+    </div>
+  `;
+}
+
+// 收集所有卡片回傳的 source 字串，去重後渲染到「資料來源」卡片
+const _sourcesSet = new Set();
+function addSource(s) {
+  if (!s) return;
+  if (Array.isArray(s)) { s.forEach(addSource); return; }
+  _sourcesSet.add(String(s));
+  const el = document.getElementById('sources-list');
+  if (el) el.textContent = Array.from(_sourcesSet).join(' · ');
+}
+function resetSources() {
+  _sourcesSet.clear();
+  const el = document.getElementById('sources-list');
+  if (el) el.textContent = '—';
+}
+
+function skelKvRows(n) {
+  let s = "";
+  for (let i = 0; i < n; i++) {
+    s += `<div><dt class="skel skel-text" style="width:60px"></dt><dd class="skel skel-text" style="width:120px;height:18px"></dd></div>`;
+  }
+  return s;
+}
+
+// ---------- 卡片更新分派 ----------
+function updateCard(key, data, stockId) {
+  // 任何 endpoint 回傳的 source 都累加到「資料來源」卡片
+  if (data && data.source) addSource(data.source);
+  switch (key) {
+    case "basic":         return updateBasic(data, stockId);
+    case "businessItems": return updateBusinessItems(data);
+    case "valueChain":    return updateValueChain(data, stockId);
+    case "financials":    return updateFinancials(data);
+    case "revenue":       return updateRevenue(data);
+    case "dividend":      return updateDividend(data);
+  }
+}
+
+function updateCardError(key, msg) {
+  const idMap = {
+    basic: "card-basic",
+    businessItems: "card-business-items",
+    valueChain: "card-value-chain",
+    financials: "card-financials",
+    revenue: "card-revenue",
+    dividend: "card-dividend",
+  };
+  const titleMap = {
+    basic: "公司基本資料",
+    businessItems: "主要營業項目（公司登記所營事業）",
+    valueChain: "產業鏈上下游定位",
+    financials: "獲利（TTM 滾動四季）",
+    revenue: "營收",
+    dividend: "股利股息",
+  };
+  const el = document.getElementById(idMap[key]);
+  if (!el) return;
+  el.dataset.loading = "0";
+  el.innerHTML = `
+    <h3 class="section-title">${titleMap[key]}</h3>
+    <div class="error">載入失敗：${escapeHtml(msg)}</div>
+  `;
+}
+
+// ---------- basic ----------
+function updateBasic(d, stockId) {
+  const el = document.getElementById("card-basic");
+  if (!el) return;
+  el.dataset.loading = "0";
+
+  if (!d.found) {
+    el.innerHTML = `
+      <div class="head">
+        <span class="code">${escapeHtml(stockId)}</span>
+        <span class="name">查無此公司</span>
+      </div>
+      <div class="error">${escapeHtml(d.error || "查無此公司基本資料（可能為興櫃或已下市）")}</div>
+    `;
+    return;
+  }
+
+  const asOf = d.as_of || asof.value || "";
+  el.innerHTML = `
+    <div class="head">
+      <span class="code">${escapeHtml(stockId)}</span>
+      <span class="name">${escapeHtml(d.short_name || d.company_name || "")}</span>
+      <span class="market">${escapeHtml(d.market || "")}</span>
+      <span class="asof">基準日 ${escapeHtml(asOf)}</span>
+    </div>
+    <div class="kv">
+      <div><dt>公司全名</dt><dd>${escapeHtml(d.company_name) || "—"}</dd></div>
+      <div><dt>英文名稱</dt><dd>${escapeHtml(d.english_name) || "—"}</dd></div>
+      <div><dt>股票代號</dt><dd class="num">${escapeHtml(stockId)}</dd></div>
+      <div><dt>統一編號</dt><dd class="num">${escapeHtml(d.tax_id) || "—"}</dd></div>
+      <div><dt>實收資本額</dt><dd class="num big">${fmtMoneyTW(d.paid_in_capital)} <span class="unit">NTD</span></dd></div>
+      <div><dt>產業別</dt><dd>${escapeHtml(d.industry_name) || "—"}</dd></div>
+      <div><dt>${gmLabel(d.general_manager)}</dt><dd>${escapeHtml(gmValue(d.general_manager))}</dd></div>
+      <div><dt>董事長</dt><dd>${escapeHtml(d.chairman) || "—"}</dd></div>
+      <div><dt>成立日期</dt><dd class="num">${escapeHtml(d.incorporation_date) || "—"}</dd></div>
+      <div><dt>上市/上櫃日期</dt><dd class="num">${escapeHtml(d.listing_date) || "—"}</dd></div>
+      <div><dt>網站</dt><dd>${d.website ? `<a href="${escapeHtml(d.website)}" target="_blank" rel="noopener">${escapeHtml(d.website)}</a>` : "—"}</dd></div>
+      <div><dt>地址</dt><dd>${escapeHtml(d.address) || "—"}</dd></div>
+    </div>
+  `;
+}
+
+// ---------- business-items ----------
+function updateBusinessItems(d) {
+  const el = document.getElementById("card-business-items");
+  if (!el) return;
+  el.dataset.loading = "0";
+
+  if (!d.found) {
+    el.innerHTML = `
+      <h3 class="section-title">主要營業項目（公司登記所營事業）</h3>
+      <div class="muted">${escapeHtml(d.error || "查無此公司的所營事業資料。")}</div>
+    `;
+    return;
+  }
+
+  const narrative = d.narrative || [];
+  const categories = d.categories || [];
+
+  el.innerHTML = `
+    <h3 class="section-title">主要營業項目（公司登記所營事業）</h3>
+    ${
+      narrative.length
+        ? `<ol class="biz-list">${narrative.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ol>`
+        : `<div class="muted" style="margin-bottom:8px">本公司未填寫敘述性所營事業。</div>`
     }
-    const data = await r.json();
-    render(data);
-  } catch (e) {
-    renderError(e.message || "查詢失敗");
-  }
+    ${
+      categories.length
+        ? `<div class="biz-cats"><div class="muted" style="font-size:12px;margin-bottom:6px">行業分類（中華民國行業標準分類代碼）</div>${categories
+            .map((c) => `<span class="cat-pill" title="${escapeHtml(c.code)}">${escapeHtml(c.desc)}</span>`)
+            .join("")}</div>`
+        : ""
+    }
+  `;
 }
 
-function renderError(msg) {
-  resultEl.innerHTML = `<div class="card"><div class="error">${msg}</div></div>`;
-}
+// ---------- value-chain ----------
+function updateValueChain(d, stockId) {
+  const el = document.getElementById("card-value-chain");
+  if (!el) return;
+  el.dataset.loading = "0";
 
-// ---------- 產業價值鏈 ----------
-function renderValueChainCard(selfId, vc) {
-  if (!vc || vc.status === 'loading') {
-    return `<div class="card"><h3 class="section-title">產業鏈上下游定位</h3><div class="muted">首次查詢背景載入中（預計 5~15 秒），請稍後重新查詢。</div></div>`;
+  // 後端在背景索引中
+  if (d.status === "loading") {
+    el.innerHTML = `
+      <h3 class="section-title">產業鏈上下游定位</h3>
+      <div class="muted">首次查詢背景載入中（預計 5~15 秒），請稍後重新查詢。</div>
+    `;
+    return;
   }
-  if (!vc || vc.status !== 'ready') {
-    return ''; // unavailable: 隱藏
+  // 索引不可用
+  if (d.status && d.status !== "ready") {
+    el.innerHTML = `
+      <h3 class="section-title">產業鏈上下游定位</h3>
+      <div class="muted">產業鏈資料目前不可用。</div>
+    `;
+    return;
   }
-  const mb = vc.memberships || [];
-  if (mb.length === 0) {
-    return `<div class="card"><h3 class="section-title">產業鏈上下游定位</h3><div class="muted">本公司未被櫃買中心『產業價值鏈資訊平台』列入任一產業鏈。</div></div>`;
+  // 查無公司
+  if (!d.found) {
+    el.innerHTML = `
+      <h3 class="section-title">產業鏈上下游定位</h3>
+      <div class="muted">${escapeHtml(d.error || "查無此公司資料。")}</div>
+    `;
+    return;
   }
 
-  // 依 ic_code 分組 memberships
+  const memberships = d.memberships || [];
+  if (memberships.length === 0) {
+    el.innerHTML = `
+      <h3 class="section-title">產業鏈上下游定位</h3>
+      <div class="muted">本公司未被櫃買中心『產業價值鏈資訊平台』列入任一產業鏈。</div>
+    `;
+    return;
+  }
+
+  // 依 ic_code 分組
   const groups = {};
-  for (const m of mb) {
+  for (const m of memberships) {
     if (!groups[m.ic_code]) groups[m.ic_code] = { ic_name: m.ic_name, items: [] };
     groups[m.ic_code].items.push(m);
   }
+  const neighbors = d.neighbors_by_chain || {};
 
-  const neighbors = vc.neighbors_by_chain || {};
-
-  let html = `<div class="card"><h3 class="section-title">產業鏈上下游定位</h3>`;
+  let html = `<h3 class="section-title">產業鏈上下游定位</h3>`;
   for (const ic_code of Object.keys(groups)) {
     const g = groups[ic_code];
     const nb = neighbors[ic_code] || { upstream: [], midstream: [], downstream: [] };
-    // 本公司在該鏈的 segment 集合
     const selfSegs = new Set(g.items.map((m) => m.segment));
     html += `
-      <div class="chain-block" data-ic="${ic_code}">
+      <div class="chain-block" data-ic="${escapeHtml(ic_code)}">
         <div class="chain-head">
           <span class="chain-name">${escapeHtml(g.ic_name)}</span>
-          <span class="chain-tag">${ic_code}</span>
-          <button class="btn-expand" data-ic="${ic_code}">展開全圖</button>
+          <span class="chain-tag">${escapeHtml(ic_code)}</span>
+          <button class="btn-expand" data-ic="${escapeHtml(ic_code)}">展開全圖</button>
         </div>
         <div class="chain-self">
           ${g.items.map((m) =>
             `<span class="seg-pill seg-${m.segment === '上游' ? 'up' : m.segment === '中游' ? 'mid' : 'down'}">
-              <b>${m.segment}</b> · ${escapeHtml(m.top_name)}${m.sub_name && m.sub_name !== m.top_name ? ' → ' + escapeHtml(m.sub_name) : ''}
+              <b>${escapeHtml(m.segment)}</b> · ${escapeHtml(m.top_name)}${m.sub_name && m.sub_name !== m.top_name ? ' → ' + escapeHtml(m.sub_name) : ''}
             </span>`
           ).join('')}
         </div>
         <div class="chain-stream">
-          ${renderStreamRow('上游', nb.upstream, selfSegs.has('上游') ? selfId : null, 6)}
-          ${renderStreamRow('中游', nb.midstream, selfSegs.has('中游') ? selfId : null, 6)}
-          ${renderStreamRow('下游', nb.downstream, selfSegs.has('下游') ? selfId : null, 6)}
+          ${renderStreamRow('上游', nb.upstream, selfSegs.has('上游') ? stockId : null, 6)}
+          ${renderStreamRow('中游', nb.midstream, selfSegs.has('中游') ? stockId : null, 6)}
+          ${renderStreamRow('下游', nb.downstream, selfSegs.has('下游') ? stockId : null, 6)}
         </div>
-        <div class="chain-full hidden" id="chain-full-${ic_code}"></div>
+        <div class="chain-full hidden" id="chain-full-${escapeHtml(ic_code)}"></div>
       </div>
     `;
   }
-  html += '</div>';
-  return html;
+  el.innerHTML = html;
+
+  // 綁定展開按鈕
+  el.querySelectorAll('.btn-expand').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      expandChainFull(btn.dataset.ic, stockId);
+      btn.textContent = btn.textContent === '展開全圖' ? '收起全圖' : '展開全圖';
+    });
+  });
 }
 
 function renderStreamRow(label, list, selfId, maxShow) {
@@ -193,7 +446,7 @@ function renderStreamRow(label, list, selfId, maxShow) {
       <span class="stream-label">${label}</span>
       <span class="stream-companies">
         ${shown.map((c) =>
-          `<a class="co-link${c.stk_code === selfId ? ' is-self' : ''}" data-stkcode="${c.stk_code}" title="${escapeHtml(c.top_name + ' / ' + c.sub_name)}">${c.stk_code} ${escapeHtml(c.name)}</a>`
+          `<a class="co-link${c.stk_code === selfId ? ' is-self' : ''}" data-stkcode="${escapeHtml(c.stk_code)}" title="${escapeHtml(c.top_name + ' / ' + c.sub_name)}">${escapeHtml(c.stk_code)} ${escapeHtml(c.name)}</a>`
         ).join('')}
         ${moreCount > 0 ? `<span class="more">+${moreCount}</span>` : ''}
       </span>
@@ -201,7 +454,6 @@ function renderStreamRow(label, list, selfId, maxShow) {
   `;
 }
 
-// 展開/收起全圖
 async function expandChainFull(ic_code, selfId) {
   const target = document.getElementById(`chain-full-${ic_code}`);
   if (!target) return;
@@ -213,7 +465,7 @@ async function expandChainFull(ic_code, selfId) {
   target.classList.remove('hidden');
   target.innerHTML = `<div class="muted">載入中…</div>`;
   try {
-    const r = await fetch(api(`/api/chain/${ic_code}`));
+    const r = await fetch(api(`/api/chain/${encodeURIComponent(ic_code)}`));
     const data = await r.json();
     target.innerHTML = renderFullChain(data, selfId);
   } catch (e) {
@@ -237,7 +489,7 @@ function renderFullChain(chain, selfId) {
         html += `<div class="full-sub">${showName ? `<div class="full-sub-name">${escapeHtml(sub.sub_name)} <span class="muted">· ${(sub.companies||[]).length} 家</span></div>` : ''}
           <div class="full-companies">
             ${(sub.companies||[]).map((c) =>
-              `<a class="co-link${c.stk_code === selfId ? ' is-self' : ''}" data-stkcode="${c.stk_code}">${c.stk_code} ${escapeHtml(c.name)}</a>`
+              `<a class="co-link${c.stk_code === selfId ? ' is-self' : ''}" data-stkcode="${escapeHtml(c.stk_code)}">${escapeHtml(c.stk_code)} ${escapeHtml(c.name)}</a>`
             ).join('')}
           </div></div>`;
       }
@@ -249,165 +501,132 @@ function renderFullChain(chain, selfId) {
   return html;
 }
 
-function escapeHtml(s) {
-  return String(s == null ? "" : s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+// ---------- financials ----------
+function updateFinancials(d) {
+  const el = document.getElementById("card-financials");
+  if (!el) return;
+  el.dataset.loading = "0";
 
-function render(d) {
-  const b = d.basic || {};
-  const eps = d.eps || {};
-  const rev = d.revenue || {};
-  const ni = d.net_income || {};
-  const dv = d.dividend;
-
-  const epsTtmTag = (eps.ttm_quarters || []).map((q) => `<span class="q">${q}</span>`).join("");
-  const niTtmTag = (ni.ttm_quarters || []).map((q) => `<span class="q">${q}</span>`).join("");
-
-  // 主要營業項目（商工 API 所營事業）
-  const bi = b.business_items || { narrative: [], categories: [] };
-  const narrative = bi.narrative || [];
-  const categories = bi.categories || [];
-
-  // 產業價值鏈定位
-  const vc = d.value_chain || { status: 'unavailable', memberships: [], neighbors_by_chain: {} };
-
-  let html = `
-    <div class="card">
-      <div class="head">
-        <span class="code">${b.short_name && b.short_name !== d.stock_id ? d.stock_id : d.stock_id}</span>
-        <span class="name">${b.short_name || b.company_name || ""}</span>
-        <span class="market">${b.market || ""}</span>
-        <span class="asof">基準日 ${d.as_of}</span>
-      </div>
-      <div class="kv">
-        <div><dt>公司全名</dt><dd>${b.company_name || "—"}</dd></div>
-        <div><dt>英文名稱</dt><dd>${b.english_name || "—"}</dd></div>
-        <div><dt>股票代號</dt><dd class="num">${d.stock_id}</dd></div>
-        <div><dt>統一編號</dt><dd class="num">${b.tax_id || "—"}</dd></div>
-        <div><dt>實收資本額</dt><dd class="num big">${fmtMoneyTW(b.paid_in_capital)} <span class="unit">NTD</span></dd></div>
-        <div><dt>產業別</dt><dd>${b.industry_name || "—"}</dd></div>
-        <div><dt>${gmLabel(b.general_manager)}</dt><dd>${gmValue(b.general_manager)}</dd></div>
-        <div><dt>董事長</dt><dd>${b.chairman || "—"}</dd></div>
-        <div><dt>成立日期</dt><dd class="num">${b.incorporation_date || "—"}</dd></div>
-        <div><dt>上市/上櫃日期</dt><dd class="num">${b.listing_date || "—"}</dd></div>
-        <div><dt>網站</dt><dd>${b.website ? `<a href="${b.website}" target="_blank" rel="noopener">${b.website}</a>` : "—"}</dd></div>
-        <div><dt>地址</dt><dd>${b.address || "—"}</dd></div>
-      </div>
-    </div>
-
-    ${renderValueChainCard(d.stock_id, vc)}
-
-    <div class="card">
-      <h3 class="section-title">主要營業項目（公司登記所營事業）</h3>
-      ${
-        narrative.length
-          ? `<ol class="biz-list">${narrative.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ol>`
-          : `<div class="muted" style="margin-bottom:8px">本公司未填寫敘述性所營事業。</div>`
-      }
-      ${
-        categories.length
-          ? `<div class="biz-cats"><div class="muted" style="font-size:12px;margin-bottom:6px">行業分類（中華民國行業標準分類代碼）</div>${categories
-              .map((c) => `<span class="cat-pill" title="${c.code}">${escapeHtml(c.desc)}</span>`)
-              .join("")}</div>`
-          : ""
-      }
-    </div>
-
-    <div class="card">
-      <h3 class="section-title">獲利 · 截至 ${d.as_of}（TTM 滾動四季）</h3>
-      <div class="kv">
-        <div>
-          <dt>EPS（TTM）</dt>
-          <dd class="num big">${eps.ttm != null ? fmtFloat(eps.ttm, 2) : "—"} <span class="unit">元</span></dd>
-          <div class="tag-row">${epsTtmTag || '<span class="muted">資料不足 4 季</span>'}</div>
-        </div>
-        <div>
-          <dt>最新單季 EPS</dt>
-          <dd class="num">${eps.latest_quarter_value != null ? fmtFloat(eps.latest_quarter_value, 2) + " 元" : "—"}</dd>
-          <div class="tag-row">${eps.latest_quarter_date ? `<span class="q">${eps.latest_quarter_date}</span>` : ""}</div>
-        </div>
-        <div>
-          <dt>淨利（TTM）</dt>
-          <dd class="num big">${fmtMoneyTW(ni.ttm)} <span class="unit">NTD</span></dd>
-          <div class="tag-row">${niTtmTag || '<span class="muted">資料不足 4 季</span>'}</div>
-        </div>
-        <div>
-          <dt>最新單季淨利</dt>
-          <dd class="num">${fmtMoneyTW(ni.latest_quarter_value)}</dd>
-          <div class="tag-row">${ni.latest_quarter_date ? `<span class="q">${ni.latest_quarter_date}</span>` : ""}</div>
-        </div>
-        <div>
-          <dt>營業利潤率（TTM）</dt>
-          <dd class="num big">${d.operating_margin_pct != null ? fmtFloat(d.operating_margin_pct, 2) + "%" : "—"}</dd>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h3 class="section-title">營收</h3>
-      <div class="kv">
-        <div>
-          <dt>最新月營收 (${rev.latest_month_label || "—"})</dt>
-          <dd class="num big">${fmtMoneyTW(rev.latest_month_value)} <span class="unit">NTD</span></dd>
-          <div class="tag-row"><span class="q">YoY ${fmtPct(rev.latest_month_yoy_pct)}</span></div>
-        </div>
-        <div>
-          <dt>近 12 月營收（TTM）</dt>
-          <dd class="num big">${fmtMoneyTW(rev.ttm_value)} <span class="unit">NTD</span></dd>
-          <div class="tag-row"><span class="q">YoY ${fmtPct(rev.ttm_yoy_pct)}</span></div>
-        </div>
-        <div>
-          <dt>季財報合計營收（參照）</dt>
-          <dd class="num">${fmtMoneyTW(rev.ttm_from_financial_statements)}</dd>
-        </div>
-      </div>
-    </div>
-  `;
-
-  if (dv) {
-    html += `
-      <div class="card">
-        <h3 class="section-title">股利股息（截至 ${d.as_of} 的最後一次發放）</h3>
-        <div class="kv">
-          <div><dt>所屬期間</dt><dd>${dv.year || "—"}</dd></div>
-          <div><dt>現金股利</dt><dd class="num big">${fmtFloat(dv.cash_dividend, 4)} <span class="unit">元/股</span></dd></div>
-          <div><dt>股票股利</dt><dd class="num">${fmtFloat(dv.stock_dividend, 4)} 元/股</dd></div>
-          <div><dt>除息交易日</dt><dd class="num">${dv.cash_ex_dividend_date || "—"}</dd></div>
-          <div><dt>現金發放日</dt><dd class="num">${dv.cash_payment_date || "—"}</dd></div>
-          <div><dt>除權交易日</dt><dd class="num">${dv.stock_ex_dividend_date || "—"}</dd></div>
-          <div><dt>公告日</dt><dd class="num">${dv.announcement_date || "—"}</dd></div>
-        </div>
-      </div>
+  if (!d.found) {
+    el.innerHTML = `
+      <h3 class="section-title">獲利（TTM 滾動四季）</h3>
+      <div class="muted">${escapeHtml(d.error || "查無此公司的財報資料。")}</div>
     `;
-  } else {
-    html += `<div class="card"><h3 class="section-title">股利股息</h3><div class="muted">截至 ${d.as_of} 無已公告之股利紀錄。</div></div>`;
+    return;
   }
 
-  html += `
-    <div class="card">
-      <h3 class="section-title">資料來源</h3>
-      <div class="muted" style="font-size:13px">${(d.sources || []).join(" · ")}</div>
-      <div class="muted" style="font-size:12px;margin-top:6px">註：TTM = trailing twelve months，回溯基準日往前的滾動四季 / 十二個月加總。基準日設為過去日期時，會以該日「已公告」的最後一份資料為準。</div>
+  const eps = d.eps || {};
+  const ni = d.net_income || {};
+  const epsTtmTag = (eps.ttm_quarters || []).map((q) => `<span class="q">${escapeHtml(q)}</span>`).join("");
+  const niTtmTag = (ni.ttm_quarters || []).map((q) => `<span class="q">${escapeHtml(q)}</span>`).join("");
+  const asOf = d.as_of || "";
+
+  el.innerHTML = `
+    <h3 class="section-title">獲利 · 截至 ${escapeHtml(asOf)}（TTM 滾動四季）</h3>
+    <div class="kv">
+      <div>
+        <dt>EPS（TTM）</dt>
+        <dd class="num big">${eps.ttm != null ? fmtFloat(eps.ttm, 2) : "—"} <span class="unit">元</span></dd>
+        <div class="tag-row">${epsTtmTag || '<span class="muted">資料不足 4 季</span>'}</div>
+      </div>
+      <div>
+        <dt>最新單季 EPS</dt>
+        <dd class="num">${eps.latest_quarter_value != null ? fmtFloat(eps.latest_quarter_value, 2) + " 元" : "—"}</dd>
+        <div class="tag-row">${eps.latest_quarter_date ? `<span class="q">${escapeHtml(eps.latest_quarter_date)}</span>` : ""}</div>
+      </div>
+      <div>
+        <dt>淨利（TTM）</dt>
+        <dd class="num big">${fmtMoneyTW(ni.ttm)} <span class="unit">NTD</span></dd>
+        <div class="tag-row">${niTtmTag || '<span class="muted">資料不足 4 季</span>'}</div>
+      </div>
+      <div>
+        <dt>最新單季淨利</dt>
+        <dd class="num">${fmtMoneyTW(ni.latest_quarter_value)}</dd>
+        <div class="tag-row">${ni.latest_quarter_date ? `<span class="q">${escapeHtml(ni.latest_quarter_date)}</span>` : ""}</div>
+      </div>
+      <div>
+        <dt>營業利潤率（TTM）</dt>
+        <dd class="num big">${d.operating_margin_pct != null ? fmtFloat(d.operating_margin_pct, 2) + "%" : "—"}</dd>
+      </div>
     </div>
   `;
-
-  resultEl.innerHTML = html;
-  resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
-
-  // 綁定「展開全圖」按鈕
-  resultEl.querySelectorAll('.btn-expand').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      expandChainFull(btn.dataset.ic, d.stock_id);
-      btn.textContent = btn.textContent === '展開全圖' ? '收起全圖' : '展開全圖';
-    });
-  });
 }
 
-// 公司連結 click delegation。render 多次不重複綁定。
+// ---------- revenue ----------
+function updateRevenue(d) {
+  const el = document.getElementById("card-revenue");
+  if (!el) return;
+  el.dataset.loading = "0";
+
+  if (!d.found) {
+    el.innerHTML = `
+      <h3 class="section-title">營收</h3>
+      <div class="muted">${escapeHtml(d.error || "查無此公司的月營收資料。")}</div>
+    `;
+    return;
+  }
+
+  el.innerHTML = `
+    <h3 class="section-title">營收</h3>
+    <div class="kv">
+      <div>
+        <dt>最新月營收 (${escapeHtml(d.latest_month_label) || "—"})</dt>
+        <dd class="num big">${fmtMoneyTW(d.latest_month_value)} <span class="unit">NTD</span></dd>
+        <div class="tag-row"><span class="q">YoY ${fmtPct(d.latest_month_yoy_pct)}</span></div>
+      </div>
+      <div>
+        <dt>近 12 月營收（TTM）</dt>
+        <dd class="num big">${fmtMoneyTW(d.ttm_value)} <span class="unit">NTD</span></dd>
+        <div class="tag-row"><span class="q">YoY ${fmtPct(d.ttm_yoy_pct)}</span></div>
+      </div>
+      <div>
+        <dt>季財報合計營收（參照）</dt>
+        <dd class="num">${fmtMoneyTW(d.ttm_from_financial_statements)}</dd>
+      </div>
+    </div>
+  `;
+}
+
+// ---------- dividend ----------
+function updateDividend(d) {
+  const el = document.getElementById("card-dividend");
+  if (!el) return;
+  el.dataset.loading = "0";
+
+  if (!d.found) {
+    el.innerHTML = `
+      <h3 class="section-title">股利股息</h3>
+      <div class="muted">${escapeHtml(d.error || "查無此公司的股利資料。")}</div>
+    `;
+    return;
+  }
+
+  const dv = d.dividend;
+  const asOf = d.as_of || "";
+
+  if (!dv) {
+    el.innerHTML = `
+      <h3 class="section-title">股利股息</h3>
+      <div class="muted">截至 ${escapeHtml(asOf)} 無已公告之股利紀錄。</div>
+    `;
+    return;
+  }
+
+  el.innerHTML = `
+    <h3 class="section-title">股利股息（截至 ${escapeHtml(asOf)} 的最後一次發放）</h3>
+    <div class="kv">
+      <div><dt>所屬期間</dt><dd>${escapeHtml(dv.year) || "—"}</dd></div>
+      <div><dt>現金股利</dt><dd class="num big">${fmtFloat(dv.cash_dividend, 4)} <span class="unit">元/股</span></dd></div>
+      <div><dt>股票股利</dt><dd class="num">${fmtFloat(dv.stock_dividend, 4)} 元/股</dd></div>
+      <div><dt>除息交易日</dt><dd class="num">${escapeHtml(dv.cash_ex_dividend_date) || "—"}</dd></div>
+      <div><dt>現金發放日</dt><dd class="num">${escapeHtml(dv.cash_payment_date) || "—"}</dd></div>
+      <div><dt>除權交易日</dt><dd class="num">${escapeHtml(dv.stock_ex_dividend_date) || "—"}</dd></div>
+      <div><dt>公告日</dt><dd class="num">${escapeHtml(dv.announcement_date) || "—"}</dd></div>
+    </div>
+  `;
+}
+
+// ---------- 子公司連結點擊（事件委派）----------
 resultEl.addEventListener('click', (e) => {
   const a = e.target.closest('.co-link');
   if (!a) return;

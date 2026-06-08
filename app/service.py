@@ -1,15 +1,20 @@
-"""組裝查詢服務：把多個來源整合成一份回應。
+"""組裝查詢服務。
 
-任一日 (as_of) 的 TTM/年化邏輯：
-- EPS / 淨利 / 營業利潤率：取 as_of 之前最近 4 季的財報數值加總（TTM）；
-  並標註來源期間。如果不足 4 季就回傳 N/A。
-- 月營收：取 as_of 之前最近 12 個完整月份加總，作為「年化營收」。
-  另回傳當月營收 + YoY、累計營收 + YoY。
-- 股利：取「除息日 ≤ as_of」的最後一次股利（現金 + 股票）。
-- 資本額/總經理：使用最新基本資料（TWSE/TPEx 每日更新）。
+本檔將原本「聚合」邏輯拆成 6 個獨立、可單獨呼叫的 query_* 函式，
+分別對應 6 個資料源 / 6 個 endpoint。原 `query()` 仍存在，內部直接平行呼叫
+這 6 個函式，回傳和過去結構完全相容的聚合 dict（前端 / 既有用戶不需改動）。
+
+6 個函式：
+- query_basic                 → TWSE / TPEx OpenAPI 公司基本資料
+- query_business_items        → 經濟部商工 GCIS 所營事業
+- query_financials            → FinMind TaiwanStockFinancialStatements（EPS / 淨利 / 營業利潤率）
+- query_revenue               → FinMind TaiwanStockMonthRevenue（月營收 / YoY / TTM）
+- query_dividend              → FinMind TaiwanStockDividend
+- query_value_chain           → 櫃買中心 ic.tpex.org.tw（產業鏈定位 + 鄰居公司）
 """
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
@@ -25,6 +30,9 @@ from .sources import (
 )
 
 
+# =====================================================================
+# 共用工具
+# =====================================================================
 def _parse_date(s: str) -> Optional[date]:
     if not s:
         return None
@@ -34,12 +42,13 @@ def _parse_date(s: str) -> Optional[date]:
         return None
 
 
+def _resolve_as_of(as_of_str: Optional[str]) -> date:
+    as_of = _parse_date(as_of_str) if as_of_str else date.today()
+    return as_of or date.today()
+
+
 def _format_minguo_date(s: str) -> str:
-    """日期格式化：
-    - 7 位民國 1150508 → 2026-05-08
-    - 8 位西元 19870221 → 1987-02-21
-    - 其他原樣返回
-    """
+    """日期格式化：7 位民國 1150508 → 2026-05-08；8 位西元 19870221 → 1987-02-21。"""
     s = (s or "").strip()
     if len(s) == 7 and s.isdigit():
         y = int(s[:3]) + 1911
@@ -50,7 +59,6 @@ def _format_minguo_date(s: str) -> str:
 
 
 def _build_quarter_map(rows: list[dict]) -> dict[str, dict[str, float]]:
-    """財報 rows -> { '2025-03-31': {'EPS': ..., 'Revenue': ..., ...} }"""
     out: dict[str, dict[str, float]] = defaultdict(dict)
     for r in rows:
         d = r.get("date")
@@ -67,7 +75,6 @@ def _is_quarter_before(quarter_date: str, as_of: date) -> bool:
 
 
 def _ttm_value(quarter_map: dict[str, dict], as_of: date, field: str) -> tuple[Optional[float], list[str]]:
-    """取最近 4 個有 field 的季財報加總。"""
     eligible = [
         (d, vals[field])
         for d, vals in quarter_map.items()
@@ -94,29 +101,85 @@ def _latest_quarter_value(
     return eligible[0][1], eligible[0][0]
 
 
-async def query(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
-    stock_id = stock_id.strip()
-    as_of = _parse_date(as_of_str) if as_of_str else date.today()
-    if as_of is None:
-        as_of = date.today()
+async def _get_basic(stock_id: str) -> Optional[dict]:
+    """共用：取得 TWSE/TPEx 合併後的基本資料。"""
+    table = await load_basic_table()
+    return table.get(stock_id)
 
-    basic_table = await load_basic_table()
-    basic = basic_table.get(stock_id)
+
+def _finmind_window(as_of: date) -> tuple[str, str]:
+    """FinMind 取數窗口：往前 5 年確保 TTM 4 季 + 月營收 24 月皆可得。"""
+    return (as_of - timedelta(days=365 * 5)).isoformat(), as_of.isoformat()
+
+
+# =====================================================================
+# 1) /api/company/{stock_id}/basic — TWSE / TPEx 基本資料
+# =====================================================================
+async def query_basic(stock_id: str) -> dict[str, Any]:
+    stock_id = stock_id.strip()
+    basic = await _get_basic(stock_id)
     if not basic:
         return {
             "found": False,
             "stock_id": stock_id,
-            "as_of": as_of.isoformat(),
             "error": f"查無 {stock_id} 的上市櫃基本資料（可能為興櫃或已下市）",
         }
+    return {
+        "found": True,
+        "stock_id": stock_id,
+        "market": basic.get("market"),
+        "company_name": basic.get("company_name"),
+        "short_name": basic.get("short_name"),
+        "english_name": basic.get("english_name"),
+        "tax_id": basic.get("tax_id"),
+        "paid_in_capital": basic.get("paid_in_capital"),
+        "industry_code": basic.get("industry_code"),
+        "industry_name": industry_name(basic.get("industry_code", ""), basic.get("market", "上市")),
+        "general_manager": basic.get("general_manager"),
+        "chairman": basic.get("chairman"),
+        "incorporation_date": _format_minguo_date(basic.get("incorporation_date", "")),
+        "listing_date": _format_minguo_date(basic.get("listing_date", "")),
+        "website": basic.get("website"),
+        "address": basic.get("address"),
+        "source": "TWSE OpenAPI t187ap03_L / TPEx OpenAPI mopsfin_t187ap03_O",
+    }
 
-    # FinMind 取數窗口：往前抓 5 年以確保 TTM 4 季 + 月營收 12 個月可得
-    end = as_of.isoformat()
-    start = (as_of - timedelta(days=365 * 5)).isoformat()
 
-    fs_rows, mr_rows, dv_rows, business_items = await _fetch_all(stock_id, start, end, basic.get("tax_id", ""))
+# =====================================================================
+# 2) /api/company/{stock_id}/business-items — 經濟部商工 所營事業
+# =====================================================================
+async def query_business_items(stock_id: str) -> dict[str, Any]:
+    stock_id = stock_id.strip()
+    basic = await _get_basic(stock_id)
+    if not basic:
+        return {
+            "found": False,
+            "stock_id": stock_id,
+            "error": f"查無 {stock_id} 的上市櫃基本資料",
+        }
+    tax_id = basic.get("tax_id", "")
+    items = await get_business_scope(tax_id) if tax_id else []
+    narrative = [b for b in items if b["is_narrative"]]
+    categories = [b for b in items if not b["is_narrative"]]
+    return {
+        "found": True,
+        "stock_id": stock_id,
+        "tax_id": tax_id,
+        "narrative": [b["desc"] for b in narrative],
+        "categories": [{"code": b["code"], "desc": b["desc"]} for b in categories],
+        "source": "經濟部商工登記公示資料 · 公司登記基本資料 (236EE382-...025E7C)",
+    }
 
-    # 財報 TTM
+
+# =====================================================================
+# 3) /api/company/{stock_id}/financials — FinMind 季財報衍生
+# =====================================================================
+async def query_financials(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
+    stock_id = stock_id.strip()
+    as_of = _resolve_as_of(as_of_str)
+    start, end = _finmind_window(as_of)
+
+    fs_rows = await get_financial_statements(stock_id, start, end)
     qmap = _build_quarter_map(fs_rows)
 
     eps_ttm, eps_quarters = _ttm_value(qmap, as_of, "EPS")
@@ -131,84 +194,15 @@ async def query(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any
     latest_eps_q, latest_eps_q_date = _latest_quarter_value(qmap, as_of, "EPS")
     latest_ni_q, latest_ni_q_date = _latest_quarter_value(qmap, as_of, "IncomeAfterTaxes")
 
-    # 月營收：最近 12 個月加總 (TTM 月營收) + 當月 YoY
-    eligible_mr = [m for m in mr_rows if _parse_date(m.get("date") or "") and _parse_date(m["date"]) <= as_of]
-    eligible_mr.sort(key=lambda x: x["date"], reverse=True)
-    last12 = eligible_mr[:12]
-    revenue_ttm_monthly = sum(m.get("revenue", 0) for m in last12) if len(last12) == 12 else None
-
-    latest_month = eligible_mr[0] if eligible_mr else None
-    latest_month_revenue = latest_month.get("revenue") if latest_month else None
-    latest_month_label = (
-        f"{latest_month['revenue_year']}/{latest_month['revenue_month']:02d}" if latest_month else None
-    )
-
-    # YoY 月營收成長率：找去年同月
-    revenue_yoy: Optional[float] = None
-    if latest_month:
-        target_y = latest_month["revenue_year"] - 1
-        target_m = latest_month["revenue_month"]
-        for m in eligible_mr:
-            if m.get("revenue_year") == target_y and m.get("revenue_month") == target_m:
-                if m.get("revenue"):
-                    revenue_yoy = (latest_month_revenue - m["revenue"]) / m["revenue"] * 100
-                break
-
-    # TTM 營收成長率（最近 12 月 vs 前 12 月）
-    revenue_ttm_yoy: Optional[float] = None
-    prev12 = eligible_mr[12:24]
-    if len(last12) == 12 and len(prev12) == 12:
-        prev_sum = sum(m.get("revenue", 0) for m in prev12)
-        if prev_sum:
-            revenue_ttm_yoy = (revenue_ttm_monthly - prev_sum) / prev_sum * 100
-
-    # 股利：找到「除息(權)日 ≤ as_of」最後一次
-    dividend = _pick_dividend(dv_rows, as_of)
-
-    # 產業別（TWSE/TPEx 分類）
-    industry = industry_name(basic.get("industry_code", ""), basic.get("market", "上市"))
-
-    # 主要營業項目：商工 API 所營事業
-    narrative_items = [b for b in business_items if b["is_narrative"]]
-    category_items = [b for b in business_items if not b["is_narrative"]]
-
     return {
         "found": True,
         "stock_id": stock_id,
         "as_of": as_of.isoformat(),
-        "basic": {
-            "market": basic.get("market"),
-            "company_name": basic.get("company_name"),
-            "short_name": basic.get("short_name"),
-            "english_name": basic.get("english_name"),
-            "tax_id": basic.get("tax_id"),
-            "paid_in_capital": basic.get("paid_in_capital"),
-            "industry_code": basic.get("industry_code"),
-            "industry_name": industry,
-            "business_items": {
-                "narrative": [b["desc"] for b in narrative_items],
-                "categories": [{"code": b["code"], "desc": b["desc"]} for b in category_items],
-            },
-            "general_manager": basic.get("general_manager"),
-            "chairman": basic.get("chairman"),
-            "incorporation_date": _format_minguo_date(basic.get("incorporation_date", "")),
-            "listing_date": _format_minguo_date(basic.get("listing_date", "")),
-            "website": basic.get("website"),
-            "address": basic.get("address"),
-        },
         "eps": {
             "ttm": eps_ttm,
             "ttm_quarters": eps_quarters,
             "latest_quarter_value": latest_eps_q,
             "latest_quarter_date": latest_eps_q_date,
-        },
-        "revenue": {
-            "latest_month_label": latest_month_label,
-            "latest_month_value": latest_month_revenue,
-            "latest_month_yoy_pct": revenue_yoy,
-            "ttm_value": revenue_ttm_monthly,
-            "ttm_yoy_pct": revenue_ttm_yoy,
-            "ttm_from_financial_statements": revenue_ttm_fs,
         },
         "net_income": {
             "ttm": net_income_ttm,
@@ -217,54 +211,122 @@ async def query(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any
             "latest_quarter_date": latest_ni_q_date,
         },
         "operating_margin_pct": op_margin,
-        "dividend": dividend,
-        "sources": [
-            "TWSE OpenAPI (上市公司基本資料)",
-            "TPEx OpenAPI (上櫃公司基本資料)",
-            "FinMind v4 (TaiwanStockFinancialStatements / MonthRevenue / Dividend)",
-            "經濟部商工 (公司登記基本資料 - 所營事業)",
-            "櫃買中心 產業價值鏈資訊平台 (上中下游定位)",
-        ],
-        "value_chain": _build_value_chain_section(stock_id),
+        "revenue_ttm_from_financial_statements": revenue_ttm_fs,
+        "source": "FinMind v4 TaiwanStockFinancialStatements",
     }
 
 
-async def _fetch_all(stock_id: str, start: str, end: str, tax_id: str):
-    import asyncio
+# =====================================================================
+# 4) /api/company/{stock_id}/revenue — FinMind 月營收
+# =====================================================================
+async def query_revenue(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
+    stock_id = stock_id.strip()
+    as_of = _resolve_as_of(as_of_str)
+    start, end = _finmind_window(as_of)
 
-    # 同時觸發產業價值鏈背景載入（首次）
+    mr_rows = await get_month_revenue(stock_id, start, end)
+    eligible_mr = [m for m in mr_rows if _parse_date(m.get("date") or "") and _parse_date(m["date"]) <= as_of]
+    eligible_mr.sort(key=lambda x: x["date"], reverse=True)
+
+    last12 = eligible_mr[:12]
+    prev12 = eligible_mr[12:24]
+    revenue_ttm = sum(m.get("revenue", 0) for m in last12) if len(last12) == 12 else None
+
+    latest = eligible_mr[0] if eligible_mr else None
+    latest_value = latest.get("revenue") if latest else None
+    latest_label = f"{latest['revenue_year']}/{latest['revenue_month']:02d}" if latest else None
+
+    # 當月 YoY
+    revenue_yoy: Optional[float] = None
+    if latest:
+        ty = latest["revenue_year"] - 1
+        tm = latest["revenue_month"]
+        for m in eligible_mr:
+            if m.get("revenue_year") == ty and m.get("revenue_month") == tm:
+                if m.get("revenue"):
+                    revenue_yoy = (latest_value - m["revenue"]) / m["revenue"] * 100
+                break
+
+    # TTM YoY
+    revenue_ttm_yoy: Optional[float] = None
+    if len(last12) == 12 and len(prev12) == 12:
+        prev_sum = sum(m.get("revenue", 0) for m in prev12)
+        if prev_sum:
+            revenue_ttm_yoy = (revenue_ttm - prev_sum) / prev_sum * 100
+
+    return {
+        "found": True,
+        "stock_id": stock_id,
+        "as_of": as_of.isoformat(),
+        "latest_month_label": latest_label,
+        "latest_month_value": latest_value,
+        "latest_month_yoy_pct": revenue_yoy,
+        "ttm_value": revenue_ttm,
+        "ttm_yoy_pct": revenue_ttm_yoy,
+        "source": "FinMind v4 TaiwanStockMonthRevenue",
+    }
+
+
+# =====================================================================
+# 5) /api/company/{stock_id}/dividend — FinMind 股利
+# =====================================================================
+async def query_dividend(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
+    stock_id = stock_id.strip()
+    as_of = _resolve_as_of(as_of_str)
+    start, end = _finmind_window(as_of)
+
+    dv_rows = await get_dividend(stock_id, start, end)
+    picked = _pick_dividend(dv_rows, as_of)
+    return {
+        "found": True,
+        "stock_id": stock_id,
+        "as_of": as_of.isoformat(),
+        "dividend": picked,
+        "source": "FinMind v4 TaiwanStockDividend",
+    }
+
+
+def _pick_dividend(rows: list[dict], as_of: date) -> Optional[dict]:
+    candidates = []
+    for r in rows:
+        ex_cash = _parse_date(r.get("CashExDividendTradingDate") or "")
+        ex_stock = _parse_date(r.get("StockExDividendTradingDate") or "")
+        ann = _parse_date(r.get("date") or "")
+        ref = ex_cash or ex_stock or ann
+        if ref and ref <= as_of:
+            candidates.append((ref, r))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    ref_date, r = candidates[0]
+    return {
+        "year": r.get("year"),
+        "reference_date": ref_date.isoformat(),
+        "cash_dividend": r.get("CashEarningsDistribution", 0) + r.get("CashStatutorySurplus", 0),
+        "stock_dividend": r.get("StockEarningsDistribution", 0) + r.get("StockStatutorySurplus", 0),
+        "cash_ex_dividend_date": r.get("CashExDividendTradingDate"),
+        "cash_payment_date": r.get("CashDividendPaymentDate"),
+        "stock_ex_dividend_date": r.get("StockExDividendTradingDate"),
+        "announcement_date": r.get("AnnouncementDate"),
+    }
+
+
+# =====================================================================
+# 6) /api/company/{stock_id}/value-chain — 櫃買中心 產業價值鏈
+# =====================================================================
+async def query_value_chain(stock_id: str) -> dict[str, Any]:
+    stock_id = stock_id.strip()
+    # 觸發背景載入（首次）
     asyncio.create_task(icchain.ensure_loaded(background=True))
 
-    return await asyncio.gather(
-        get_financial_statements(stock_id, start, end),
-        get_month_revenue(stock_id, start, end),
-        get_dividend(stock_id, start, end),
-        get_business_scope(tax_id),
-    )
-
-
-def _build_value_chain_section(stock_id: str) -> dict:
-    """組裝公司的上中下游資訊。
-
-    回傳結構：
-    {
-      status: 'ready' | 'loading',
-      memberships: [{ic_code, ic_name, segment, top_code, top_name, sub_code, sub_name}],
-      neighbors_by_chain: {
-        ic_code: {
-          ic_name,
-          upstream: [{stk_code, name}],
-          midstream: [...],
-          downstream: [...],
-        }
-      }
-    }
-    """
     if not icchain.is_loaded():
         return {
+            "found": True,
+            "stock_id": stock_id,
             "status": "loading" if icchain.is_loading() else "unavailable",
             "memberships": [],
             "neighbors_by_chain": {},
+            "source": "櫃買中心 產業價值鏈資訊平台 ic.tpex.org.tw",
         }
 
     memberships = icchain.get_memberships(stock_id)
@@ -290,7 +352,6 @@ def _build_value_chain_section(stock_id: str) -> dict:
                             "sub_name": sub["sub_name"],
                             "is_self": c["stk_code"] == stock_id,
                         })
-        # 去重（同一公司可能在多個 sub-chain 出現）
         for key, lst in seg_buckets.items():
             seen = set()
             dedup = []
@@ -300,47 +361,100 @@ def _build_value_chain_section(stock_id: str) -> dict:
                 seen.add(c["stk_code"])
                 dedup.append(c)
             seg_buckets[key] = dedup
-        neighbors[ic_code] = {
-            "ic_name": chain.get("ic_name", ""),
-            **seg_buckets,
-        }
+        neighbors[ic_code] = {"ic_name": chain.get("ic_name", ""), **seg_buckets}
 
     return {
+        "found": True,
+        "stock_id": stock_id,
         "status": "ready",
         "memberships": memberships,
         "neighbors_by_chain": neighbors,
+        "source": "櫃買中心 產業價值鏈資訊平台 ic.tpex.org.tw",
     }
 
 
-def _pick_dividend(rows: list[dict], as_of: date) -> Optional[dict]:
-    """找最後一次除息日 ≤ as_of 的股利。"""
-    candidates = []
-    for r in rows:
-        ex_cash = _parse_date(r.get("CashExDividendTradingDate") or "")
-        ex_stock = _parse_date(r.get("StockExDividendTradingDate") or "")
-        ann = _parse_date(r.get("date") or "")
-        # 取「除息日」優先；若空，用公告日
-        ref = ex_cash or ex_stock or ann
-        if ref and ref <= as_of:
-            candidates.append((ref, r))
-    if not candidates:
-        return None
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    ref_date, r = candidates[0]
+# =====================================================================
+# 聚合 endpoint /api/company/{stock_id} — 完全等價於原本回應
+# =====================================================================
+async def query(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
+    stock_id = stock_id.strip()
+    as_of = _resolve_as_of(as_of_str)
+
+    # 先確認基本資料存在（決定是否提早 404）
+    basic_raw = await _get_basic(stock_id)
+    if not basic_raw:
+        return {
+            "found": False,
+            "stock_id": stock_id,
+            "as_of": as_of.isoformat(),
+            "error": f"查無 {stock_id} 的上市櫃基本資料（可能為興櫃或已下市）",
+        }
+
+    # 平行呼叫 6 個獨立函式
+    basic_r, bi_r, fin_r, rev_r, dv_r, vc_r = await asyncio.gather(
+        query_basic(stock_id),
+        query_business_items(stock_id),
+        query_financials(stock_id, as_of_str),
+        query_revenue(stock_id, as_of_str),
+        query_dividend(stock_id, as_of_str),
+        query_value_chain(stock_id),
+    )
+
     return {
-        "year": r.get("year"),
-        "reference_date": ref_date.isoformat(),
-        "cash_dividend": r.get("CashEarningsDistribution", 0) + r.get("CashStatutorySurplus", 0),
-        "stock_dividend": r.get("StockEarningsDistribution", 0) + r.get("StockStatutorySurplus", 0),
-        "cash_ex_dividend_date": r.get("CashExDividendTradingDate"),
-        "cash_payment_date": r.get("CashDividendPaymentDate"),
-        "stock_ex_dividend_date": r.get("StockExDividendTradingDate"),
-        "announcement_date": r.get("AnnouncementDate"),
+        "found": True,
+        "stock_id": stock_id,
+        "as_of": as_of.isoformat(),
+        "basic": {
+            "market": basic_r.get("market"),
+            "company_name": basic_r.get("company_name"),
+            "short_name": basic_r.get("short_name"),
+            "english_name": basic_r.get("english_name"),
+            "tax_id": basic_r.get("tax_id"),
+            "paid_in_capital": basic_r.get("paid_in_capital"),
+            "industry_code": basic_r.get("industry_code"),
+            "industry_name": basic_r.get("industry_name"),
+            "business_items": {
+                "narrative": bi_r.get("narrative", []),
+                "categories": bi_r.get("categories", []),
+            },
+            "general_manager": basic_r.get("general_manager"),
+            "chairman": basic_r.get("chairman"),
+            "incorporation_date": basic_r.get("incorporation_date"),
+            "listing_date": basic_r.get("listing_date"),
+            "website": basic_r.get("website"),
+            "address": basic_r.get("address"),
+        },
+        "eps": fin_r["eps"],
+        "revenue": {
+            "latest_month_label": rev_r.get("latest_month_label"),
+            "latest_month_value": rev_r.get("latest_month_value"),
+            "latest_month_yoy_pct": rev_r.get("latest_month_yoy_pct"),
+            "ttm_value": rev_r.get("ttm_value"),
+            "ttm_yoy_pct": rev_r.get("ttm_yoy_pct"),
+            "ttm_from_financial_statements": fin_r.get("revenue_ttm_from_financial_statements"),
+        },
+        "net_income": fin_r["net_income"],
+        "operating_margin_pct": fin_r.get("operating_margin_pct"),
+        "dividend": dv_r.get("dividend"),
+        "sources": [
+            "TWSE OpenAPI (上市公司基本資料)",
+            "TPEx OpenAPI (上櫃公司基本資料)",
+            "FinMind v4 (TaiwanStockFinancialStatements / MonthRevenue / Dividend)",
+            "經濟部商工 (公司登記基本資料 - 所營事業)",
+            "櫃買中心 產業價值鏈資訊平台 (上中下游定位)",
+        ],
+        "value_chain": {
+            "status": vc_r.get("status"),
+            "memberships": vc_r.get("memberships", []),
+            "neighbors_by_chain": vc_r.get("neighbors_by_chain", {}),
+        },
     }
 
 
+# =====================================================================
+# 搜尋
+# =====================================================================
 async def search_companies(keyword: str, limit: int = 20) -> list[dict]:
-    """簡單搜尋：依代號或名稱關鍵字。"""
     keyword = (keyword or "").strip()
     if not keyword:
         return []

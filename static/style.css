@@ -114,7 +114,38 @@ main { max-width: 1080px; margin: 0 auto; padding: 36px 24px 64px; }
 .error {
   background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;
   padding: 12px 16px; border-radius: 8px;
+  font-size: 13px;
 }
+
+/* ---------- Skeleton loading ---------- */
+@keyframes skel-pulse {
+  0%   { background-color: #eef0f3; }
+  50%  { background-color: #e2e5ea; }
+  100% { background-color: #eef0f3; }
+}
+.skel {
+  display: inline-block;
+  background: #eef0f3;
+  border-radius: 4px;
+  animation: skel-pulse 1.4s ease-in-out infinite;
+  vertical-align: middle;
+}
+.skel-text { height: 14px; }
+.skel-line {
+  display: block;
+  height: 14px;
+  border-radius: 4px;
+  background: #eef0f3;
+  animation: skel-pulse 1.4s ease-in-out infinite;
+  width: 60%;
+  margin: 6px 0;
+}
+.skeleton-head .name.skel,
+.skeleton-head .market.skel { background: #eef0f3; border: 0; padding: 0; height: 18px; }
+.card[data-loading="1"] .kv dt.skel,
+.card[data-loading="1"] .kv dd.skel { animation: skel-pulse 1.4s ease-in-out infinite; }
+.card[data-loading="1"] .kv dt { height: 12px; }
+.card[data-loading="1"] .kv dd { display: inline-block; }
 
 /* 產業價值鏈 */
 .chain-block {
