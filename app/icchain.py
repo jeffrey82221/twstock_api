@@ -152,10 +152,12 @@ def _parse_chain_html(ic_code: str, ic_name: str, html: str) -> dict:
                 seg_of_node[top_code] = (seg, top_name)
 
     # Step 2: 對每個 top-level node，看是否有 sub-chain
-    segments: dict[str, list[dict]] = {"上游": [], "中游": [], "下游": []}
+    # segments 改成按 HTML 出現順序動態建立（不再預先塞上中下游空陣列），
+    # 以支援像 5300 人工智慧（應用與服務／核心技術／運算資源）這類非標準分段命名。
+    segments: dict[str, list[dict]] = {}
     for top_code, (seg, top_name) in seg_of_node.items():
         if seg not in segments:
-            segments.setdefault(seg, [])
+            segments[seg] = []
 
         sub_pnl = soup.find("div", id=f"sc-ind-pnl_{top_code}")
         sub_chains: list[dict] = []

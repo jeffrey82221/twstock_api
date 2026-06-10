@@ -143,6 +143,7 @@ async function loadCompanyParallel(stockId, asOf) {
     { key: "valueChain",    url: `/api/company/${stockEnc}/value-chain`,     asOf: false },
     { key: "financials",    url: `/api/company/${stockEnc}/financials`,      asOf: true  },
     { key: "revenue",       url: `/api/company/${stockEnc}/revenue`,         asOf: true  },
+    { key: "productRevenue",url: `/api/company/${stockEnc}/product-revenue`, asOf: true  },
     { key: "dividend",      url: `/api/company/${stockEnc}/dividend`,        asOf: true  },
   ];
 
@@ -197,6 +198,11 @@ function renderSkeleton(stockId, asOf) {
       <div class="kv">${skelKvRows(3)}</div>
     </div>
 
+    <div class="card" id="card-product-revenue" data-loading="1">
+      <h3 class="section-title">主要產品比重（公開資訊觀測站）</h3>
+      <div class="muted skel-line">載入中…</div>
+    </div>
+
     <div class="card" id="card-dividend" data-loading="1">
       <h3 class="section-title">股利股息</h3>
       <div class="kv">${skelKvRows(4)}</div>
@@ -243,6 +249,7 @@ function updateCard(key, data, stockId) {
     case "valueChain":    return updateValueChain(data, stockId);
     case "financials":    return updateFinancials(data);
     case "revenue":       return updateRevenue(data);
+    case "productRevenue":return updateProductRevenue(data);
     case "dividend":      return updateDividend(data);
   }
 }
@@ -254,6 +261,7 @@ function updateCardError(key, msg) {
     valueChain: "card-value-chain",
     financials: "card-financials",
     revenue: "card-revenue",
+    productRevenue: "card-product-revenue",
     dividend: "card-dividend",
   };
   const titleMap = {
@@ -262,6 +270,7 @@ function updateCardError(key, msg) {
     valueChain: "產業鏈上下游定位",
     financials: "獲利（TTM 滾動四季）",
     revenue: "營收",
+    productRevenue: "主要產品比重（公開資訊觀測站）",
     dividend: "股利股息",
   };
   const el = document.getElementById(idMap[key]);
@@ -400,8 +409,16 @@ function updateValueChain(d, stockId) {
   let html = `<h3 class="section-title">產業鏈上下游定位</h3>`;
   for (const ic_code of Object.keys(groups)) {
     const g = groups[ic_code];
-    const nb = neighbors[ic_code] || { upstream: [], midstream: [], downstream: [] };
+    const nb = neighbors[ic_code] || {};
     const selfSegs = new Set(g.items.map((m) => m.segment));
+    // 彈性讀取：優先使用新的 streams。舊版本未提供時才從上/中/下游組裝
+    let streams = Array.isArray(nb.streams) ? nb.streams : null;
+    if (!streams) {
+      streams = [];
+      if ((nb.upstream || []).length)   streams.push({ segment: '上游',   companies: nb.upstream });
+      if ((nb.midstream || []).length)  streams.push({ segment: '中游',   companies: nb.midstream });
+      if ((nb.downstream || []).length) streams.push({ segment: '下游',   companies: nb.downstream });
+    }
     html += `
       <div class="chain-block" data-ic="${escapeHtml(ic_code)}">
         <div class="chain-head">
@@ -411,15 +428,13 @@ function updateValueChain(d, stockId) {
         </div>
         <div class="chain-self">
           ${g.items.map((m) =>
-            `<span class="seg-pill seg-${m.segment === '上游' ? 'up' : m.segment === '中游' ? 'mid' : 'down'}">
+            `<span class="seg-pill seg-${segCls(m.segment)}">
               <b>${escapeHtml(m.segment)}</b> · ${escapeHtml(m.top_name)}${m.sub_name && m.sub_name !== m.top_name ? ' → ' + escapeHtml(m.sub_name) : ''}
             </span>`
           ).join('')}
         </div>
         <div class="chain-stream">
-          ${renderStreamRow('上游', nb.upstream, selfSegs.has('上游') ? stockId : null, 6)}
-          ${renderStreamRow('中游', nb.midstream, selfSegs.has('中游') ? stockId : null, 6)}
-          ${renderStreamRow('下游', nb.downstream, selfSegs.has('下游') ? stockId : null, 6)}
+          ${streams.map((s) => renderStreamRow(s.segment, s.companies, selfSegs.has(s.segment) ? stockId : null, 6)).join('')}
         </div>
         <div class="chain-full hidden" id="chain-full-${escapeHtml(ic_code)}"></div>
       </div>
@@ -436,11 +451,21 @@ function updateValueChain(d, stockId) {
   });
 }
 
+// 分段名轉換為 CSS 類名：預設上/中/下游保留原色套；其他名稱以 hash 輪流使用 alt1/alt2/alt3
+function segCls(label) {
+  if (label === '上游') return 'up';
+  if (label === '中游') return 'mid';
+  if (label === '下游') return 'down';
+  let h = 0;
+  for (let i = 0; i < (label || '').length; i++) h = (h * 31 + label.charCodeAt(i)) >>> 0;
+  return 'alt' + (h % 3 + 1);
+}
+
 function renderStreamRow(label, list, selfId, maxShow) {
   if (!list || list.length === 0) return '';
   const shown = list.slice(0, maxShow);
   const moreCount = list.length - shown.length;
-  const cls = label === '上游' ? 'up' : label === '中游' ? 'mid' : 'down';
+  const cls = segCls(label);
   return `
     <div class="stream-row stream-${cls}">
       <span class="stream-label">${label}</span>
@@ -475,13 +500,19 @@ async function expandChainFull(ic_code, selfId) {
 
 function renderFullChain(chain, selfId) {
   if (!chain || !chain.segments) return '<div class="muted">無資料</div>';
-  const segOrder = ['上游', '中游', '下游'];
+  // 彈性順序：優先上中下游，其餘分段按官方出現順序接在後面
+  const preferred = ['上游', '中游', '下游'];
+  const allSegs = Object.keys(chain.segments);
+  const segOrder = [
+    ...preferred.filter((s) => allSegs.includes(s)),
+    ...allSegs.filter((s) => !preferred.includes(s)),
+  ];
   let html = '<div class="full-chain">';
   for (const seg of segOrder) {
     const tops = chain.segments[seg] || [];
     if (tops.length === 0) continue;
-    const cls = seg === '上游' ? 'up' : seg === '中游' ? 'mid' : 'down';
-    html += `<div class="full-seg full-seg-${cls}"><div class="full-seg-title">${seg}</div>`;
+    const cls = segCls(seg);
+    html += `<div class="full-seg full-seg-${cls}"><div class="full-seg-title">${escapeHtml(seg)}</div>`;
     for (const top of tops) {
       html += `<div class="full-top"><div class="full-top-name">${escapeHtml(top.top_name)}</div>`;
       for (const sub of top.sub_chains || []) {
@@ -585,6 +616,187 @@ function updateRevenue(d) {
       </div>
     </div>
   `;
+}
+
+// ---------- product-revenue ----------
+function updateProductRevenue(d) {
+  const el = document.getElementById("card-product-revenue");
+  if (!el) return;
+  el.dataset.loading = "0";
+
+  // 期間標籤：民國年 + 西元年轉換
+  const periodLabel = (() => {
+    if (!d.year || !d.month) return "";
+    const ad = Number(d.year) + 1911;
+    return ` · 民國 ${d.year}/${d.month}（西元 ${ad}/${d.month}）`;
+  })();
+
+  // 連線/解析錯誤
+  if (d.error) {
+    el.innerHTML = `
+      <h3 class="section-title">主要產品比重（公開資訊觀測站）</h3>
+      <div class="muted">${escapeHtml(d.error)}</div>
+    `;
+    return;
+  }
+
+  // 採用 IFRSs 後自願申報，或無資料
+  if (!d.found) {
+    el.innerHTML = `
+      <h3 class="section-title">主要產品比重（公開資訊觀測站）</h3>
+      <div class="muted">${escapeHtml(d.notes || "該公司未於MOPS申報「各項產品業務營收統計表」。")}</div>
+    `;
+    return;
+  }
+
+  const items = d.items || [];
+  // 按金額降序排序（MOPS 原順為序號）
+  const sorted = items.slice().sort((a, b) => (b.amount || 0) - (a.amount || 0));
+
+  // 請注意：不含銷貨退回，兩者加起來才是 total_revenue + sales_return。
+  // 這裡 donut 以 (各項加總 + sales_return) 為 100%，能讓退回並不會被忽略。
+  const itemsSum = sorted.reduce((s, it) => s + (it.amount || 0), 0);
+  const salesReturn = d.sales_return || 0;
+  const denom = itemsSum + salesReturn || 1;
+
+  // 以計算後的百分比（統一分母）佈局圖表
+  const slices = sorted.map((it, i) => ({
+    rank: it.rank || "",
+    name: it.name,
+    amount: it.amount || 0,
+    pct: ((it.amount || 0) / denom) * 100,
+    color: PRODUCT_COLORS[i % PRODUCT_COLORS.length],
+  }));
+  if (salesReturn > 0) {
+    slices.push({
+      rank: "−",
+      name: "銷貨退回及折讓",
+      amount: salesReturn,
+      pct: (salesReturn / denom) * 100,
+      color: "var(--text-muted)",
+      isReturn: true,
+    });
+  }
+
+  const donutSvg = renderDonut(slices, fmtMoneyTW(d.total_revenue));
+  const legend = slices.map((s, i) => `
+    <div class="pr-legend-row${s.isReturn ? " is-return" : ""}" data-idx="${i}">
+      <span class="pr-swatch" style="background:${s.color}"></span>
+      <span class="pr-leg-name" title="${escapeHtml(s.name)}">
+        <span class="pr-rank">${escapeHtml(s.rank)}</span> ${escapeHtml(s.name)}
+      </span>
+      <span class="pr-leg-amount num">${fmtMoneyTW(s.amount)}</span>
+      <span class="pr-leg-pct num">${fmtFloat(s.pct, 2)}%</span>
+    </div>
+  `).join("");
+
+  el.innerHTML = `
+    <h3 class="section-title">主要產品比重${periodLabel}</h3>
+    <div class="pr-flex">
+      <div class="pr-donut-wrap">${donutSvg}</div>
+      <div class="pr-legend">
+        <div class="pr-legend-row pr-legend-head">
+          <span></span>
+          <span>產品 / 業務項目</span>
+          <span class="pr-leg-amount">金額</span>
+          <span class="pr-leg-pct">佔比</span>
+        </div>
+        ${legend || '<div class="muted">未解析到產品項目。</div>'}
+      </div>
+    </div>
+    <div class="pr-summary">
+      <div><span class="muted">合計業務營收淨額</span><b class="num">${fmtMoneyTW(d.total_revenue)}</b></div>
+      ${d.sales_return != null ? `<div><span class="muted">減：銷貨退回及折讓</span><b class="num">${fmtMoneyTW(d.sales_return)}</b></div>` : ""}
+      ${d.company_name ? `<div><span class="muted">申報公司名稱</span><b>${escapeHtml(d.company_name)}</b></div>` : ""}
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:8px">資料為 MOPS 上該公司最近一次「各項產品業務營收統計表」申報，原表金額單位為仟元，此處已轉換為元。Donut 以「各項產品 + 銷貨退回及折讓」為 100%，金額加總等於實際業務收入。</div>
+  `;
+
+  // hover 高亮聯動：legend «→» slice
+  const svg = el.querySelector("svg.pr-donut");
+  const rows = el.querySelectorAll(".pr-legend-row[data-idx]");
+  rows.forEach((row) => {
+    const idx = row.dataset.idx;
+    row.addEventListener("mouseenter", () => highlightSlice(svg, idx, true));
+    row.addEventListener("mouseleave", () => highlightSlice(svg, idx, false));
+  });
+  if (svg) {
+    svg.querySelectorAll("path[data-idx]").forEach((p) => {
+      const idx = p.dataset.idx;
+      p.addEventListener("mouseenter", () => {
+        highlightSlice(svg, idx, true);
+        const row = el.querySelector(`.pr-legend-row[data-idx="${idx}"]`);
+        if (row) row.classList.add("is-hover");
+      });
+      p.addEventListener("mouseleave", () => {
+        highlightSlice(svg, idx, false);
+        const row = el.querySelector(`.pr-legend-row[data-idx="${idx}"]`);
+        if (row) row.classList.remove("is-hover");
+      });
+    });
+  }
+}
+
+// 12 色調盤（主色 + 調和色）
+const PRODUCT_COLORS = [
+  "#1853d6", "#0d8348", "#d97706", "#9333ea",
+  "#dc2626", "#0891b2", "#65a30d", "#ea580c",
+  "#7c3aed", "#0284c7", "#be185d", "#4d7c0f",
+];
+
+// 純 SVG donut chart。slices: [{name, amount, pct, color, isReturn}]
+function renderDonut(slices, centerLabel) {
+  const size = 220;
+  const cx = size / 2, cy = size / 2;
+  const rOuter = 95;
+  const rInner = 60;
+  // start 從頂端（-90°）
+  let angle = -Math.PI / 2;
+  const totalPct = slices.reduce((s, x) => s + x.pct, 0) || 1;
+  const paths = slices.map((s, i) => {
+    const sweep = (s.pct / totalPct) * Math.PI * 2;
+    const a0 = angle;
+    const a1 = angle + sweep;
+    angle = a1;
+    // 只有一個 slice 時特別處理（畫成全環）
+    if (sweep >= Math.PI * 2 - 1e-6) {
+      return `<path data-idx="${i}" class="pr-slice" fill="${s.color}" d="
+        M ${cx + rOuter} ${cy}
+        A ${rOuter} ${rOuter} 0 1 1 ${cx - rOuter} ${cy}
+        A ${rOuter} ${rOuter} 0 1 1 ${cx + rOuter} ${cy}
+        M ${cx + rInner} ${cy}
+        A ${rInner} ${rInner} 0 1 0 ${cx - rInner} ${cy}
+        A ${rInner} ${rInner} 0 1 0 ${cx + rInner} ${cy} Z" fill-rule="evenodd">
+        <title>${escapeHtml(s.name)} · ${fmtFloat(s.pct,2)}%</title>
+      </path>`;
+    }
+    const largeArc = sweep > Math.PI ? 1 : 0;
+    const x0o = cx + rOuter * Math.cos(a0), y0o = cy + rOuter * Math.sin(a0);
+    const x1o = cx + rOuter * Math.cos(a1), y1o = cy + rOuter * Math.sin(a1);
+    const x0i = cx + rInner * Math.cos(a1), y0i = cy + rInner * Math.sin(a1);
+    const x1i = cx + rInner * Math.cos(a0), y1i = cy + rInner * Math.sin(a0);
+    const d = `M ${x0o} ${y0o} A ${rOuter} ${rOuter} 0 ${largeArc} 1 ${x1o} ${y1o} L ${x0i} ${y0i} A ${rInner} ${rInner} 0 ${largeArc} 0 ${x1i} ${y1i} Z`;
+    return `<path data-idx="${i}" class="pr-slice" fill="${s.color}" d="${d}"><title>${escapeHtml(s.name)} · ${fmtFloat(s.pct,2)}%</title></path>`;
+  }).join("");
+
+  return `
+    <svg class="pr-donut" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img" aria-label="主要產品比重">
+      ${paths}
+      <text x="${cx}" y="${cy - 6}" text-anchor="middle" class="pr-donut-center-label">業務收入淨額</text>
+      <text x="${cx}" y="${cy + 14}" text-anchor="middle" class="pr-donut-center-value">${escapeHtml(centerLabel)}</text>
+    </svg>
+  `;
+}
+
+function highlightSlice(svg, idx, on) {
+  if (!svg) return;
+  svg.querySelectorAll("path[data-idx]").forEach((p) => {
+    if (p.dataset.idx === idx) {
+      p.classList.toggle("is-hover", on);
+    } else {
+      p.classList.toggle("is-dim", on);
+    }
+  });
 }
 
 // ---------- dividend ----------

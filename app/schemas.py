@@ -557,6 +557,58 @@ class CompanyValueChainResponse(BaseModel):
     )
     neighbors_by_chain: dict[str, ChainNeighbors] = Field(
         default_factory=dict,
-        description="依產業鏈代碼分組，列出該鏈所有上/中/下游公司。",
+        description="依產業鏈代碼分組，列出該鏈各分段下的公司（`streams` 彈性表達任意分段名稱）。",
     )
+    source: Optional[str] = Field(None, description="本筆資料來源註記。")
+
+
+class ProductRevenueItem(BaseModel):
+    """單一產品項目（出現在「各項產品業務營收統計表」中）。"""
+    model_config = ConfigDict(extra="allow")
+
+    rank: str = Field(..., description="產品序號標籤，例如 `(1)`、`(2)`、`其他`。")
+    name: str = Field(..., description="產品/業務項目名稱。")
+    amount: int = Field(..., description="該項目營收金額（新台幣元；原始 HTML 為仟元，已乘以 1000）。")
+    percentage: Optional[float] = Field(
+        None,
+        description="該項目占合計業務營收淨額 + 銷貨退回及折讓的百分比 %。",
+    )
+
+
+class ProductRevenueResponse(BaseModel):
+    """`GET /api/company/{stock_id}/product-revenue` 回應。
+
+    資料來自公開資訊觀測站（MOPS）「各項產品業務營收統計表」(t05st08)。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否有解析到任何產品項目資料。")
+    stock_id: str = Field(..., description="查詢股票代號。")
+    as_of: str = Field(..., description="查詢基準日。")
+    year: Optional[str] = Field(
+        None,
+        description="申報年度（民國年，字串，例如 `113` 表示民國 113 年 / 西元 2024）。",
+    )
+    month: Optional[str] = Field(
+        None,
+        description="申報月份（zero-padded 兩位數字串，例如 `12`）。月報為公司最近一次申報期間。",
+    )
+    company_name: Optional[str] = Field(None, description="公司名稱（由 MOPS 表頭解析得到）。")
+    items: list[ProductRevenueItem] = Field(
+        default_factory=list,
+        description="主要產品項目清單，依 MOPS 表中出現順序排列。",
+    )
+    sales_return: Optional[int] = Field(
+        None,
+        description="減：銷貨退回及折讓金額（新台幣元）。若 MOPS 表無此欄位則為 null。",
+    )
+    total_revenue: Optional[int] = Field(
+        None,
+        description="合計業務營收淨額（新台幣元）。",
+    )
+    notes: Optional[str] = Field(
+        None,
+        description="附註訊息（例如「採用 IFRSs 後採自願申報，該公司無申報」）。",
+    )
+    error: Optional[str] = Field(None, description="MOPS 連線或解析錯誤訊息。")
     source: Optional[str] = Field(None, description="本筆資料來源註記。")

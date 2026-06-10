@@ -26,6 +26,8 @@ from .sources import (
     get_dividend,
     get_financial_statements,
     get_month_revenue,
+    get_product_revenue,
+    get_product_revenue_at,
     load_basic_table,
 )
 
@@ -314,6 +316,9 @@ def _pick_dividend(rows: list[dict], as_of: date) -> Optional[dict]:
 # =====================================================================
 # 6) /api/company/{stock_id}/value-chain — 櫃買中心 產業價值鏈
 # =====================================================================
+# 註：query_product_revenue 定義在本檔最末（見 7) 區塊）。
+
+
 async def query_value_chain(stock_id: str) -> dict[str, Any]:
     stock_id = stock_id.strip()
     # 觸發背景載入（首次）
@@ -336,32 +341,41 @@ async def query_value_chain(stock_id: str) -> dict[str, Any]:
         chain = icchain.get_chain(ic_code) or {}
         if not chain:
             continue
-        seg_buckets = {"upstream": [], "midstream": [], "downstream": []}
-        seg_map = {"上游": "upstream", "中游": "midstream", "下游": "downstream"}
+        # 彈性分段：按官方 HTML 出現順序建立 streams，可容納「上中下游」以外的分段名稱
+        # （例如5300 人工智慧的「應用與服務／核心技術／運算資源」）。
+        streams_ordered: list[dict] = []
+        # 同時保留舊欄位 upstream/midstream/downstream（向後相容）
+        legacy_buckets: dict[str, list[dict]] = {"upstream": [], "midstream": [], "downstream": []}
+        legacy_map = {"上游": "upstream", "中游": "midstream", "下游": "downstream"}
         for seg_zh, tops in (chain.get("segments") or {}).items():
-            key = seg_map.get(seg_zh)
-            if not key:
-                continue
+            companies_in_seg: list[dict] = []
             for top in tops:
                 for sub in top.get("sub_chains", []):
                     for c in sub.get("companies", []):
-                        seg_buckets[key].append({
+                        companies_in_seg.append({
                             "stk_code": c["stk_code"],
                             "name": c["name"],
                             "top_name": top["top_name"],
                             "sub_name": sub["sub_name"],
                             "is_self": c["stk_code"] == stock_id,
                         })
-        for key, lst in seg_buckets.items():
+            # 去重（按 stk_code）
             seen = set()
-            dedup = []
-            for c in lst:
+            dedup: list[dict] = []
+            for c in companies_in_seg:
                 if c["stk_code"] in seen:
                     continue
                 seen.add(c["stk_code"])
                 dedup.append(c)
-            seg_buckets[key] = dedup
-        neighbors[ic_code] = {"ic_name": chain.get("ic_name", ""), **seg_buckets}
+            streams_ordered.append({"segment": seg_zh, "companies": dedup})
+            legacy_key = legacy_map.get(seg_zh)
+            if legacy_key is not None:
+                legacy_buckets[legacy_key] = dedup
+        neighbors[ic_code] = {
+            "ic_name": chain.get("ic_name", ""),
+            "streams": streams_ordered,
+            **legacy_buckets,
+        }
 
     return {
         "found": True,
@@ -477,3 +491,39 @@ async def search_companies(keyword: str, limit: int = 20) -> list[dict]:
             if len(results) >= limit:
                 break
     return results
+
+
+# =====================================================================
+# 7) /api/company/{stock_id}/product-revenue — MOPS 主要產品比重
+# =====================================================================
+async def query_product_revenue(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
+    """查詢公司「各項產品業務營收統計表」（公開資訊觀測站 t05st08）。
+
+    行為：
+    - 當未提供 `as_of`：走「單一公司」流程（`ajax_t05st08`），
+      回傳該公司「MOPS 上最後一次申報」期間之明細。
+    - 當提供 `as_of`：走「彙總清單回溯」流程（`ajax_t05st08_all`），
+      自 `as_of` 所在月份往回最多 24 個月，找出該公司本次起能找到的「最晚申報月份」之明細。
+    """
+    stock_id = stock_id.strip()
+    as_of = _resolve_as_of(as_of_str)
+
+    if as_of_str:
+        # 走新流程：限定 as_of 之前（含當月）最晚申報期
+        raw = await get_product_revenue_at(stock_id, as_of.year, as_of.month)
+    else:
+        raw = await get_product_revenue(stock_id)
+    return {
+        "found": bool(raw.get("found")),
+        "stock_id": stock_id,
+        "as_of": as_of.isoformat(),
+        "year": raw.get("year"),
+        "month": raw.get("month"),
+        "company_name": raw.get("company_name"),
+        "items": raw.get("items") or [],
+        "sales_return": raw.get("sales_return"),
+        "total_revenue": raw.get("total_revenue"),
+        "notes": raw.get("notes"),
+        "error": raw.get("error"),
+        "source": "公開資訊觀測站 (MOPS) - 各項產品業務營收統計表 (t05st08)",
+    }

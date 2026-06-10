@@ -24,6 +24,7 @@ from .schemas import (
     DividendResponse,
     FinancialsResponse,
     HealthResponse,
+    ProductRevenueResponse,
     RevenueResponse,
     SearchResponse,
 )
@@ -33,6 +34,7 @@ from .service import (
     query_business_items,
     query_dividend,
     query_financials,
+    query_product_revenue,
     query_revenue,
     query_value_chain,
     search_companies,
@@ -423,6 +425,58 @@ async def api_company_dividend(
 )
 async def api_company_value_chain(stock_id: str):
     return await query_value_chain(stock_id)
+
+
+@app.get(
+    "/api/company/{stock_id}/product-revenue",
+    response_model=ProductRevenueResponse,
+    tags=["Company (per-source)"],
+    summary="主要產品比重 / 各項產品業務營收統計表（MOPS）",
+    description=(
+        "**資料來源網站正式名稱**：公開資訊觀測站 (MOPS) · 各項產品業務營收統計表（內部代號 t05st08） "
+        "<https://mops.twse.com.tw/mops/web/t05st08>。\n\n"
+        "**資料源 API URL 與呼叫方法**（三步驟 HTTP 流程）：\n"
+        "1. `POST https://mops.twse.com.tw/mops/api/redirectToOld`，JSON body：\n"
+        "   `{\"apiName\":\"ajax_t05st08\",\"parameters\":{\"co_id\":<STOCK_ID>,\"isnew\":\"true\",\"encodeURIComponent\":1,\"step\":1,\"firstin\":1,\"off\":1}}` \n"
+        "   → 回傳 `{result: {url: \"https://mopsov.twse.com.tw/mops/web/ajax_t05st08?parameters=<加密參數>\"}}`。\n"
+        "2. `GET` 上一步 mopsov URL → 回傳 server-rendered HTML，內含 `autoForm`（隱藏欄位 year/month/TYPEK/yearmonth 等）。\n"
+        "3. `POST https://mopsov.twse.com.tw/mops/web/ajax_t05st08`，`application/x-www-form-urlencoded`，"
+        "帶入 step 2 拆出的所有欄位 → 回傳含 `<table class='hasBorder'>` 的最終 HTML 表。\n\n"
+        "**反爬蟲注意事項**：必須帶 `User-Agent`、`Accept-Language: zh-TW`、`Origin`、`Referer` 才能避開 WAF（缺一即遇到 7641438215888200112 阻擋）。"
+        "無需 cookie / CSRF / Authorization。\n\n"
+        "**處理邏輯**：\n"
+        "1. `httpx.AsyncClient(follow_redirects=True)` 依序執行三步驟。\n"
+        "2. `_parse_mops_autoform()`：用 BeautifulSoup 抓 `<form name='autoForm'>` 內所有 `<input name=... value=...>`。\n"
+        "3. `_parse_mops_table()`：解析 `<TABLE class='hasBorder'>`，逐列擷取 序號 `(1)~(10)` / `其他` / `減：銷貨退回及折讓` / `合計業務營收淨額`，"
+        "金額一律由仟元 × 1000 轉為元。\n"
+        "4. 百分比 = `amount / (total_revenue + sales_return)) × 100`，於後端計算（MOPS 原表並不一定提供 %）。\n"
+        "5. 命中後寫入 `cachetools.TTLCache(maxsize=2048, ttl=6h)`（月報性質，6 小時快取足夠）。\n\n"
+        "**回應特性**：\n"
+        "- 年/月以民國年字串表示（例 `year='113'` = 民國 113 年 = 西元 2024）。\n"
+        "- 採用 IFRSs 後採自願申報之公司若無申報，回傳 `found=false` + `notes='採用IFRSs後採自願申報，該公司無申報'`。\n"
+        "- 上游連線/解析失敗時回傳 `found=false` 並於 `error` 欄位記錄錯誤型別與訊息（不丟 5xx）。\n\n"
+        "**日期參數 `as_of`**：\n"
+        "- 省略時：走「單一公司」流程（`ajax_t05st08`）— MOPS 只回該公司最後一次申報期間（如 2330→民國 109/12）。\n"
+        "- 提供時：「兩階段加速回溯」流程。\n"
+        "  1. 先用 `ajax_t05st08`（單一公司）拿該公司的 `last_filed_ym`（最後一次申報期），stock_id 為 key 快取 24h。\n"
+        "  2. 若 `as_of ≥ last_filed_ym`→直接從 `last_filed_ym` 出發，首輪命中（最多只走 6 個月）。\n"
+        "  3. 若 `as_of < last_filed_ym`→從 `as_of` 所在月份往回走，上限 240 個月（足以涵蓋 MOPS 本表所有歷史）。\n"
+        "  4. 若 `last_filed_ym` 為 `None`（該公司未曾申報）→短路直接回 `found=false`。\n"
+        "- 兩階段快取：`stock_id → last_filed_ym` (24h)、`(YM, TYPEK) → 申報名單` (6h、跨使用者共用)、`(YM, stock_id) → 明細` (6h)。"
+    ),
+)
+async def api_company_product_revenue(
+    stock_id: str,
+    as_of: str | None = Query(
+        None,
+        description=(
+            "查詢基準日 `YYYY-MM-DD`；省略則回「最後一次申報」。"
+            "提供時會限定在該日期之前（含當月）可找到的「最晚申報月份」。"
+            "在 IFRSs 后停止申報之公司（如 2330=民國 109/12，2454=108/12），若 `as_of` 早於這個月份则會查不到。"
+        ),
+    ),
+):
+    return await query_product_revenue(stock_id, as_of)
 
 
 # =====================================================================

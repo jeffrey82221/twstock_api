@@ -212,6 +212,19 @@ main { max-width: 1080px; margin: 0 auto; padding: 36px 24px 64px; }
 .full-seg-up   .full-seg-title { color: #166534; }
 .full-seg-mid  .full-seg-title { color: #1d4ed8; }
 .full-seg-down .full-seg-title { color: #9a3412; }
+/* 非標準分段名（如 5300 人工智慧的「應用與服務／核心技術／運算資源」）輪流使用三個替代色套 */
+.full-seg-alt1 { background: #faf5ff; }
+.full-seg-alt2 { background: #fef2f8; }
+.full-seg-alt3 { background: #ecfeff; }
+.full-seg-alt1 .full-seg-title { color: #6b21a8; }
+.full-seg-alt2 .full-seg-title { color: #9d174d; }
+.full-seg-alt3 .full-seg-title { color: #155e75; }
+.seg-alt1  { color: #6b21a8; border-color: #e9d5ff; background: #faf5ff; }
+.seg-alt2  { color: #9d174d; border-color: #fbcfe8; background: #fef2f8; }
+.seg-alt3  { color: #155e75; border-color: #a5f3fc; background: #ecfeff; }
+.stream-alt1 .stream-label { background: #f3e8ff; color: #6b21a8; }
+.stream-alt2 .stream-label { background: #fce7f3; color: #9d174d; }
+.stream-alt3 .stream-label { background: #cffafe; color: #155e75; }
 .full-top { margin-bottom: 10px; }
 .full-top:last-child { margin-bottom: 0; }
 .full-top-name { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
@@ -252,4 +265,123 @@ footer {
   .hero h1 { font-size: 22px; }
   .kv { grid-template-columns: 1fr 1fr; gap: 12px 16px; }
   .kv dd.big { font-size: 16px; }
+}
+
+/* ---------- 主要產品比重 (Donut Chart) ---------- */
+.pr-flex {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  margin-top: 4px;
+}
+.pr-donut-wrap {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+}
+.pr-donut { display: block; }
+.pr-slice {
+  cursor: default;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  transform-origin: 110px 110px;
+}
+.pr-slice.is-dim { opacity: 0.28; }
+.pr-slice.is-hover { transform: scale(1.035); }
+.pr-donut-center-label {
+  font-size: 11px;
+  fill: var(--text-muted);
+  font-family: var(--sans);
+}
+.pr-donut-center-value {
+  font-size: 16px;
+  font-weight: 700;
+  fill: var(--text);
+  font-family: var(--sans);
+}
+
+.pr-legend {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pr-legend-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1.4fr) minmax(72px, auto) minmax(64px, auto);
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  transition: background 0.15s ease;
+}
+.pr-legend-row:not(.pr-legend-head):hover,
+.pr-legend-row.is-hover { background: var(--bg); }
+.pr-legend-head {
+  font-size: 11px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding-bottom: 4px;
+  margin-bottom: 2px;
+}
+.pr-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.pr-leg-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.pr-rank {
+  display: inline-block;
+  min-width: 26px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+.pr-leg-amount,
+.pr-leg-pct {
+  text-align: right;
+  font-size: 13px;
+}
+.pr-leg-pct {
+  font-weight: 600;
+  color: var(--accent);
+}
+.pr-legend-row.is-return .pr-leg-name,
+.pr-legend-row.is-return .pr-leg-amount,
+.pr-legend-row.is-return .pr-leg-pct {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.pr-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding-top: 12px;
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.pr-summary > div { display: flex; flex-direction: column; gap: 2px; }
+.pr-summary b { font-size: 15px; font-weight: 600; }
+
+@media (max-width: 720px) {
+  .pr-flex {
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .pr-legend { width: 100%; }
 }
