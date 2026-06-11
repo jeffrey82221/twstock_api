@@ -137,19 +137,43 @@ def _parse_chain_html(ic_code: str, ic_name: str, html: str) -> dict:
     """解析單一產業鏈頁，回傳 chain_tree[ic_code] 結構。"""
     soup = BeautifulSoup(html, "lxml")
 
-    # Step 1: 取得每個 ic_link_XXX 屬於哪個 chain（上中下游）
+    # Step 1: 取得每個 ic_link_XXX 屬於哪個 segment
+    # 考量官方頁面有三種不同結構：
+    #   A. 有 div.chain + div.chain-title-panel（多數產業，例 D000 半導體）
+    #   B. 有 div.chain 但用 <h4> 當標題（例 5700 體驗科技）
+    #   C. 沒有 div.chain，ic_link 直接平鋪在 main_ic_panel 下（例 B000 休閒娛樂、
+    #      T000 交通運輸、U000 金融、R000 軟體服務等），此時視為單一 segment
+    #      並以 ic_name 作為分段名。
     main = soup.find("div", id="main_ic_panel")
     seg_of_node: dict[str, tuple[str, str]] = {}
     if main:
-        for chain in main.find_all("div", class_="chain"):
-            title = chain.find("div", class_="chain-title-panel")
-            if not title:
-                continue
-            seg = title.get_text(strip=True)
-            for node in chain.find_all("div", id=re.compile(r"^ic_link_")):
+        chain_blocks = main.find_all("div", class_="chain")
+        if chain_blocks:
+            for chain in chain_blocks:
+                title_el = chain.find("div", class_="chain-title-panel")
+                if title_el is not None:
+                    seg = title_el.get_text(strip=True)
+                else:
+                    # Fallback A→B：用 <h4> 作為 segment 標題。
+                    h4 = chain.find("h4")
+                    if h4 is not None:
+                        seg = h4.get_text(strip=True)
+                    else:
+                        # 這個 chain block 連標題都沒有——拿 ic_name 當沒選擇時的預設
+                        seg = ic_name
+                if not seg:
+                    seg = ic_name
+                for node in chain.find_all("div", id=re.compile(r"^ic_link_")):
+                    top_code = node["id"].replace("ic_link_", "")
+                    top_name = node.get_text(strip=True)
+                    seg_of_node[top_code] = (seg, top_name)
+        else:
+            # Fallback C：沒有 div.chain，所有 ic_link 視為同一 segment
+            # 用 ic_name 作為分段名稱（與官網呈現一致：這類產業本來就是一個平鋪清單）
+            for node in main.find_all("div", id=re.compile(r"^ic_link_")):
                 top_code = node["id"].replace("ic_link_", "")
                 top_name = node.get_text(strip=True)
-                seg_of_node[top_code] = (seg, top_name)
+                seg_of_node[top_code] = (ic_name, top_name)
 
     # Step 2: 對每個 top-level node，看是否有 sub-chain
     # segments 改成按 HTML 出現順序動態建立（不再預先塞上中下游空陣列），
