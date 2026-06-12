@@ -22,7 +22,11 @@ import re
 import time
 from typing import Any, Optional
 
+import logging
+
 import httpx
+
+logger = logging.getLogger("twstock_api.icchain")
 from bs4 import BeautifulSoup
 
 # ---- 產業鏈代碼表（依研究報告整理） ----
@@ -284,7 +288,19 @@ async def _fetch_one(client: httpx.AsyncClient, ic_code: str, ic_name: str) -> d
             if attempt < 2:
                 await asyncio.sleep(0.8 * (attempt + 1))
                 continue
-            _state["errors"].append({"ic_code": ic_code, "error": str(e)})
+            status = None
+            body = ""
+            if isinstance(e, httpx.HTTPStatusError):
+                status = e.response.status_code
+                try:
+                    body = e.response.text[:200]
+                except Exception:
+                    body = ""
+            logger.error(
+                "[icchain] fetch failed ic=%s status=%s url=%s :: %s body=%r",
+                ic_code, status, url, e, body,
+            )
+            _state["errors"].append({"ic_code": ic_code, "status": status, "error": str(e)})
             return {"ic_code": ic_code, "ic_name": ic_name, "segments": {}, "error": str(e)}
 
 

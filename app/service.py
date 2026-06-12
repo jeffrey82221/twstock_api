@@ -22,14 +22,61 @@ from typing import Any, Optional
 from . import icchain
 from .industry import industry_name
 from .sources import (
+    ensure_source_errors_buffer,
     get_business_scope,
     get_dividend,
     get_financial_statements,
     get_month_revenue,
     get_product_revenue,
     get_product_revenue_at,
+    get_source_errors,
     load_basic_table,
 )
+
+
+def with_source_error_tracking(func):
+    """Decorator：在進入 query 時 reset，出口時自動裝上 source_errors / 調整 found。
+
+    使用方式：
+        @with_source_error_tracking
+        async def query_xxx(...): ...
+    """
+    import functools
+
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        # 只有最外層初始化 buffer；內層嵌套時不重設，不以免清掉所有來源錯誤
+        is_outer = ensure_source_errors_buffer()
+        result = await func(*args, **kwargs)
+        if is_outer and isinstance(result, dict):
+            return _apply_source_errors(result)
+        return result
+
+    return wrapper
+
+
+def _apply_source_errors(result: dict[str, Any]) -> dict[str, Any]:
+    """若本次 request 期間累計到來源端錯誤，則強制把 found 設成 False 並附帶診斷。
+
+    設計重點：
+    - source_errors 以 list 輸出，保留所有 status / message，供前端與使用者現關。
+    - error 文字只描述「什麼來源被拒」，不覆蓋原來 service 內部產生的 error
+      （例如「查無基本資料」）。
+    - 原計算欄位保留，只動 found 來讓調用者能明確區分「真查無」與「來源取不到」。
+    """
+    errs = get_source_errors()
+    if not errs:
+        return result
+    result["source_errors"] = [e.to_dict() for e in errs]
+    result["found"] = False
+    rl = any(e.is_rate_limited for e in errs)
+    sources = ", ".join(sorted({e.source for e in errs}))
+    if "error" not in result or not result.get("error"):
+        if rl:
+            result["error"] = f"來源 {sources} 遭反爬​/​限流拒絕，本次取不到資料。"
+        else:
+            result["error"] = f"來源 {sources} 查詢失敗，本次取不到資料。"
+    return result
 
 
 # =====================================================================
@@ -117,6 +164,7 @@ def _finmind_window(as_of: date) -> tuple[str, str]:
 # =====================================================================
 # 1) /api/company/{stock_id}/basic — TWSE / TPEx 基本資料
 # =====================================================================
+@with_source_error_tracking
 async def query_basic(stock_id: str) -> dict[str, Any]:
     stock_id = stock_id.strip()
     basic = await _get_basic(stock_id)
@@ -150,6 +198,7 @@ async def query_basic(stock_id: str) -> dict[str, Any]:
 # =====================================================================
 # 2) /api/company/{stock_id}/business-items — 經濟部商工 所營事業
 # =====================================================================
+@with_source_error_tracking
 async def query_business_items(stock_id: str) -> dict[str, Any]:
     stock_id = stock_id.strip()
     basic = await _get_basic(stock_id)
@@ -176,6 +225,7 @@ async def query_business_items(stock_id: str) -> dict[str, Any]:
 # =====================================================================
 # 3) /api/company/{stock_id}/financials — FinMind 季財報衍生
 # =====================================================================
+@with_source_error_tracking
 async def query_financials(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
     stock_id = stock_id.strip()
     as_of = _resolve_as_of(as_of_str)
@@ -221,6 +271,7 @@ async def query_financials(stock_id: str, as_of_str: Optional[str] = None) -> di
 # =====================================================================
 # 4) /api/company/{stock_id}/revenue — FinMind 月營收
 # =====================================================================
+@with_source_error_tracking
 async def query_revenue(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
     stock_id = stock_id.strip()
     as_of = _resolve_as_of(as_of_str)
@@ -272,6 +323,7 @@ async def query_revenue(stock_id: str, as_of_str: Optional[str] = None) -> dict[
 # =====================================================================
 # 5) /api/company/{stock_id}/dividend — FinMind 股利
 # =====================================================================
+@with_source_error_tracking
 async def query_dividend(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
     stock_id = stock_id.strip()
     as_of = _resolve_as_of(as_of_str)
@@ -319,6 +371,7 @@ def _pick_dividend(rows: list[dict], as_of: date) -> Optional[dict]:
 # 註：query_product_revenue 定義在本檔最末（見 7) 區塊）。
 
 
+@with_source_error_tracking
 async def query_value_chain(stock_id: str) -> dict[str, Any]:
     stock_id = stock_id.strip()
     # 觸發背景載入（首次）
@@ -390,6 +443,7 @@ async def query_value_chain(stock_id: str) -> dict[str, Any]:
 # =====================================================================
 # 聚合 endpoint /api/company/{stock_id} — 完全等價於原本回應
 # =====================================================================
+@with_source_error_tracking
 async def query(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
     stock_id = stock_id.strip()
     as_of = _resolve_as_of(as_of_str)
@@ -496,6 +550,7 @@ async def search_companies(keyword: str, limit: int = 20) -> list[dict]:
 # =====================================================================
 # 7) /api/company/{stock_id}/product-revenue — MOPS 主要產品比重
 # =====================================================================
+@with_source_error_tracking
 async def query_product_revenue(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
     """查詢公司「各項產品業務營收統計表」（公開資訊觀測站 t05st08）。
 

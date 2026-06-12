@@ -8,11 +8,110 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
 import httpx
 from cachetools import TTLCache
+
+# =====================================================================
+# Logging + 來源端錯誤訊號
+# =====================================================================
+# 統一 logger。uvicorn 預設 INFO、本模組 WARNING 以上會被輸出到 stderr。
+logger = logging.getLogger("twstock_api.sources")
+
+
+@dataclass
+class SourceError:
+    """代表一次「來源 API 取不到資料」的錯誤狀態。"""
+    source: str          # 來源名稱，例 TWSE / TPEx / FinMind / GCIS / MOPS
+    url: str             # 出錯的 URL（包含 query）
+    status_code: Optional[int]   # HTTP 狀態碼；DNS/timeout/SSL 等本地端錯誤為 None
+    message: str         # 原始錯誤 / response 前頭記號
+    is_rate_limited: bool = False  # 是否為 429 / 反爬型錯誤
+
+    def to_dict(self) -> dict:
+        return {
+            "source": self.source,
+            "url": self.url,
+            "status_code": self.status_code,
+            "message": self.message,
+            "is_rate_limited": self.is_rate_limited,
+        }
+
+
+# 以 ContextVar 儲存本次請求生命週期內「累計到的來源端錯誤」。
+# FastAPI 在 async 請求中會為每個 request 独立複製 context，互不干擾。
+_request_source_errors: contextvars.ContextVar[Optional[list]] = contextvars.ContextVar(
+    "twstock_api_source_errors", default=None
+)
+
+
+def reset_source_errors() -> None:
+    """每個 endpoint 進入 service 層時呼叫，清空上一輪的錯誤記錄。"""
+    _request_source_errors.set([])
+
+
+def ensure_source_errors_buffer() -> bool:
+    """確保 buffer 存在。回傳是否為本次初始化（True 表示原本是 None、現在創建了）。
+
+    打破嵌套 reset 問題：只有「最外層」進入者創建 buffer，
+    內層 query 嵌套時變成「加入現有 buffer」而不是清空重來。
+    """
+    if _request_source_errors.get() is None:
+        _request_source_errors.set([])
+        return True
+    return False
+
+
+def get_source_errors() -> list[SourceError]:
+    """讀取本次請求期間累計到的來源錯誤。"""
+    errs = _request_source_errors.get()
+    return list(errs) if errs else []
+
+
+def _record_source_error(err: SourceError) -> None:
+    """寫入請求級的錯誤並同時 log。若未在 request context下，只 log 不寫入。"""
+    log_msg = (
+        f"[source-error] source={err.source} status={err.status_code} "
+        f"rate_limited={err.is_rate_limited} url={err.url} :: {err.message}"
+    )
+    if err.is_rate_limited or (err.status_code and err.status_code >= 500):
+        logger.error(log_msg)
+    else:
+        logger.warning(log_msg)
+    errs = _request_source_errors.get()
+    if errs is not None:
+        errs.append(err)
+
+
+def _classify_http_exc(exc: Exception, url: str) -> tuple[Optional[int], str, bool]:
+    """從 httpx 例外抽出 (status_code, message, is_rate_limited)。"""
+    status: Optional[int] = None
+    body_preview: str = ""
+    is_rate_limited = False
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        try:
+            body_preview = exc.response.text[:200]
+        except Exception:
+            body_preview = ""
+        # 429 是明確 rate-limit；403 常見於反爬、部分 5xx 也常伴隨限流
+        if status == 429 or status == 403:
+            is_rate_limited = True
+    elif isinstance(exc, httpx.TimeoutException):
+        body_preview = "timeout"
+    elif isinstance(exc, httpx.HTTPError):
+        body_preview = str(exc)[:200]
+    else:
+        body_preview = f"{type(exc).__name__}: {str(exc)[:200]}"
+    msg = f"{type(exc).__name__}"
+    if body_preview:
+        msg = f"{msg}: {body_preview}"
+    return status, msg, is_rate_limited
 
 # ---- 端點 ----
 TWSE_BASIC_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
@@ -43,7 +142,19 @@ _last_filed_cache: TTLCache = TTLCache(maxsize=4096, ttl=60 * 60 * 24)
 _basic_lock = asyncio.Lock()
 
 
-async def _http_get(url: str, params: Optional[dict] = None, timeout: float = 30.0, retries: int = 3) -> Any:
+async def _http_get(
+    url: str,
+    params: Optional[dict] = None,
+    timeout: float = 30.0,
+    retries: int = 3,
+    source_name: Optional[str] = None,
+) -> Any:
+    """通用 HTTP GET，內建重試 + 錯誤記錄。
+
+    若所有重試均失敗，會：
+      1. 透過 _record_source_error 寫入請求級錯誤 + log warning/error
+      2. 釋出原始例外（保留舊行為）讓上層自行决定是否吃掉
+    """
     last_exc: Optional[Exception] = None
     for attempt in range(retries):
         try:
@@ -56,6 +167,11 @@ async def _http_get(url: str, params: Optional[dict] = None, timeout: float = 30
             if attempt < retries - 1:
                 await asyncio.sleep(0.6 * (attempt + 1))
     assert last_exc is not None
+    if source_name is not None:
+        status, msg, rl = _classify_http_exc(last_exc, url)
+        _record_source_error(SourceError(
+            source=source_name, url=url, status_code=status, message=msg, is_rate_limited=rl,
+        ))
     raise last_exc
 
 
@@ -73,11 +189,11 @@ async def load_basic_table() -> dict[str, dict]:
 
         # 序列拉避免帶註並發被 TWSE 拒絕
         try:
-            twse_data = await _http_get(TWSE_BASIC_URL)
+            twse_data = await _http_get(TWSE_BASIC_URL, source_name="TWSE")
         except Exception as e:
             twse_data = e
         try:
-            tpex_data = await _http_get(TPEX_BASIC_URL)
+            tpex_data = await _http_get(TPEX_BASIC_URL, source_name="TPEx")
         except Exception as e:
             tpex_data = e
 
@@ -158,11 +274,25 @@ async def finmind_fetch(dataset: str, stock_id: str, start_date: str, end_date: 
         "end_date": end_date,
     }
     try:
-        data = await _http_get(FINMIND_URL, params=params, timeout=30.0)
+        data = await _http_get(FINMIND_URL, params=params, timeout=30.0, source_name="FinMind")
     except Exception:
+        # _http_get 已記錄來源錯誤，這裡以空 list 帶出並不進快取避免複製錯誤快取。
         return []
 
     if not isinstance(data, dict) or data.get("msg") != "success":
+        # FinMind 回 200 但 msg!=success（常見於 rate limit / token 不足 / 參數錯）
+        msg_text = (data.get("msg") if isinstance(data, dict) else None) or "non-success response"
+        status_hint = data.get("status") if isinstance(data, dict) else None
+        is_rl = isinstance(msg_text, str) and (
+            "limit" in msg_text.lower() or "次數" in msg_text or "超過" in msg_text
+        )
+        _record_source_error(SourceError(
+            source="FinMind",
+            url=f"{FINMIND_URL}?dataset={dataset}&data_id={stock_id}",
+            status_code=status_hint if isinstance(status_hint, int) else 200,
+            message=f"FinMind 回應非 success：msg={msg_text!r}",
+            is_rate_limited=is_rl,
+        ))
         rows: list[dict] = []
     else:
         rows = data.get("data") or []
@@ -204,7 +334,7 @@ async def get_business_scope(tax_id: str) -> list[dict]:
         f"?%24format=json&%24filter=Business_Accounting_NO%20eq%20{tax_id}"
     )
     try:
-        data = await _http_get(url, timeout=20.0, retries=2)
+        data = await _http_get(url, timeout=20.0, retries=2, source_name="GCIS")
     except Exception:
         return []
 
@@ -513,8 +643,17 @@ async def get_product_revenue(stock_id: str) -> dict:
             out.update(parsed)
 
     except httpx.HTTPError as e:
+        status, msg, rl = _classify_http_exc(e, MOPS_REDIRECT_URL)
+        _record_source_error(SourceError(
+            source="MOPS", url=MOPS_REDIRECT_URL, status_code=status,
+            message=msg, is_rate_limited=rl,
+        ))
         out["error"] = f"MOPS 連線錯誤：{type(e).__name__}: {str(e)[:120]}"
     except Exception as e:
+        _record_source_error(SourceError(
+            source="MOPS", url=MOPS_REDIRECT_URL, status_code=None,
+            message=f"{type(e).__name__}: {str(e)[:200]}",
+        ))
         out["error"] = f"MOPS 解析錯誤：{type(e).__name__}: {str(e)[:120]}"
 
     _product_revenue_cache[stock_id] = out
@@ -825,8 +964,17 @@ async def get_product_revenue_at(stock_id: str, as_of_year: int, as_of_month: in
 
             out.update(parsed)
     except httpx.HTTPError as e:
+        status, msg, rl = _classify_http_exc(e, MOPS_REDIRECT_URL)
+        _record_source_error(SourceError(
+            source="MOPS", url=MOPS_REDIRECT_URL, status_code=status,
+            message=msg, is_rate_limited=rl,
+        ))
         out["error"] = f"MOPS 連線錯誤：{type(e).__name__}: {str(e)[:120]}"
     except Exception as e:
+        _record_source_error(SourceError(
+            source="MOPS", url=MOPS_REDIRECT_URL, status_code=None,
+            message=f"{type(e).__name__}: {str(e)[:200]}",
+        ))
         out["error"] = f"MOPS 處理錯誤：{type(e).__name__}: {str(e)[:120]}"
 
     _product_revenue_at_cache[cache_key] = out
