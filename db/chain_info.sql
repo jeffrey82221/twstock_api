@@ -1,5 +1,5 @@
 
-CREATE or REPLACE VIEW investment.flatten_chain_info AS
+CREATE or REPLACE VIEW investment.chain_info AS
 SELECT
 	t.ic_code,
 	t.ic_name,
@@ -23,4 +23,4 @@ FROM (
 	CROSS JOIN LATERAL jsonb_array_elements(seg.value) AS top_elem
 ) t
 CROSS JOIN LATERAL jsonb_array_elements(t.subchains::JSONB) AS sub_elem
-CROSS JOIN LATERAL jsonb_array_elements(sub_elem->'companies') AS comp
+CROSS JOIN LATERAL jsonb_array_elements(sub_elem->'companies') AS comp;

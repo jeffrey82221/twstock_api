@@ -3,10 +3,10 @@ AS
 SELECT 
 	ic_code,
 	ic_name,
-	'http://host.docker.internal:5001/api/chain/' || ic_code AS url,
+	'http://host.docker.internal:5002/api/chain/' || ic_code AS url,
 	(
 	SELECT content 
-	FROM http_get('http://host.docker.internal:5001/api/chain/' || ic_code)
+	FROM http_get('http://host.docker.internal:5002/api/chain/' || ic_code)
 	)::jsonb 
 	AS segments
 FROM (
@@ -18,6 +18,6 @@ FROM (
 		    status,
 		    content_type,
 		    content::jsonb->>'chains' AS chains
-		FROM http_get('http://host.docker.internal:5001/api/chains')
+		FROM http_get('http://host.docker.internal:5002/api/chains')
 	)
 );
