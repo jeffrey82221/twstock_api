@@ -1,5 +1,7 @@
--- Increase connect timeout to 10 seconds
+CREATE EXTENSION IF NOT EXISTS http;
+
+CREATE EXTENSION IF NOT EXISTS pg_ivm;
+
 SELECT http_set_curlopt('CURLOPT_CONNECTTIMEOUT', '6');
 
--- Increase overall request timeout to 30 seconds
 SELECT http_set_curlopt('CURLOPT_TIMEOUT', '12000');
