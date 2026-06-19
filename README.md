@@ -1,5 +1,7 @@
 # TWStock Query · 台灣上市櫃公司查詢平台
 
+**Version: v0.0.1**
+
 整合免費公開資料源（TWSE OpenAPI、TPEx OpenAPI、FinMind v4、經濟部商工 API），
 提供任一上市/上櫃公司的基本資料、主要營業項目、EPS、營收、淨利、股利、營業利潤率、營收成長率、總經理等資訊。
 
