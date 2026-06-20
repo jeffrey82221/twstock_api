@@ -32,6 +32,7 @@ from .sources import (
     get_source_errors,
     load_basic_table,
 )
+from .yfinance_source import get_financial_statements_yf
 
 
 def with_source_error_tracking(func):
@@ -265,6 +266,59 @@ async def query_financials(stock_id: str, as_of_str: Optional[str] = None) -> di
         "operating_margin_pct": op_margin,
         "revenue_ttm_from_financial_statements": revenue_ttm_fs,
         "source": "FinMind v4 TaiwanStockFinancialStatements",
+    }
+
+
+# =====================================================================
+# 3b) /api/company/{stock_id}/financials/yfinance — yfinance 季財報衍生
+# =====================================================================
+# 設計理念：與 query_financials 完全相同的 input / output spec（including 欄位、
+# 計算流程、TTM 邏輯），只把上游從 FinMind 切換到 yfinance。透過 yfinance_source
+# 在抓取時把「年初累計值」差分還原為「單季值」，使 quarter_map / _ttm_value 完全
+# 共用而不需新增分支。
+@with_source_error_tracking
+async def query_financials_yfinance(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
+    stock_id = stock_id.strip()
+    as_of = _resolve_as_of(as_of_str)
+
+    # 從 basic 表取得市場別，以決定 .TW vs .TWO
+    basic = await _get_basic(stock_id)
+    market = basic.get("market") if basic else None
+
+    fs_rows = await get_financial_statements_yf(stock_id, market)
+    qmap = _build_quarter_map(fs_rows)
+
+    eps_ttm, eps_quarters = _ttm_value(qmap, as_of, "EPS")
+    revenue_ttm_fs, _ = _ttm_value(qmap, as_of, "Revenue")
+    net_income_ttm, ni_quarters = _ttm_value(qmap, as_of, "IncomeAfterTaxes")
+    op_income_ttm, _ = _ttm_value(qmap, as_of, "OperatingIncome")
+
+    op_margin: Optional[float] = None
+    if op_income_ttm is not None and revenue_ttm_fs and revenue_ttm_fs != 0:
+        op_margin = op_income_ttm / revenue_ttm_fs * 100
+
+    latest_eps_q, latest_eps_q_date = _latest_quarter_value(qmap, as_of, "EPS")
+    latest_ni_q, latest_ni_q_date = _latest_quarter_value(qmap, as_of, "IncomeAfterTaxes")
+
+    return {
+        "found": True,
+        "stock_id": stock_id,
+        "as_of": as_of.isoformat(),
+        "eps": {
+            "ttm": eps_ttm,
+            "ttm_quarters": eps_quarters,
+            "latest_quarter_value": latest_eps_q,
+            "latest_quarter_date": latest_eps_q_date,
+        },
+        "net_income": {
+            "ttm": net_income_ttm,
+            "ttm_quarters": ni_quarters,
+            "latest_quarter_value": latest_ni_q,
+            "latest_quarter_date": latest_ni_q_date,
+        },
+        "operating_margin_pct": op_margin,
+        "revenue_ttm_from_financial_statements": revenue_ttm_fs,
+        "source": "yfinance Ticker.quarterly_financials (.TW / .TWO)",
     }
 
 

@@ -34,6 +34,7 @@ from .service import (
     query_business_items,
     query_dividend,
     query_financials,
+    query_financials_yfinance,
     query_product_revenue,
     query_revenue,
     query_value_chain,
@@ -351,6 +352,36 @@ async def api_company_financials(
     as_of: str | None = Query(None, description=_AS_OF_DESC),
 ):
     return await query_financials(stock_id, as_of)
+
+
+@app.get(
+    "/api/company/{stock_id}/financials/yfinance",
+    response_model=FinancialsResponse,
+    tags=["Company (per-source)"],
+    summary="EPS / 淨利 / 營業利潤率（yfinance 季財報、與 FinMind 版 spec 一致）",
+    description=(
+        "**資料來源網站正式名稱**：yfinance Python Library（Yahoo Finance 非官方 wrapper）。\n\n"
+        "**資料源 API 用法**：\n"
+        "- `yfinance.Ticker(\"{stock_id}.TW\")` 上市、`{stock_id}.TWO` 上櫃。\n"
+        "- `ticker.quarterly_financials` 取得 income statement DataFrame（columns=財報日、"
+        "index=欄位名）。\n"
+        "- 欄位對應：`Basic EPS` → EPS、`Net Income` → 稅後淨利、"
+        "`Operating Income` → 營業淨利、`Total Revenue` → 營收。\n\n"
+        "**處理邏輯**（與原 endpoint 輸出欄位 100% 一致）：\n"
+        "1. yfinance 台股 `quarterly_financials` 回傳的已是「單季值」（sandbox 驗證與 FinMind 單季誤差 < 1%），不需差分還原。\n"
+        "2. 送 NaN / 缺值跳過後，轉為與 FinMind 同結構的 `{date, type, value}` rows。\n"
+        "3. `EPS / IncomeAfterTaxes / OperatingIncome / Revenue` 各取 `date ≤ as_of` 最近 4 季 value 加總為 TTM；不足 4 季回 null。\n"
+        "4. `operating_margin_pct = OperatingIncome(TTM) / Revenue(TTM) × 100`。\n\n"
+        "**優點**：請求限制遠高於 FinMind（經驗值每小時可達數千次）、免費、無需 token。\n"
+        "**缺點**：台股財報細目不如 FinMind 詳盡，偶有個別季欄位 NaN、標籤對應可能不精準；"
+        "本 endpoint 遇 NaN / 缺值會跳過，靠「不足 4 季回 null」的保護避免錯誤結果。"
+    ),
+)
+async def api_company_financials_yfinance(
+    stock_id: str,
+    as_of: str | None = Query(None, description=_AS_OF_DESC),
+):
+    return await query_financials_yfinance(stock_id, as_of)
 
 
 @app.get(
