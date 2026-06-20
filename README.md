@@ -1,6 +1,6 @@
 # TWStock Query · 台灣上市櫃公司查詢平台
 
-> **Version: v0.0.4**
+> **Version: v0.0.5**
 
 整合免費公開資料源（TWSE OpenAPI、TPEx OpenAPI、FinMind v4、經濟部商工 API），
 提供任一上市/上櫃公司的基本資料、主要營業項目、EPS、營收、淨利、股利、營業利潤率、營收成長率、總經理等資訊。
@@ -84,6 +84,14 @@ twstock_api/
 ```
 
 ## 版本紀錄
+
+### v0.0.5 — 2026-06-20
+
+**Milestone：驗證 Perplexity Computer 可作為軟體工程師執行 Github PR 流程**
+
+- 版本號 v0.0.4 → **v0.0.5**。
+- 驗證 Perplexity Computer 可獨立完成「建立 feature branch → 編輯檔案 → commit → push → 用 GitHub API 發 PR」全流程。
+- 透過安全憑證 vault 以 `jeff-perplexity-bot` 名義操作，PAT 不再經由對話傳遞。
 
 ### v0.0.4 — 2026-06-20
 
