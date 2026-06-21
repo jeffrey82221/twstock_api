@@ -60,6 +60,7 @@ Swagger UI: http://localhost:5000/docs
 
 - **TWSE/TPEx OpenAPI**：免費公開，每日刷新一次基本資料（資本額、總經理可能落後 1 天）
 - **FinMind v4**：免費 300 req/hr，無需 token；本服務內建 1 小時 TTL 快取
+- **yfinance** (Python Library、Yahoo Finance 非官方 wrapper)：免費、無需 token，請求限制遠寬於 FinMind（經驗值每小時可達數千次）。台股財報細目不如 FinMind 詳盡，偶有 NaN、標籤對應可能不精準；本服務 1 小時 TTL 快取
 - **經濟部商工 API**：全國公司登記資料集（`236EE382-...025E7C`），含「所營事業 Cmp_Business」欄位。本服務依「營利事業統一編號 Business_Accounting_NO」查詢，內建 24 小時快取。商工 API 資料集每日更新，公司所營事業變動頻率低（通常最多一年一次）；同一公司可能同時存在「行業分類」與「敘述條目」，後者最具識別度。
 - 季財報：依公開資訊觀測站申報日為準（一般 Q1 5 月、Q2 8 月、Q3 11 月、Q4 隔年 3 月）
 - 月營收：每月 10 日前公告上月數據
@@ -84,6 +85,21 @@ twstock_api/
 ```
 
 ## 版本紀錄
+
+### v0.0.6 — 2026-06-20
+
+**Milestone：新增 yfinance 為 EPS / 淨利 / 營業利潤率的替代資料源**
+
+- 保留原 `GET /api/company/{stock_id}/financials` (FinMind) 邏輯不變。
+- 新增 `GET /api/company/{stock_id}/financials/yfinance`，與原 endpoint **input / output spec 完全一致**，但來源使用 `yfinance.Ticker("{stock_id}.TW" 或 ".TWO")` 的 `quarterly_financials`。
+- 設計重點：
+  - 自動從 basic 表讀取 `market` 欄位以決定 `.TW` / `.TWO` 後綴。
+  - yfinance 台股 quarterly 數值已是「單季值」（與 FinMind 同結構），內建限 NaN / 缺值跳過。
+  - 複用 service 層原有的 `_build_quarter_map` / `_ttm_value` 計算函式（零分支）。
+  - 1 小時 TTL 快取；以 `asyncio.to_thread` 包裝避免阻塞 event loop。
+  - 來源錯誤接入 v0.0.2 的 SourceError tracking 機制，遵「查不到 → found=False」原則。
+- 驗證：2330.TW 新 endpoint vs FinMind 原 endpoint TTM net_income 誤差 < 1%、營業利潤率幾乎一致 (53.31% 對 53.31%)、revenue_ttm 完全一致。
+- yfinance 在台股個別季 EPS 有 NaN 是已知限制，跳過後「不足 4 季」保護會讓 TTM EPS 回 null，以避免誤導。
 
 ### v0.0.5 — 2026-06-20
 
