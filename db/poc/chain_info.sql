@@ -1,5 +1,4 @@
 
-CREATE or REPLACE VIEW investment.chain_info AS
 SELECT
 	t.ic_code,
 	t.ic_name,
@@ -18,7 +17,7 @@ FROM (
 	    top_elem->>'top_code' AS top_code,
 	    top_elem->>'top_name' AS top_name,
 		(top_elem->>'sub_chains') AS subchains
-	FROM investment.raw_chain_info tt
+	FROM poc.raw_chain_info tt
 	CROSS JOIN LATERAL jsonb_each(tt.segments->'segments') AS seg(key, value)
 	CROSS JOIN LATERAL jsonb_array_elements(seg.value) AS top_elem
 ) t

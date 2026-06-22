@@ -1,5 +1,3 @@
-CREATE OR REPLACE VIEW investment.raw_chain_info
-AS
 SELECT 
 	ic_code,
 	ic_name,

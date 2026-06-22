@@ -1,5 +1,3 @@
-CREATE or REPLACE VIEW investment.company_business_items
-AS
 SELECT 
     business_items->>'stock_id' AS stock_id,
     elem->>'code' AS code,
@@ -7,7 +5,7 @@ SELECT
 FROM (
 	SELECT *
 	FROM
-    	investment.raw_company_info
+    	poc.raw_company_info
 	WHERE (business_items->'found')::BOOL
 )
 CROSS JOIN LATERAL jsonb_array_elements(business_items->'categories') AS elem

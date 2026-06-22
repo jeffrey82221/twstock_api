@@ -1,5 +1,3 @@
-CREATE OR REPLACE VIEW investment.company_basic_info
-AS 
 SELECT 
 	stk_code,
 	company_name
@@ -39,6 +37,6 @@ FROM (
 		TRIM('"' FROM (basic->'general_manager')::TEXT) AS general_manager,
 		TRIM('"' FROM (basic->'paid_in_capital')::TEXT) AS paid_in_capital,
 		TRIM('"' FROM (basic->'incorporation_date')::TEXT) AS incorporation_date
-	FROM investment.raw_company_info
+	FROM poc.raw_company_info
 )
 WHERE found = TRUE;

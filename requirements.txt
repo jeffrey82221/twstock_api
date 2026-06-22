@@ -6,3 +6,7 @@ cachetools==5.5.0
 beautifulsoup4==4.12.3
 lxml==5.3.0
 yfinance>=0.2.40
+sql-metadata==2.20.0
+sqlparse==0.5.5
+psycopg[binary]==3.3.4
+paradag==1.2.0

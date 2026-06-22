@@ -1,5 +1,3 @@
-CREATE or REPLACE VIEW investment.financial_quarter_list
-AS
 SELECT 
 	stk_code,
 	value::DATE AS quater
@@ -19,7 +17,7 @@ FROM (
 		        SELECT jsonb_array_elements(financials->'net_income'->'ttm_quarters') AS elem
 		    ) sub
 		) AS quarter
-	FROM investment.raw_yearly_financials
+	FROM poc.raw_yearly_financials
 	)
 	WHERE quarter <> '[null]'
 ) AS t

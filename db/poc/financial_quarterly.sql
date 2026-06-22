@@ -1,5 +1,3 @@
-CREATE or REPLACE VIEW investment.financial_quarterly
-AS
 SELECT 
 	stk_code,
 	TO_DATE(TRIM('"' FROM (financials->'as_of')::TEXT), 'YYYY-MM-DD') AS as_of,
@@ -17,7 +15,7 @@ FROM (
 		SELECT 
 			stk_code,
 			(SELECT content FROM http_get('http://host.docker.internal:5002/api/company/' || stk_code || '/financials?as_of=' || quater ))::JSONB AS financials
-		FROM investment.financial_quarter_list
+		FROM poc.financial_quarter_list
 	)
 	WHERE (financials->'eps'->'ttm')::text <> 'null'
 )
