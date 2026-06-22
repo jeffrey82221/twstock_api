@@ -1,5 +1,3 @@
-CREATE or REPLACE VIEW investment.financial_year_list 
-AS 
 SELECT 
 	stk_code, 
 	generate_series(
@@ -7,4 +5,4 @@ SELECT
 		CURRENT_DATE,        
 		INTERVAL '1 year'
 	) AS year_start_date
-FROM investment.company_basic_info;
+FROM poc.company_basic_info;
