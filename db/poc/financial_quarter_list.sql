@@ -1,6 +1,6 @@
 SELECT 
 	stk_code,
-	value::DATE AS quater
+	{{ schema }}.parse_iso_date(value) AS quater
 FROM (
 
 	SELECT 
@@ -17,7 +17,7 @@ FROM (
 		        SELECT jsonb_array_elements(financials->'net_income'->'ttm_quarters') AS elem
 		    ) sub
 		) AS quarter
-	FROM poc.raw_yearly_financials
+	FROM {{ schema }}.raw_yearly_financials
 	)
 	WHERE quarter <> '[null]'
 ) AS t
