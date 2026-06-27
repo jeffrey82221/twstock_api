@@ -10,12 +10,14 @@ SELECT
 	short_name,
 	full_name,
 	english_name,
-	listing_date::DATE,--this is mutable
+	{{ schema }}.parse_iso_date(listing_date) AS listing_date,
 	industry_code,
 	industry_name,
 	general_manager,
-	paid_in_capital::BIGINT,
-	incorporation_date::DATE--this is mutable
+	CASE WHEN paid_in_capital ~ '^[0-9]+$' THEN
+		paid_in_capital::BIGINT
+	ELSE NULL END AS paid_in_capital,
+	{{ schema }}.parse_iso_date(incorporation_date) AS incorporation_date
 FROM (
 	SELECT 
 		stk_code,
@@ -39,4 +41,3 @@ FROM (
 		BTRIM((basic->'incorporation_date')::TEXT, '"'::TEXT) AS incorporation_date
 	FROM {{ schema }}.raw_company_info
 )
-WHERE found = TRUE;

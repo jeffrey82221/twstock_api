@@ -2,10 +2,9 @@
 import os
 from jinja2 import Template
 from sql_metadata import Parser
-from typing import List, Dict
+from typing import List, Dict, Optional
 from paradag import DAG, dag_run, SequentialProcessor
 from pg_tool import PostgreSQLTool
-import sqlparse
 
 class ViewExecutor:
     def __init__(self, results: List[str]):
@@ -22,6 +21,8 @@ class Pipeline:
     def __init__(self):
         self._sql_paths = list(filter(lambda x: x.endswith('.sql'), 
                             os.listdir(os.path.join(os.path.dirname(__file__), 'db', 'poc'))   ))
+        
+        self.poc_tables = ['poc.' + s.split('.sql')[0] for s in self._sql_paths]
         self.dag = self._create_dag()
         self._db_tool = PostgreSQLTool()
     
@@ -47,25 +48,30 @@ class Pipeline:
                 print('Parsing SQL for:', sql_path)
                 print('SQL content:\n', sql)
                 parser = Parser(sql)
-                results[sql_path] = [t for t in parser.tables if t.startswith('poc.')]
+                results[sql_path] = [t for t in parser.tables if t.startswith('poc.') and t in self.poc_tables]
         return results
     
     @property
     def view_create_sqls(self) -> Dict[str, str]:
         results = dict()
         for sql_path in self._sql_paths:
-            with open(os.path.join(os.path.dirname(__file__), 'db', 'poc', sql_path), 'r') as f:
-                sql = f.read()
-                view_name = sql_path.split('.')[0]
-                view_create_sql = f'''CREATE OR REPLACE VIEW poc.{view_name}
-                AS 
-                {sql}
-                '''
-                results[sql_path] = Template(view_create_sql).render(schema='poc')
-        return results
-    
-    
+            view_create_sql = self._get_view_create_sql('poc', sql_path)
+            results[sql_path] = view_create_sql
+        return results    
 
+    def _get_view_create_sql(self, schema: str, sql_path: str, target_schema: Optional[str]=None) -> str:
+        if target_schema is None:
+            target_schema = schema
+        with open(os.path.join(os.path.dirname(__file__), 'db', 'poc', sql_path), 'r') as f:
+            sql = f.read()
+            sql = Template(sql).render(schema=schema)
+            view_name = sql_path.split('.')[0]
+            view_create_sql = f'''CREATE OR REPLACE VIEW {target_schema}.{view_name}
+            AS 
+            {sql}
+            '''
+        return view_create_sql
+    
     @property
     def ordered_sql_paths(self) -> List[str]:
         results = []
@@ -123,10 +129,12 @@ class Pipeline:
             self._db_tool.execute_query(create_sql)
             
 
-    def _get_matview_create_sqls(self, schema: str, sql_path: str) -> str:
+    def _get_matview_create_sqls(self, schema: str, sql_path: str, target_schema: Optional[str]=None) -> str:
         sql = self._get_matview_select_sqls(schema, sql_path)
         view_name = sql_path.split('.')[0]
-        view_create_sql = f"""SELECT pgivm.create_immv('{schema}.{view_name}',
+        if target_schema is None:
+            target_schema = schema
+        view_create_sql = f"""SELECT pgivm.create_immv('{target_schema}.{view_name}',
             $sql$
             {sql}
             $sql$
@@ -167,7 +175,13 @@ class Pipeline:
 
         作法：
         """
+        self._db_tool.execute_query('DROP SCHEMA IF EXISTS pop CASCADE;')
+        self._db_tool.execute_query('CREATE SCHEMA IF NOT EXISTS pop;')
+        self._db_tool.execute_query('DROP SCHEMA IF EXISTS hidden CASCADE;')
+        self._db_tool.execute_query('CREATE SCHEMA IF NOT EXISTS hidden;')
+        self.create_seed_tables()
         self._install_immutable_funcs('pop')
+        self._install_immutable_funcs('hidden')
         for sql_path in self.ordered_sql_paths:
             if not self.table_exists('pop', sql_path.split('.')[0]):
                 sql = self._get_matview_create_sqls('pop', sql_path)
@@ -176,3 +190,24 @@ class Pipeline:
                 print('Executing SQL:\n', sql)
                 self._db_tool.execute_query(sql)
                 print('==========SUCCESS==================')
+            elif sql_path.endswith('_list.sql'):
+                sql = self._get_view_create_sql('pop', sql_path, target_schema='hidden')
+                print('=================================')
+                print('Creating view for:', sql_path)
+                print('Executing SQL:\n', sql)
+                self._db_tool.execute_query(sql)
+                print('==========SUCCESS==================')
+        self._insert_few_rows_to_seed_tables(row_cnt=1)
+
+    def _insert_few_rows_to_seed_tables(self, row_cnt: int = 1):
+        """
+        從 poc views 取一筆資料，插入到 seed tables
+        """
+        for table in self.seed_tables:
+            insert_sql = f"""
+            INSERT INTO pop.{table}
+            SELECT * FROM poc.{table} LIMIT {row_cnt};
+            """
+            print('Inserting one row into seed table:', table)
+            print('Executing SQL:\n', insert_sql)
+            self._db_tool.execute_query(insert_sql)

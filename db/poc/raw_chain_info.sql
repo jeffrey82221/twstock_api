@@ -10,8 +10,6 @@ FROM (
 		jsonb_array_elements(chains::jsonb)->>'ic_code' AS ic_code,
 		jsonb_array_elements(chains::jsonb)->>'ic_name' AS ic_name
 	FROM (
-		SELECT
-		    content::jsonb->>'chains' AS chains
-		FROM http_get('http://host.docker.internal:5002/api/chains')
+		SELECT {{ schema }}.http_get_content('http://host.docker.internal:5002/api/chains')::jsonb->>'chains' AS chains
 	)
 );
