@@ -14,7 +14,9 @@ SELECT
 	industry_code,
 	industry_name,
 	general_manager,
-	paid_in_capital::BIGINT,
+	CASE WHEN paid_in_capital ~ '^[0-9]+$' THEN
+		paid_in_capital::BIGINT
+	ELSE NULL END AS paid_in_capital,
 	{{ schema }}.parse_iso_date(incorporation_date) AS incorporation_date
 FROM (
 	SELECT 
@@ -39,4 +41,3 @@ FROM (
 		BTRIM((basic->'incorporation_date')::TEXT, '"'::TEXT) AS incorporation_date
 	FROM {{ schema }}.raw_company_info
 )
-WHERE found = TRUE;
