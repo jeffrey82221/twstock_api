@@ -1,8 +1,12 @@
 SELECT 
 	stk_code, 
-	generate_series(
-	    DATE_TRUNC('year', incorporation_date)::DATE,
-		CURRENT_DATE,        
-		INTERVAL '1 year'
+	make_date(
+		EXTRACT(YEAR FROM incorporation_date)::int + offset_years,
+		1,
+		1
 	) AS year_start_date
-FROM {{ schema }}.company_basic_info;
+FROM {{ schema }}.company_basic_info
+CROSS JOIN LATERAL generate_series(
+	0,
+	(EXTRACT(YEAR FROM CURRENT_DATE)::int - EXTRACT(YEAR FROM incorporation_date)::int)
+) AS gs(offset_years);
