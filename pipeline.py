@@ -73,19 +73,31 @@ class Pipeline:
             self.dag, processor=SequentialProcessor(), executor=ViewExecutor(results))
         return results
 
+    def _render_immutable_funcs(self, schema: str) -> str:
+        """Render db/immutable_func.sql as a Jinja template for the given schema.
+
+        The rendered SQL installs all schema-scoped IMMUTABLE helper
+        functions (e.g. ``{schema}.http_get_content``) that views and
+        materialized views in that schema depend on.
+        """
+        template_path = os.path.join(
+            os.path.dirname(__file__), 'db', 'immutable_func.sql'
+        )
+        with open(template_path, 'r') as f:
+            return Template(f.read()).render(schema=schema)
+
+    def _install_immutable_funcs(self, schema: str) -> None:
+        """Render and execute the immutable-function template for ``schema``."""
+        sql = self._render_immutable_funcs(schema)
+        print(f'Installing immutable functions for schema: {schema}')
+        print('Executing SQL:\n', sql)
+        self._db_tool.execute_query(sql)
+
     def create_views(self):
         create_sqls = self.view_create_sqls
         self._db_tool.execute_query('DROP SCHEMA IF EXISTS poc CASCADE;')
         self._db_tool.execute_query('CREATE SCHEMA poc;')
-        self._db_tool.execute_query('''
-            CREATE OR REPLACE FUNCTION poc.http_get_content(p_url text)
-            RETURNS jsonb
-            LANGUAGE sql
-            IMMUTABLE
-            AS $$
-            SELECT content::JSONB FROM http_get(p_url)
-            $$;
-                ''')
+        self._install_immutable_funcs('poc')
         for sql_path in self.ordered_sql_paths:
             print('Creating view for:', sql_path)
             create_sql = create_sqls[sql_path]
@@ -155,6 +167,7 @@ class Pipeline:
 
         作法：
         """
+        self._install_immutable_funcs('pop')
         for sql_path in self.ordered_sql_paths:
             if not self.table_exists('pop', sql_path.split('.')[0]):
                 sql = self._get_matview_create_sqls('pop', sql_path)
