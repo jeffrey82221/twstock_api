@@ -5,7 +5,7 @@ SELECT
 FROM (
 	SELECT *
 	FROM
-    	poc.raw_company_info
+    	{{ schema }}.raw_company_info
 	WHERE (business_items->'found')::BOOL
 )
 CROSS JOIN LATERAL jsonb_array_elements(business_items->'categories') AS elem

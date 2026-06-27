@@ -14,8 +14,12 @@ FROM (
 	FROM (
 		SELECT 
 			stk_code,
-			(SELECT content FROM http_get('http://host.docker.internal:5002/api/company/' || stk_code || '/financials?as_of=' || quater ))::JSONB AS financials
-		FROM poc.financial_quarter_list
+			{{ schema }}.http_get_content(
+				(
+					'http://host.docker.internal:5002/api/company/' || stk_code || '/financials?as_of=' || quater 
+				)::TEXT
+				) AS financials
+		FROM {{ schema }}.financial_quarter_list
 	)
 	WHERE (financials->'eps'->'ttm')::text <> 'null'
 )

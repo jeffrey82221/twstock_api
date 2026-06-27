@@ -5,4 +5,4 @@ SELECT
 		CURRENT_DATE,        
 		INTERVAL '1 year'
 	) AS year_start_date
-FROM poc.company_basic_info;
+FROM {{ schema }}.company_basic_info;

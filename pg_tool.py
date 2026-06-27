@@ -21,6 +21,7 @@ class PostgreSQLTool:
                 conn.commit()
         except BaseException as e:
             print(f"Database operation failed: {e}")
+            raise e
         finally:
             conn.close()
 
@@ -33,6 +34,6 @@ class PostgreSQLTool:
                 return cursor.fetchall()
         except BaseException as e:
             print(f"Database fetch operation failed: {e}")
-            return []
+            raise e
         finally:
             conn.close()

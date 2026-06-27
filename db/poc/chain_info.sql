@@ -17,7 +17,7 @@ FROM (
 	    top_elem->>'top_code' AS top_code,
 	    top_elem->>'top_name' AS top_name,
 		(top_elem->>'sub_chains') AS subchains
-	FROM poc.raw_chain_info tt
+	FROM {{ schema }}.raw_chain_info tt
 	CROSS JOIN LATERAL jsonb_each(tt.segments->'segments') AS seg(key, value)
 	CROSS JOIN LATERAL jsonb_array_elements(seg.value) AS top_elem
 ) t
