@@ -236,6 +236,128 @@ class Pipeline:
                 print('==========SUCCESS==================')
         self._insert_few_rows_to_seed_tables(row_cnt=1)
 
+    @staticmethod
+    def _period_minutes_to_cron(period_minutes: int) -> str:
+        """Translate a minute-period into a 5-field cron expression.
+
+        Supported:
+          - 1..59 minutes   -> '*/N * * * *'
+          - >=60 minutes, evenly dividing 60*24 (hour-aligned periods
+            of 60, 120, 180, ..., 720, 1440) -> '0 */H * * *' or daily
+          - Exactly 1440    -> '0 0 * * *' (daily at midnight)
+
+        Anything else raises ValueError instead of silently producing a
+        cron that drifts (e.g. period=90 has no clean 5-field form).
+        """
+        if not isinstance(period_minutes, int) or period_minutes <= 0:
+            raise ValueError(
+                f'period_minutes must be a positive int, got {period_minutes!r}'
+            )
+        if period_minutes < 60:
+            if 60 % period_minutes != 0 and period_minutes not in range(1, 60):
+                raise ValueError(
+                    f'period_minutes={period_minutes} cannot be expressed cleanly; '
+                    'use a divisor of 60 (1,2,3,4,5,6,10,12,15,20,30) or any 1..59 '
+                    'value via */N semantics.'
+                )
+            return f'*/{period_minutes} * * * *'
+        if period_minutes == 1440:
+            return '0 0 * * *'
+        if period_minutes % 60 != 0:
+            raise ValueError(
+                f'period_minutes={period_minutes} must be <60 or a multiple of 60'
+            )
+        hours = period_minutes // 60
+        if 24 % hours != 0:
+            raise ValueError(
+                f'period_minutes={period_minutes} ({hours}h) does not evenly divide a day; '
+                'use 60, 120, 180, 240, 360, 480, 720, or 1440.'
+            )
+        return f'0 */{hours} * * *'
+
+    def schedule_seed_table_refresh(
+        self,
+        table: str,
+        period_minutes: int,
+        row_cnt: int = 1,
+        job_name: Optional[str] = None,
+    ) -> str:
+        """Schedule (or update) a pg_cron job that periodically inserts new
+        rows from hidden.<table> into pop.<table>.
+
+        The SQL executed on each tick is identical in shape to one
+        iteration of _insert_few_rows_to_seed_tables (minus the
+        cross-table sleep), so the data is materialised the same way.
+
+        Parameters
+        ----------
+        table:
+            Seed table name (must be present in self.seed_tables).
+        period_minutes:
+            Refresh cadence in minutes. See _period_minutes_to_cron for
+            allowed values.
+        row_cnt:
+            How many new rows to insert per tick. Maps to SQL LIMIT.
+        job_name:
+            Optional pg_cron job name. Defaults to
+            'seed_refresh_<table>' so subsequent calls with the same
+            table act as an update (alter_job) instead of creating a
+            duplicate schedule.
+
+        Returns the resolved job_name.
+
+        Requires pg_cron to be installed and bound to the current DB
+        via cron.database_name (see db/enable_pg_cron.sh).
+        """
+        if table not in self.seed_tables:
+            raise ValueError(
+                f'{table!r} is not a known seed table. '
+                f'Known: {sorted(self.seed_tables)}'
+            )
+        if not isinstance(row_cnt, int) or row_cnt <= 0:
+            raise ValueError(f'row_cnt must be a positive int, got {row_cnt!r}')
+
+        schedule = self._period_minutes_to_cron(period_minutes)
+        if job_name is None:
+            job_name = f'seed_refresh_{table}'
+
+        # Use the exact same INSERT shape as _insert_few_rows_to_seed_tables.
+        # Single-line SQL keeps it readable in cron.job.
+        command = (
+            f'INSERT INTO pop.{table} '
+            f'SELECT * FROM hidden.{table} '
+            f'EXCEPT SELECT * FROM pop.{table} '
+            f'LIMIT {row_cnt};'
+        )
+
+        # "Upsert" the job: alter if it exists, otherwise schedule.
+        existing = self._db_tool.fetch_all(
+            'SELECT jobid FROM cron.job WHERE jobname = %s',
+            (job_name,),
+        )
+        if existing:
+            jobid = existing[0][0]
+            alter_sql = (
+                f"SELECT cron.alter_job(jobid := {jobid}, "
+                f"schedule := %s, command := %s);"
+            )
+            print(
+                f'Updating pg_cron job {job_name!r} (jobid={jobid}): '
+                f'schedule={schedule!r}, command={command!r}'
+            )
+            self._db_tool.execute_query(alter_sql, (schedule, command))
+        else:
+            print(
+                f'Creating pg_cron job {job_name!r}: '
+                f'schedule={schedule!r}, command={command!r}'
+            )
+            self._db_tool.execute_query(
+                'SELECT cron.schedule(%s, %s, %s);',
+                (job_name, schedule, command),
+            )
+
+        return job_name
+
     def _insert_few_rows_to_seed_tables(self, row_cnt: int = 1, sleep_time: int = 2):
         """
         從 poc views 取一筆資料，插入到 seed tables
