@@ -10,14 +10,14 @@ SELECT
 	short_name,
 	full_name,
 	english_name,
-	{{ schema }}.parse_iso_date(listing_date) AS listing_date,
+	custom.parse_iso_date(listing_date) AS listing_date,
 	industry_code,
 	industry_name,
 	general_manager,
 	CASE WHEN paid_in_capital ~ '^[0-9]+$' THEN
 		paid_in_capital::BIGINT
 	ELSE NULL END AS paid_in_capital,
-	{{ schema }}.parse_iso_date(incorporation_date) AS incorporation_date
+	custom.parse_iso_date(incorporation_date) AS incorporation_date
 FROM (
 	SELECT 
 		stk_code,

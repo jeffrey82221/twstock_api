@@ -1,9 +1,9 @@
 SELECT 
 	stk_code,
-	{{ schema }}.parse_iso_date(TRIM('"' FROM (financials->'as_of')::TEXT)) AS as_of,
+	custom.parse_iso_date(TRIM('"' FROM (financials->'as_of')::TEXT)) AS as_of,
 	TRIM('"' FROM (financials->'stock_id')::TEXT) AS stock_id,
 	(financials->'eps'->'ttm')::NUMERIC AS eps_ttm,
-	{{ schema }}.parse_iso_date(TRIM('"' FROM (financials->'eps'->'latest_quarter_date')::TEXT)) AS latest_quarter_date,
+	custom.parse_iso_date(TRIM('"' FROM (financials->'eps'->'latest_quarter_date')::TEXT)) AS latest_quarter_date,
 	(financials->'eps'->'latest_quarter_value')::NUMERIC AS latest_quarter_eps,
 	(financials->'net_income'->>'ttm')::NUMERIC AS net_income_ttm,
 	(financials->'net_income'->>'latest_quarter_value')::NUMERIC AS latest_quarter_net_income,
@@ -14,9 +14,9 @@ FROM (
 	FROM (
 		SELECT 
 			stk_code,
-			{{ schema }}.http_get_content(
+			custom.http_get_content(
 				(
-					'http://host.docker.internal:5002/api/company/' || stk_code || '/financials?as_of=' || {{ schema }}.date_to_iso(quater)
+					'http://host.docker.internal:5002/api/company/' || stk_code || '/financials?as_of=' || custom.date_to_iso(quater)
 				)::TEXT
 				) AS financials
 		FROM {{ schema }}.financial_quarter_list

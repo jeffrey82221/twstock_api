@@ -37,3 +37,18 @@ class PostgreSQLTool:
             raise e
         finally:
             conn.close()
+
+    def setup(self):
+        """Set up the database with necessary extensions and schemas."""
+        try:
+            conn = self.get_conn()
+            with conn.cursor() as cursor:
+                with open('db/setting.sql', 'r') as f:
+                    sql = f.read()
+                    cursor.execute(sql)
+            conn.commit()
+        except BaseException as e:
+            print(f"Database setup failed: {e}")
+            raise e
+        finally:
+            conn.close()
