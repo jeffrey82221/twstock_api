@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS job_control.http_config (
 );
 
 INSERT INTO job_control.http_config (key, value)
-VALUES ('fetch_sleep_ms', '100')
+VALUES ('fetch_sleep_ms', '1')
 ON CONFLICT (key) DO UPDATE
 SET key = EXCLUDED.key,
     value = EXCLUDED.value;
