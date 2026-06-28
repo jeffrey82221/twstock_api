@@ -236,7 +236,7 @@ class Pipeline:
                 print('==========SUCCESS==================')
         self._insert_few_rows_to_seed_tables(row_cnt=1)
 
-    def _insert_few_rows_to_seed_tables(self, row_cnt: int = 1):
+    def _insert_few_rows_to_seed_tables(self, row_cnt: int = 1, sleep_time: int = 2):
         """
         從 poc views 取一筆資料，插入到 seed tables
         """
@@ -244,7 +244,7 @@ class Pipeline:
         for sql_path in self.ordered_sql_paths:
             table = sql_path.split('.')[0]
             if table in self.seed_tables:
-                time.sleep(2)
+                time.sleep(sleep_time)
                 insert_sql = f"""
                 INSERT INTO pop.{table}
                 SELECT * FROM hidden.{table} 
