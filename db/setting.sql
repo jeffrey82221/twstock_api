@@ -13,6 +13,8 @@ SELECT http_set_curlopt('CURLOPT_CONNECTTIMEOUT', '15000');
 
 SELECT http_set_curlopt('CURLOPT_TIMEOUT', '12000');
 
+SET work_mem = '512MB';
+
 CREATE SCHEMA IF NOT EXISTS poc;
 
 CREATE SCHEMA IF NOT EXISTS pop;
@@ -40,14 +42,6 @@ CREATE SCHEMA IF NOT EXISTS custom;
 -- building blocks (make_date, substring, integer math) and mark the
 -- wrapper IMMUTABLE so they can be safely used inside views and immvs.
 
--- HTTP fetch helper -- already used by raw_* views.
-CREATE OR REPLACE FUNCTION custom.http_get_content(p_url text)
-RETURNS jsonb
-LANGUAGE sql
-IMMUTABLE
-AS $$
-  SELECT content::JSONB FROM http_get(p_url)
-$$;
 
 -- Parse an ISO-8601 date string ('YYYY-MM-DD') into a date without
 -- depending on DateStyle. Equivalent to:
@@ -117,8 +111,10 @@ CREATE TABLE IF NOT EXISTS job_control.http_config (
 );
 
 INSERT INTO job_control.http_config (key, value)
-VALUES ('fetch_sleep_ms', '0')
-ON CONFLICT (key) DO NOTHING;
+VALUES ('fetch_sleep_ms', '100')
+ON CONFLICT (key) DO UPDATE
+SET key = EXCLUDED.key,
+    value = EXCLUDED.value;
 
 -- Append-only audit log. One row per http_get_content_logged call.
 CREATE TABLE IF NOT EXISTS job_control.http_log (
@@ -202,4 +198,13 @@ BEGIN
         RETURN NULL;
     END;
 END;
+$$;
+
+-- HTTP fetch helper -- already used by raw_* views.
+CREATE OR REPLACE FUNCTION custom.http_get_content(p_url text)
+RETURNS jsonb
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT custom.http_get_content_logged(p_url)
 $$;
