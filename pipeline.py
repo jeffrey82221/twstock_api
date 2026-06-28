@@ -5,7 +5,7 @@ from sql_metadata import Parser
 from typing import List, Dict, Optional
 from paradag import DAG, dag_run, SequentialProcessor
 from pg_tool import PostgreSQLTool
-
+import time
 class ViewExecutor:
     def __init__(self, results: List[str]):
         self.results = results
@@ -99,7 +99,7 @@ class Pipeline:
         sqls = list(self.dag.all_starts())
         sqls.extend([p for p in self._sql_paths if p.endswith('_list.sql')])
         results = [p.split('.sql')[0] for p in sqls]
-        return results
+        return list(set(results))
 
     def create_seed_tables(self):
         for table in self.seed_tables:
@@ -107,7 +107,66 @@ class Pipeline:
             create_sql = f'CREATE TABLE IF NOT EXISTS pop.{table} AS SELECT * FROM poc.{table} LIMIT 0;'
             print('Executing SQL:\n', create_sql)
             self._db_tool.execute_query(create_sql)
-            
+            self._set_seed_table_primary_key('pop', table)
+
+    def _set_seed_table_primary_key(self, schema: str, table: str) -> None:
+        """Promote every column of a freshly created seed table to PRIMARY KEY.
+
+        A composite PK over all columns is the simplest way to make a
+        seed table behave like a set (no duplicates) without having to
+        know the natural key in advance. We:
+          1. Skip if the table already has a primary key (idempotent reruns).
+          2. SET NOT NULL on every column -- PRIMARY KEY requires it.
+          3. ADD CONSTRAINT <table>_pkey PRIMARY KEY (col1, col2, ...).
+        """
+        pk_exists = self._db_tool.fetch_all(
+            """
+            SELECT 1
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            WHERE c.contype = 'p'
+              AND n.nspname = %s
+              AND t.relname = %s
+            """,
+            (schema, table),
+        )
+        if pk_exists:
+            print(f'Primary key already exists on {schema}.{table}, skipping.')
+            return
+
+        columns = [
+            row[0]
+            for row in self._db_tool.fetch_all(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = %s AND table_name = %s
+                ORDER BY ordinal_position
+                """,
+                (schema, table),
+            )
+        ]
+        if not columns:
+            print(f'No columns found for {schema}.{table}, skipping PK.')
+            return
+
+        for col in columns:
+            not_null_sql = (
+                f'ALTER TABLE {schema}.{table} '
+                f'ALTER COLUMN "{col}" SET NOT NULL;'
+            )
+            print('Executing SQL:\n', not_null_sql)
+            self._db_tool.execute_query(not_null_sql)
+
+        col_list = ', '.join(f'"{c}"' for c in columns)
+        pk_sql = (
+            f'ALTER TABLE {schema}.{table} '
+            f'ADD CONSTRAINT {table}_pkey PRIMARY KEY ({col_list});'
+        )
+        print('Executing SQL:\n', pk_sql)
+        self._db_tool.execute_query(pk_sql)
+
 
     def _get_matview_create_sqls(self, schema: str, sql_path: str, target_schema: Optional[str]=None) -> str:
         sql = self._get_matview_select_sqls(schema, sql_path)
@@ -177,15 +236,25 @@ class Pipeline:
                 print('==========SUCCESS==================')
         self._insert_few_rows_to_seed_tables(row_cnt=1)
 
-    def _insert_few_rows_to_seed_tables(self, row_cnt: int = 1):
+    def _insert_few_rows_to_seed_tables(self, row_cnt: int = 1, sleep_time: int = 2):
         """
         從 poc views 取一筆資料，插入到 seed tables
         """
-        for table in self.seed_tables:
-            insert_sql = f"""
-            INSERT INTO pop.{table}
-            SELECT * FROM poc.{table} LIMIT {row_cnt};
-            """
-            print('Inserting one row into seed table:', table)
-            print('Executing SQL:\n', insert_sql)
-            self._db_tool.execute_query(insert_sql)
+        print('seed tables:', self.seed_tables)
+        for sql_path in self.ordered_sql_paths:
+            table = sql_path.split('.')[0]
+            if table in self.seed_tables:
+                time.sleep(sleep_time)
+                insert_sql = f"""
+                INSERT INTO pop.{table}
+                SELECT * FROM hidden.{table} 
+                EXCEPT SELECT * FROM pop.{table}
+                LIMIT {row_cnt};
+                """
+                print('Inserting one row into seed table:', table)
+                print('Executing SQL:\n', insert_sql)
+                try:
+                    self._db_tool.execute_query(insert_sql)
+                except Exception as e:
+                    print(f"[_insert_few_rows_to_seed_tables] Failed to insert into seed table {table}: {e}")
+                    raise e
