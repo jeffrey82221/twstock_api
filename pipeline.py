@@ -5,7 +5,7 @@ from sql_metadata import Parser
 from typing import List, Dict, Optional
 from paradag import DAG, dag_run, SequentialProcessor
 from pg_tool import PostgreSQLTool
-
+import time
 class ViewExecutor:
     def __init__(self, results: List[str]):
         self.results = results
@@ -99,7 +99,7 @@ class Pipeline:
         sqls = list(self.dag.all_starts())
         sqls.extend([p for p in self._sql_paths if p.endswith('_list.sql')])
         results = [p.split('.sql')[0] for p in sqls]
-        return results
+        return list(set(results))
 
     def create_seed_tables(self):
         for table in self.seed_tables:
@@ -240,11 +240,21 @@ class Pipeline:
         """
         從 poc views 取一筆資料，插入到 seed tables
         """
-        for table in self.seed_tables:
-            insert_sql = f"""
-            INSERT INTO pop.{table}
-            SELECT * FROM poc.{table} LIMIT {row_cnt};
-            """
-            print('Inserting one row into seed table:', table)
-            print('Executing SQL:\n', insert_sql)
-            self._db_tool.execute_query(insert_sql)
+        print('seed tables:', self.seed_tables)
+        for sql_path in self.ordered_sql_paths:
+            table = sql_path.split('.')[0]
+            if table in self.seed_tables:
+                time.sleep(2)
+                insert_sql = f"""
+                INSERT INTO pop.{table}
+                SELECT * FROM hidden.{table} 
+                EXCEPT SELECT * FROM pop.{table}
+                LIMIT {row_cnt};
+                """
+                print('Inserting one row into seed table:', table)
+                print('Executing SQL:\n', insert_sql)
+                try:
+                    self._db_tool.execute_query(insert_sql)
+                except Exception as e:
+                    print(f"[_insert_few_rows_to_seed_tables] Failed to insert into seed table {table}: {e}")
+                    raise e
