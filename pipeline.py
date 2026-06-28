@@ -25,6 +25,7 @@ class Pipeline:
         self.poc_tables = ['poc.' + s.split('.sql')[0] for s in self._sql_paths]
         self.dag = self._create_dag()
         self._db_tool = PostgreSQLTool()
+        self._db_tool.setup()  # Ensure the database is set up with necessary extensions and schemas
     
     def _create_dag(self):
         dag = DAG()
@@ -77,33 +78,12 @@ class Pipeline:
         results = []
         dag_run(
             self.dag, processor=SequentialProcessor(), executor=ViewExecutor(results))
-        return results
-
-    def _render_immutable_funcs(self, schema: str) -> str:
-        """Render db/immutable_func.sql as a Jinja template for the given schema.
-
-        The rendered SQL installs all schema-scoped IMMUTABLE helper
-        functions (e.g. ``{schema}.http_get_content``) that views and
-        materialized views in that schema depend on.
-        """
-        template_path = os.path.join(
-            os.path.dirname(__file__), 'db', 'immutable_func.sql'
-        )
-        with open(template_path, 'r') as f:
-            return Template(f.read()).render(schema=schema)
-
-    def _install_immutable_funcs(self, schema: str) -> None:
-        """Render and execute the immutable-function template for ``schema``."""
-        sql = self._render_immutable_funcs(schema)
-        print(f'Installing immutable functions for schema: {schema}')
-        print('Executing SQL:\n', sql)
-        self._db_tool.execute_query(sql)
+        return results    
 
     def create_views(self):
         create_sqls = self.view_create_sqls
         self._db_tool.execute_query('DROP SCHEMA IF EXISTS poc CASCADE;')
         self._db_tool.execute_query('CREATE SCHEMA poc;')
-        self._install_immutable_funcs('poc')
         for sql_path in self.ordered_sql_paths:
             print('Creating view for:', sql_path)
             create_sql = create_sqls[sql_path]
@@ -180,8 +160,6 @@ class Pipeline:
         self._db_tool.execute_query('DROP SCHEMA IF EXISTS hidden CASCADE;')
         self._db_tool.execute_query('CREATE SCHEMA IF NOT EXISTS hidden;')
         self.create_seed_tables()
-        self._install_immutable_funcs('pop')
-        self._install_immutable_funcs('hidden')
         for sql_path in self.ordered_sql_paths:
             if not self.table_exists('pop', sql_path.split('.')[0]):
                 sql = self._get_matview_create_sqls('pop', sql_path)

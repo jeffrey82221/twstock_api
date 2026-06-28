@@ -1,6 +1,6 @@
 SELECT 
 	stk_code,
-	{{ schema }}.parse_iso_date(value) AS quater
+	custom.parse_iso_date(value) AS quater
 FROM (
 
 	SELECT 
