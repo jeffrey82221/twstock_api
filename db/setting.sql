@@ -9,7 +9,7 @@ CREATE EXTENSION IF NOT EXISTS pg_ivm;
 -- POSTGRES_DB (=app_db) as set in db/docker-compose.yaml.
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 
-SELECT http_set_curlopt('CURLOPT_CONNECTTIMEOUT', '60');
+SELECT http_set_curlopt('CURLOPT_CONNECTTIMEOUT', '600');
 
 SELECT http_set_curlopt('CURLOPT_TIMEOUT', '12000');
 

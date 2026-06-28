@@ -9,3 +9,4 @@
 5. The purpose of _list sql is to allow the entity in the data model 
     to be recorded in a slowly populated table. 
     To avoid fast http crawling for the downstream table/views
+6. every table should have unique rows
