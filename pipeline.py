@@ -349,7 +349,7 @@ class Pipeline:
 
         return job_name
 
-    def _insert_few_rows_to_seed_tables(self, row_cnt: int = 1, sleep_time: int = 2):
+    def _insert_few_rows_to_seed_tables(self, row_cnt: int = 1, sleep_time: int = 0):
         """
         從 poc views 取一筆資料，插入到 seed tables
         """
