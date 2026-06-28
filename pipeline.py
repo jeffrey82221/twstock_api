@@ -336,25 +336,16 @@ class Pipeline:
             (job_name,),
         )
         if existing:
-            jobid = existing[0][0]
-            alter_sql = (
-                f"SELECT cron.alter_job(jobid := {jobid}, "
-                f"schedule := %s, command := %s);"
-            )
-            print(
-                f'Updating pg_cron job {job_name!r} (jobid={jobid}): '
-                f'schedule={schedule!r}, command={command!r}'
-            )
-            self._db_tool.execute_query(alter_sql, (schedule, command))
-        else:
-            print(
-                f'Creating pg_cron job {job_name!r}: '
-                f'schedule={schedule!r}, command={command!r}'
-            )
-            self._db_tool.execute_query(
-                'SELECT cron.schedule(%s, %s, %s);',
-                (job_name, schedule, command),
-            )
+            self._db_tool.execute_query('SELECT cron.unschedule(%s);', (job_name,))
+        
+        print(
+            f'Creating pg_cron job {job_name!r}: '
+            f'schedule={schedule!r}, command={command!r}'
+        )
+        self._db_tool.execute_query(
+            'SELECT cron.schedule(%s, %s, %s);',
+            (job_name, schedule, command),
+        )
 
         return job_name
 
