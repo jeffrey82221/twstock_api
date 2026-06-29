@@ -90,21 +90,28 @@ twstock_api/
 
 ### v0.0.9 — 2026-06-29
 
-**Milestone：新增 TWSE/TPEx OpenAPI 為「月營收 / YoY」的首選替代資料源**
+**Milestone：新增「證交所體系」作為「月營收 / YoY / TTM」的首選替代資料源（patch：加入 MOPS 歷史來源，TTM 完全可計算）**
 
 - 保留原 `GET /api/company/{stock_id}/revenue` (FinMind `TaiwanStockMonthRevenue`) 邏輯不變。
-- 新增 `GET /api/company/{stock_id}/revenue/twse`，與原 endpoint **input / output spec 完全一致**，來源改為：
-  - 上市：`https://openapi.twse.com.tw/v1/opendata/t187ap05_L`（JSON）
-  - 上櫃：`https://mopsfin.twse.com.tw/opendata/t187ap05_O.csv`（CSV；TPEx OpenAPI 目前無 `_O` JSON 變體）
+- 新增 `GET /api/company/{stock_id}/revenue/twse`，與原 endpoint **input / output spec 完全一致**，上游改為證交所體系雙來源：
+  - 「最新一個月」：TWSE / TPEx OpenAPI t187ap05
+    - 上市：`https://openapi.twse.com.tw/v1/opendata/t187ap05_L`（JSON）
+    - 上櫃：`https://mopsfin.twse.com.tw/opendata/t187ap05_O.csv`（CSV；TPEx OpenAPI 目前無 `_O` JSON 變體）
+  - 「歷史月營收」：公開資訊觀測站 (MOPS)，採用 IFRSs 後每月營業收入彙總表 t21sc03。
+    - `https://mopsov.twse.com.tw/nas/t21/{sii|otc}/t21sc03_{民國YYY}_{M}_0.html`
+    - 以查詢基準月為起點往回推 26 個月，併發抓取（semaphore = 6）並以 24h TTL cache。
 - 設計重點：
-  - 一次取全市場 1000+ 筆「最新一個月」資料，以 1 小時 TTL cache，再依 `公司代號` 過濾出目標公司一列。
-  - 自動從 basic 表 `market` 欄位決定走 `_L` 或 `_O`；拿不到 basic 時兩市場都試、拿第一個命中。
-  - `資料年月` 民國 YYYMM 轉為西元 `YYYY/MM` 作為 `latest_month_label`。
-  - `營業收入-當月營收` 單位為仟元，×1000 換算為元後寫入 `latest_month_value`；`latest_month_yoy_pct` 取「營業收入-去年同月增減(%)」。
+  - 自動從 basic 表 `market` 欄位決定走 `_L` (sii) 或 `_O` (otc)；拿不到 basic 時兩市場都試。
+  - **今月 YoY**：若 t187ap05 拿到且「最新月 == as_of 本月」則直接取其「營業收入-去年同月增減(%)」；其餘狀況由 MOPS 歷史動態計算。
+  - **TTM / TTM YoY**：以 MOPS 歷史 last12 / prev12 加總計算，邏輯與 FinMind 版一樣（`ttm = sum(last12)`、`ttm_yoy = (sum(last12) - sum(prev12)) / sum(prev12) × 100`）。
+  - **歷史 as_of**：支援以任意 `as_of=YYYY-MM-DD` 查詢過去年份的月營收 / YoY / TTM，不再局限於「最新一個月」。
+  - 單位換算：證交所體系「當月營收」為仟元，×1000 對齊 FinMind `revenue`（元）。
   - 來源錯誤接入 v0.0.2 的 SourceError tracking 機制，遵「查不到 → found=False」原則。
-- 已知限制：t187ap05 只提供「最新一個月」全市場快照，無 12 個月歷史 → `ttm_value`、`ttm_yoy_pct` **始終為 `null`**（FinMind 版可依 5y window 計算 TTM）。
-- 適用情境：需跳出 FinMind 免費限額 / 需以「官方」源頭供審計溯源時，可改走 TWSE 版本。
-- 驗證：2330（上市）、5483（上櫃）兩個 endpoint 同一 `as_of` 下、2330 `latest_month_value` ×1000 換算後與公開資訊觀測站公佈值一致（例 2330 11505 當月營收 416,975,163 仟元 → 416,975,163,000 元）；`latest_month_yoy_pct` 與「營業收入-去年同月增減(%)」原始值一致；`ttm_*` 為 `null`。
+- 適用情境：需跳出 FinMind 免費限額 / 需以「官方」源頭供審計溯源時，可改走 `revenue/twse`。
+- 驗證（本機）：
+  - 2330（上市）與 5483（上櫃）同一 `as_of` 下、`latest_month_value` / `latest_month_yoy_pct` / `ttm_value` / `ttm_yoy_pct` 與 FinMind 版 endpoint **1:1 完全一致**。
+  - 例 2330 as_of=2026-06-29：latest_month=2026/05、416,975,163,000 元、YoY=30.09%、TTM=4,261,521,438,000 元、TTM YoY=27.39%。
+  - 例 2330 as_of=2023-12-31（歷史）：latest_month=2023/11、206,026,179,000 元、TTM=2,177,996,217,000 元——均與 FinMind 一致。
 
 ### v0.0.8 — 2026-06-29
 

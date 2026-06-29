@@ -415,25 +415,28 @@ async def api_company_revenue(
     "/api/company/{stock_id}/revenue/twse",
     response_model=RevenueResponse,
     tags=["Company (per-source)"],
-    summary="月營收 + YoY（TWSE/TPEx OpenAPI t187ap05、與 FinMind 版 spec 一致）",
+    summary="月營收 + YoY + TTM（證交所體系：TWSE/TPEx t187ap05 + MOPS t21sc03）",
     description=(
-        "**資料來源網站正式名稱**：TWSE OpenAPI / TPEx OpenAPI（公開資料平台 t187ap05）。\n\n"
+        "**資料來源網站正式名稱**：\n"
+        "- 「最新一個月」：TWSE OpenAPI / TPEx OpenAPI（公開資料平台 t187ap05）\n"
+        "- 「歷史月營收」：公開資訊觀測站 MOPS（採用 IFRSs 後每月營業收入彙總表 t21sc03）\n\n"
         "**資料源 API URL 與使用方法**：\n"
-        "- 上市：`GET https://openapi.twse.com.tw/v1/opendata/t187ap05_L`（JSON）\n"
-        "- 上櫃：`GET https://mopsfin.twse.com.tw/opendata/t187ap05_O.csv`（CSV）\n"
-        "- 欄位：`公司代號`、`資料年月`（民國 YYYMM）、`營業收入-當月營收`（仟元）、"
-        "`營業收入-去年同月增減(%)` 等。\n\n"
-        "**處理邏輯**（與原 endpoint 輸出欄位 100% 一致）：\n"
-        "1. 依 basic 表 `market` 決定走 `_L`或`_O`；拿不到 basic 時兩個都試、拿第一個命中。\n"
-        "2. 一次取全市場 1000+ 筆後以 `公司代號 == stock_id` 過濾。\n"
-        "3. `資料年月` 民國 YYYMM (e.g. 11505) 轉為西元 `YYYY/MM` 作為 `latest_month_label`。\n"
-        "4. `營業收入-當月營收` 單位為仟元，×1000 換算為元後寫入 `latest_month_value`。\n"
-        "5. `latest_month_yoy_pct` 直接取 `營業收入-去年同月增減(%)`。\n"
-        "6. 欄位值為空 / `-` / 無法轉為數字時，對應欄位回 `null`。\n\n"
-        "**已知限制**：t187ap05 只提供「最新一個月」全市場快照，無 12 個月歷史 → "
-        "`ttm_value`、`ttm_yoy_pct` 始終為 `null`（FinMind 版可依 5y window 計算 TTM）。\n\n"
-        "**優點**：來源為證券交易所 / 櫃買中心「官方」公開資料平台，免 token、免限流；資料與公開資訊觀測站同步。\n"
-        "**缺點**：沒有逐月歷史資料；TTM / TTM YoY 無法提供。"
+        "- t187ap05 上市：`GET https://openapi.twse.com.tw/v1/opendata/t187ap05_L`（JSON）\n"
+        "- t187ap05 上櫃：`GET https://mopsfin.twse.com.tw/opendata/t187ap05_O.csv`（CSV）\n"
+        "- t21sc03 歷史：`GET https://mopsov.twse.com.tw/nas/t21/{sii|otc}/t21sc03_{民國YYY}_{M}_0.html`\n"
+        "  ·民國YYY = 西元年 - 1911；M = 1~12；市場代碼 sii (上市) / otc (上櫃)\n"
+        "  ·取得完整表格（8 欄以上、81 欄以下）並以 `公司代號 == stock_id` 過濾。\n\n"
+        "**處理邏輯**（與 FinMind 版 endpoint 輸出欄位 100% 一致）：\n"
+        "1. 依 basic 表 `market` 決定走 `_L`或`_O`；拿不到 basic 時兩個都試。\n"
+        "2. **最新月**：一次取全市場後以 `公司代號` 過濾 → `latest_month_value`、`latest_month_yoy_pct`。\n"
+        "3. **歷史**：以最新月為起點往回推 26 個月，併發抓取 MOPS t21sc03 HTML 頁並以 `公司代號` 過濾。\n"
+        "4. 所有「當月營收」單位為仟元，×1000 換算為元後寫入。\n"
+        "5. `latest_month_yoy_pct` 取 t187ap05 「去年同月增減(%)」；若為空則由 MOPS 歷史 fallback。\n"
+        "6. `ttm_value` = 最新 12 個月營收加總；`ttm_yoy_pct` = (last12 總 - prev12 總) / prev12 總 × 100。\n"
+        "7. 欄位值為空 / `-` / 無法轉為數字時，對應欄位回 `null`。\n\n"
+        "**優點**：完全使用證交所 / 櫃買中心 + 公開資訊觀測站「官方」公開資料，免 token、免限流；\n"
+        "資料沿革與《證交法》規定之「月營收公告（次月 10 日前）」同步。\n"
+        "**缺點**：MOPS 頁面為 HTML（big5 編碼）需解析，首次跳 26 個月較慢；不過併發 + 24h TTL cache，同一公司重查及他公司查詢都接近即時。"
     ),
 )
 async def api_company_revenue_twse(
