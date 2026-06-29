@@ -117,6 +117,10 @@ def _classify_http_exc(exc: Exception, url: str) -> tuple[Optional[int], str, bo
 TWSE_BASIC_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
 TPEX_BASIC_URL = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
+# t187ap05 每月營業收入彙總表（上市 _L / 上櫃 _O）— 公開發行公司「最新一個月」全市場資料
+# 上市：openapi.twse.com.tw 提供 JSON；上櫃：同網域目前無 _O，改用 mopsfin.twse.com.tw 的 CSV
+TWSE_REVENUE_L_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap05_L"
+TPEX_REVENUE_O_CSV_URL = "https://mopsfin.twse.com.tw/opendata/t187ap05_O.csv"
 # 經濟部商工 - 公司登記基本資料(應用三)，含「所營事業 Cmp_Business」
 GCIS_BUSINESS_URL = "https://data.gcis.nat.gov.tw/od/data/api/236EE382-4942-41A9-BD03-CA0709025E7C"
 # MOPS 公開資訊觀測站「各項產品業務營收統計表 t05st08」
@@ -138,6 +142,8 @@ _mops_filer_cache: TTLCache = TTLCache(maxsize=4096, ttl=60 * 60 * 6)
 _product_revenue_at_cache: TTLCache = TTLCache(maxsize=4096, ttl=60 * 60 * 6)
 # MOPS 該公司「最後申報期」(year, month) 或 None，24 小時；來自 t05st08（單一公司）快取加速回溯
 _last_filed_cache: TTLCache = TTLCache(maxsize=4096, ttl=60 * 60 * 24)
+# TWSE/TPEx t187ap05 每月營收彙總表：每市場一次取全市場 1000+ 筆，cache 1 小時
+_twse_revenue_cache: TTLCache = TTLCache(maxsize=4, ttl=60 * 60)
 
 _basic_lock = asyncio.Lock()
 
@@ -311,6 +317,79 @@ async def get_financial_statements(stock_id: str, start_date: str, end_date: str
 
 async def get_dividend(stock_id: str, start_date: str, end_date: str) -> list[dict]:
     return await finmind_fetch("TaiwanStockDividend", stock_id, start_date, end_date)
+
+
+# ---------- TWSE/TPEx 每月營業收入彙總表 t187ap05 ----------
+async def get_twse_monthly_revenue_all(market_code: str) -> list[dict]:
+    """一次取得全市場「最新一個月」每月營業收入彙總表 t187ap05。
+
+    參數：
+      - market_code: 'L'（上市）或 'O'（上櫃）
+
+    回傳：list[dict]，每列至少包含：
+      - 出表日期、資料年月（民國 YYYMM）、公司代號、公司名稱、產業別
+      - 營業收入-當月營收、營業收入-上月營收、營業收入-去年當月營收（單位：仟元）
+      - 營業收入-上月比較增減(%)、營業收入-去年同月增減(%)
+      - 累計營業收入-當月累計營收、累計營業收入-去年累計營收、累計營業收入-前期比較增減(%)
+      - 備註
+
+    上市使用 openapi.twse.com.tw 提供的 JSON；上櫃使用 mopsfin.twse.com.tw 提供的 CSV
+    （目前 openapi.twse.com.tw 無 _O 變體；TPEx openapi 入口也無對應 _O JSON）。
+    結果以 market_code 為 key 進 _twse_revenue_cache，TTL 1 小時。
+    """
+    market_code = (market_code or "").upper().strip()
+    if market_code not in ("L", "O"):
+        return []
+    if market_code in _twse_revenue_cache:
+        return _twse_revenue_cache[market_code]
+
+    source_name = "TWSE" if market_code == "L" else "TPEx"
+    try:
+        if market_code == "L":
+            data = await _http_get(
+                TWSE_REVENUE_L_URL, timeout=20.0, retries=2, source_name=source_name,
+            )
+            rows = data if isinstance(data, list) else []
+        else:
+            # CSV：以 httpx 直接抓，header 帶 user-agent 避免被擋；解析後組成 list[dict]
+            url = TPEX_REVENUE_O_CSV_URL
+            rows = []
+            last_exc: Optional[Exception] = None
+            for attempt in range(3):
+                try:
+                    async with httpx.AsyncClient(
+                        timeout=30.0, follow_redirects=True,
+                        headers={"User-Agent": "Mozilla/5.0 (twstock_api)"},
+                    ) as client:
+                        r = await client.get(url)
+                        r.raise_for_status()
+                        text = r.content.decode("utf-8-sig", errors="replace")
+                    break
+                except Exception as e:
+                    last_exc = e
+                    if attempt < 2:
+                        await asyncio.sleep(0.6 * (attempt + 1))
+            else:
+                text = None
+            if text is None:
+                assert last_exc is not None
+                status, msg, rl = _classify_http_exc(last_exc, url)
+                _record_source_error(SourceError(
+                    source=source_name, url=url, status_code=status, message=msg, is_rate_limited=rl,
+                ))
+                rows = []
+            else:
+                import csv as _csv
+                from io import StringIO
+                reader = _csv.DictReader(StringIO(text))
+                rows = [dict(r) for r in reader]
+    except Exception as e:
+        # _http_get 已記錄錯誤；這裡空 list 不進 cache 避免複製錯誤
+        logger.warning("get_twse_monthly_revenue_all(%s) failed: %s", market_code, e)
+        return []
+
+    _twse_revenue_cache[market_code] = rows
+    return rows
 
 
 # ---------- 商工：所營事業 ----------

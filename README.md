@@ -1,6 +1,6 @@
 # TWStock Query · 台灣上市櫃公司查詢平台
 
-> **Version: v0.0.8**
+> **Version: v0.0.9**
 
 整合免費公開資料源（TWSE OpenAPI、TPEx OpenAPI、FinMind v4、經濟部商工 API），
 提供任一上市/上櫃公司的基本資料、主要營業項目、EPS、營收、淨利、股利、營業利潤率、營收成長率、總經理等資訊。
@@ -47,7 +47,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 5000
 - `GET /api/company/{stock_id}/basic` 公司基本資料
 - `GET /api/company/{stock_id}/business-items` 主要營業項目
 - `GET /api/company/{stock_id}/financials?as_of=YYYY-MM-DD` 財務指標（EPS、淨利、營業利潤率）
-- `GET /api/company/{stock_id}/revenue?as_of=YYYY-MM-DD` 月營收與 TTM / YoY
+- `GET /api/company/{stock_id}/revenue?as_of=YYYY-MM-DD` 月營收與 TTM / YoY（FinMind）
+- `GET /api/company/{stock_id}/revenue/twse?as_of=YYYY-MM-DD` 月營收與 YoY（TWSE/TPEx OpenAPI t187ap05；TTM 欄位始終為 null）
 - `GET /api/company/{stock_id}/dividend?as_of=YYYY-MM-DD` 股利（FinMind）
 - `GET /api/company/{stock_id}/dividend/yfinance?as_of=YYYY-MM-DD` 股利（yfinance）
 - `GET /api/company/{stock_id}/value-chain` 公司在產業鏈的定位與鄰居
@@ -86,6 +87,24 @@ twstock_api/
 ```
 
 ## 版本紀錄
+
+### v0.0.9 — 2026-06-29
+
+**Milestone：新增 TWSE/TPEx OpenAPI 為「月營收 / YoY」的首選替代資料源**
+
+- 保留原 `GET /api/company/{stock_id}/revenue` (FinMind `TaiwanStockMonthRevenue`) 邏輯不變。
+- 新增 `GET /api/company/{stock_id}/revenue/twse`，與原 endpoint **input / output spec 完全一致**，來源改為：
+  - 上市：`https://openapi.twse.com.tw/v1/opendata/t187ap05_L`（JSON）
+  - 上櫃：`https://mopsfin.twse.com.tw/opendata/t187ap05_O.csv`（CSV；TPEx OpenAPI 目前無 `_O` JSON 變體）
+- 設計重點：
+  - 一次取全市場 1000+ 筆「最新一個月」資料，以 1 小時 TTL cache，再依 `公司代號` 過濾出目標公司一列。
+  - 自動從 basic 表 `market` 欄位決定走 `_L` 或 `_O`；拿不到 basic 時兩市場都試、拿第一個命中。
+  - `資料年月` 民國 YYYMM 轉為西元 `YYYY/MM` 作為 `latest_month_label`。
+  - `營業收入-當月營收` 單位為仟元，×1000 換算為元後寫入 `latest_month_value`；`latest_month_yoy_pct` 取「營業收入-去年同月增減(%)」。
+  - 來源錯誤接入 v0.0.2 的 SourceError tracking 機制，遵「查不到 → found=False」原則。
+- 已知限制：t187ap05 只提供「最新一個月」全市場快照，無 12 個月歷史 → `ttm_value`、`ttm_yoy_pct` **始終為 `null`**（FinMind 版可依 5y window 計算 TTM）。
+- 適用情境：需跳出 FinMind 免費限額 / 需以「官方」源頭供審計溯源時，可改走 TWSE 版本。
+- 驗證：2330（上市）、5483（上櫃）兩個 endpoint 同一 `as_of` 下、2330 `latest_month_value` ×1000 換算後與公開資訊觀測站公佈值一致（例 2330 11505 當月營收 416,975,163 仟元 → 416,975,163,000 元）；`latest_month_yoy_pct` 與「營業收入-去年同月增減(%)」原始值一致；`ttm_*` 為 `null`。
 
 ### v0.0.8 — 2026-06-29
 

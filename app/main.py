@@ -34,6 +34,7 @@ from .service import (
     query_business_items,
     query_dividend,
     query_dividend_yfinance,
+    query_revenue_twse,
     query_financials,
     query_financials_yfinance,
     query_product_revenue,
@@ -408,6 +409,38 @@ async def api_company_revenue(
     as_of: str | None = Query(None, description=_AS_OF_DESC),
 ):
     return await query_revenue(stock_id, as_of)
+
+
+@app.get(
+    "/api/company/{stock_id}/revenue/twse",
+    response_model=RevenueResponse,
+    tags=["Company (per-source)"],
+    summary="月營收 + YoY（TWSE/TPEx OpenAPI t187ap05、與 FinMind 版 spec 一致）",
+    description=(
+        "**資料來源網站正式名稱**：TWSE OpenAPI / TPEx OpenAPI（公開資料平台 t187ap05）。\n\n"
+        "**資料源 API URL 與使用方法**：\n"
+        "- 上市：`GET https://openapi.twse.com.tw/v1/opendata/t187ap05_L`（JSON）\n"
+        "- 上櫃：`GET https://mopsfin.twse.com.tw/opendata/t187ap05_O.csv`（CSV）\n"
+        "- 欄位：`公司代號`、`資料年月`（民國 YYYMM）、`營業收入-當月營收`（仟元）、"
+        "`營業收入-去年同月增減(%)` 等。\n\n"
+        "**處理邏輯**（與原 endpoint 輸出欄位 100% 一致）：\n"
+        "1. 依 basic 表 `market` 決定走 `_L`或`_O`；拿不到 basic 時兩個都試、拿第一個命中。\n"
+        "2. 一次取全市場 1000+ 筆後以 `公司代號 == stock_id` 過濾。\n"
+        "3. `資料年月` 民國 YYYMM (e.g. 11505) 轉為西元 `YYYY/MM` 作為 `latest_month_label`。\n"
+        "4. `營業收入-當月營收` 單位為仟元，×1000 換算為元後寫入 `latest_month_value`。\n"
+        "5. `latest_month_yoy_pct` 直接取 `營業收入-去年同月增減(%)`。\n"
+        "6. 欄位值為空 / `-` / 無法轉為數字時，對應欄位回 `null`。\n\n"
+        "**已知限制**：t187ap05 只提供「最新一個月」全市場快照，無 12 個月歷史 → "
+        "`ttm_value`、`ttm_yoy_pct` 始終為 `null`（FinMind 版可依 5y window 計算 TTM）。\n\n"
+        "**優點**：來源為證券交易所 / 櫃買中心「官方」公開資料平台，免 token、免限流；資料與公開資訊觀測站同步。\n"
+        "**缺點**：沒有逐月歷史資料；TTM / TTM YoY 無法提供。"
+    ),
+)
+async def api_company_revenue_twse(
+    stock_id: str,
+    as_of: str | None = Query(None, description=_AS_OF_DESC),
+):
+    return await query_revenue_twse(stock_id, as_of)
 
 
 @app.get(

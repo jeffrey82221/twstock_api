@@ -9,6 +9,7 @@
 - query_business_items        → 經濟部商工 GCIS 所營事業
 - query_financials            → FinMind TaiwanStockFinancialStatements（EPS / 淨利 / 營業利潤率）
 - query_revenue               → FinMind TaiwanStockMonthRevenue（月營收 / YoY / TTM）
+- query_revenue_twse          → TWSE/TPEx OpenAPI t187ap05（v0.0.9；與 query_revenue 同 spec）
 - query_dividend              → FinMind TaiwanStockDividend
 - query_dividend_yfinance     → yfinance Ticker.dividends（v0.0.8；與 query_dividend 同 spec）
 - query_value_chain           → 櫃買中心 ic.tpex.org.tw（產業鏈定位 + 鄰居公司）
@@ -31,6 +32,7 @@ from .sources import (
     get_product_revenue,
     get_product_revenue_at,
     get_source_errors,
+    get_twse_monthly_revenue_all,
     load_basic_table,
 )
 from .yfinance_source import get_dividend_yf, get_financial_statements_yf
@@ -373,6 +375,122 @@ async def query_revenue(stock_id: str, as_of_str: Optional[str] = None) -> dict[
         "ttm_yoy_pct": revenue_ttm_yoy,
         "source": "FinMind v4 TaiwanStockMonthRevenue",
     }
+
+
+# =====================================================================
+# 4b) /api/company/{stock_id}/revenue/twse — TWSE/TPEx OpenAPI 月營收 (v0.0.9)
+# =====================================================================
+# 設計理念：保留與 query_revenue 完全相同的 input / output schema，只把上游從
+# FinMind TaiwanStockMonthRevenue 切換為 TWSE/TPEx OpenAPI t187ap05（每月營業收入彙總表）。
+# 上游取自 /opendata/t187ap05_L（上市，JSON）、/opendata/t187ap05_O.csv（上櫃，CSV）。
+# 一次取全市場後以「公司代號」過濾出目標公司一列。
+#
+# 已知限制：t187ap05 只提供「最新一個月」全市場快照，無法以單一 API call 蒐集
+# 12 個月歷史資料（異於 FinMind：FinMind 可依 start_date 拉 N 年內逐月資料），
+# 因此 ttm_value / ttm_yoy_pct 無法計算 → 始終為 null。
+# 單位換算：TWSE「營業收入-當月營收」單位為仟元；FinMind revenue 為元，需 ×1000。
+@with_source_error_tracking
+async def query_revenue_twse(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
+    stock_id = stock_id.strip()
+    as_of = _resolve_as_of(as_of_str)
+
+    # 依 basic 表的 market 決定走 L 或 O；若拿不到 basic，兩個都試並拿第一個命中
+    basic = await _get_basic(stock_id)
+    market = (basic or {}).get("market") if basic else None
+    if market == "上市":
+        market_codes: tuple[str, ...] = ("L",)
+    elif market == "上櫃":
+        market_codes = ("O",)
+    else:
+        market_codes = ("L", "O")
+
+    matched: Optional[dict] = None
+    matched_code: Optional[str] = None
+    for code in market_codes:
+        rows = await get_twse_monthly_revenue_all(code)
+        for r in rows:
+            if str(r.get("公司代號") or "").strip() == stock_id:
+                # 資料年月 需在 as_of 之前（含當月）；正常狀況下 TWSE 公佈的資料年月都 ≤ as_of
+                yyymm = str(r.get("資料年月") or "")
+                if not yyymm.isdigit() or len(yyymm) not in (5, 6):
+                    continue
+                roc_year = int(yyymm[:-2])
+                month = int(yyymm[-2:])
+                year_ce = roc_year + 1911
+                # 查詢基準日為「這個月」以後才算有效
+                if (year_ce, month) <= (as_of.year, as_of.month):
+                    matched = r
+                    matched_code = code
+                    break
+        if matched:
+            break
+
+    if not matched:
+        return {
+            "found": False,
+            "stock_id": stock_id,
+            "as_of": as_of.isoformat(),
+            "latest_month_label": None,
+            "latest_month_value": None,
+            "latest_month_yoy_pct": None,
+            "ttm_value": None,
+            "ttm_yoy_pct": None,
+            "source": "TWSE/TPEx OpenAPI t187ap05",
+            "error": "未在 t187ap05 最新公佈中找到該公司資料。",
+        }
+
+    yyymm = str(matched.get("資料年月") or "")
+    roc_year = int(yyymm[:-2])
+    month = int(yyymm[-2:])
+    year_ce = roc_year + 1911
+    label = f"{year_ce}/{month:02d}"
+
+    raw_amount = _twse_to_int(matched.get("營業收入-當月營收"))
+    # TWSE t187ap05 單位為 仟元；以 ×1000 對齊 FinMind 「revenue（元）」
+    latest_value = raw_amount * 1000 if raw_amount is not None else None
+    latest_yoy = _twse_to_float(matched.get("營業收入-去年同月增減(%)"))
+
+    source_name = (
+        "TWSE OpenAPI t187ap05_L" if matched_code == "L"
+        else "TPEx OpenAPI t187ap05_O"
+    )
+    return {
+        "found": True,
+        "stock_id": stock_id,
+        "as_of": as_of.isoformat(),
+        "latest_month_label": label,
+        "latest_month_value": latest_value,
+        "latest_month_yoy_pct": latest_yoy,
+        # t187ap05 只提供最新一個月，無 12 月歷史→ TTM 無法計算
+        "ttm_value": None,
+        "ttm_yoy_pct": None,
+        "source": source_name,
+    }
+
+
+def _twse_to_int(s: Any) -> Optional[int]:
+    """清理 TWSE/TPEx 數字欄位字串 → int。空值 / '-' / 其他異常回 None。"""
+    if s is None:
+        return None
+    s = str(s).strip().replace(",", "")
+    if not s or s in ("-", "--"):
+        return None
+    try:
+        return int(float(s))
+    except (TypeError, ValueError):
+        return None
+
+
+def _twse_to_float(s: Any) -> Optional[float]:
+    if s is None:
+        return None
+    s = str(s).strip().replace(",", "")
+    if not s or s in ("-", "--"):
+        return None
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
 
 
 # =====================================================================
