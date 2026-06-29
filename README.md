@@ -1,6 +1,6 @@
 # TWStock Query · 台灣上市櫃公司查詢平台
 
-> **Version: v0.0.5**
+> **Version: v0.0.8**
 
 整合免費公開資料源（TWSE OpenAPI、TPEx OpenAPI、FinMind v4、經濟部商工 API），
 提供任一上市/上櫃公司的基本資料、主要營業項目、EPS、營收、淨利、股利、營業利潤率、營收成長率、總經理等資訊。
@@ -48,7 +48,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 5000
 - `GET /api/company/{stock_id}/business-items` 主要營業項目
 - `GET /api/company/{stock_id}/financials?as_of=YYYY-MM-DD` 財務指標（EPS、淨利、營業利潤率）
 - `GET /api/company/{stock_id}/revenue?as_of=YYYY-MM-DD` 月營收與 TTM / YoY
-- `GET /api/company/{stock_id}/dividend?as_of=YYYY-MM-DD` 股利
+- `GET /api/company/{stock_id}/dividend?as_of=YYYY-MM-DD` 股利（FinMind）
+- `GET /api/company/{stock_id}/dividend/yfinance?as_of=YYYY-MM-DD` 股利（yfinance）
 - `GET /api/company/{stock_id}/value-chain` 公司在產業鏈的定位與鄰居
 - `GET /api/company/{stock_id}/product-revenue?as_of=YYYY-MM-DD` 主要產品比重（MOPS）
 - `GET /api/chains` 列出全部 47 條產業鏈（IC 代碼 + 名稱）
@@ -85,6 +86,21 @@ twstock_api/
 ```
 
 ## 版本紀錄
+
+### v0.0.8 — 2026-06-29
+
+**Milestone：新增 yfinance 為「歷年股息 / 現金殖利率」的替代資料源**
+
+- 保留原 `GET /api/company/{stock_id}/dividend` (FinMind) 邏輯不變。
+- 新增 `GET /api/company/{stock_id}/dividend/yfinance`，與原 endpoint **input / output spec 完全一致**，但來源使用 `yfinance.Ticker("{stock_id}.TW" 或 ".TWO").dividends`。
+- 設計重點：
+  - 自動從 basic 表讀取 `market` 欄位以決定 `.TW` / `.TWO` 後綴。
+  - `Ticker.dividends` 回傳「除息日→每股現金股利」 Series，在 source 層就轉為與 FinMind `TaiwanStockDividend` 同欄位 rows，使 service 層 `_pick_dividend` 零分支共用。
+  - yfinance 不提供「股票股利」「公告日」「現金股利發放日」：對應欄位為 `null` / 0，endpoint description 中明示。
+  - 1 小時 TTL 快取；以 `asyncio.to_thread` 包裝避免阻塞 event loop。
+  - 來源錯誤接入 v0.0.2 的 SourceError tracking 機制，遵「查不到 → found=False」原則。
+- 適用情境：需跳出 FinMind 免費限額、或需取單一股票的長期股利歷史時，可改走 yfinance 版本。
+- 驗證：2330 以 yfinance vs FinMind 同 as_of 比對，現金股利金額 / 除息日等 picked dividend block 主要欄位一致；股票股利為 0（yfinance 不提供）、公告日 / 發放日為 null。
 
 ### v0.0.6 — 2026-06-20
 

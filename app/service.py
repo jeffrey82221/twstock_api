@@ -10,6 +10,7 @@
 - query_financials            → FinMind TaiwanStockFinancialStatements（EPS / 淨利 / 營業利潤率）
 - query_revenue               → FinMind TaiwanStockMonthRevenue（月營收 / YoY / TTM）
 - query_dividend              → FinMind TaiwanStockDividend
+- query_dividend_yfinance     → yfinance Ticker.dividends（v0.0.8；與 query_dividend 同 spec）
 - query_value_chain           → 櫃買中心 ic.tpex.org.tw（產業鏈定位 + 鄰居公司）
 """
 from __future__ import annotations
@@ -32,7 +33,7 @@ from .sources import (
     get_source_errors,
     load_basic_table,
 )
-from .yfinance_source import get_financial_statements_yf
+from .yfinance_source import get_dividend_yf, get_financial_statements_yf
 
 
 def with_source_error_tracking(func):
@@ -391,6 +392,34 @@ async def query_dividend(stock_id: str, as_of_str: Optional[str] = None) -> dict
         "as_of": as_of.isoformat(),
         "dividend": picked,
         "source": "FinMind v4 TaiwanStockDividend",
+    }
+
+
+# =====================================================================
+# 5b) /api/company/{stock_id}/dividend/yfinance — yfinance 股利 (v0.0.8)
+# =====================================================================
+# 設計理念：與 query_dividend 完全相同的 input / output spec，只把上游從 FinMind
+# TaiwanStockDividend 切換為 yfinance `Ticker.dividends`。透過 yfinance_source.get_dividend_yf
+# 在拿 rows 時就轉為與 FinMind 同欄位的形式，使 service 層原有的 `_pick_dividend`
+# 計算函式可完全共用（零分支）。
+@with_source_error_tracking
+async def query_dividend_yfinance(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
+    stock_id = stock_id.strip()
+    as_of = _resolve_as_of(as_of_str)
+    start, end = _finmind_window(as_of)
+
+    # 從 basic 表取得市場別，以決定 .TW vs .TWO
+    basic = await _get_basic(stock_id)
+    market = basic.get("market") if basic else None
+
+    dv_rows = await get_dividend_yf(stock_id, market, start, end)
+    picked = _pick_dividend(dv_rows, as_of)
+    return {
+        "found": True,
+        "stock_id": stock_id,
+        "as_of": as_of.isoformat(),
+        "dividend": picked,
+        "source": "yfinance Ticker.dividends",
     }
 
 

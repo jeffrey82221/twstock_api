@@ -33,6 +33,7 @@ from .service import (
     query_basic,
     query_business_items,
     query_dividend,
+    query_dividend_yfinance,
     query_financials,
     query_financials_yfinance,
     query_product_revenue,
@@ -434,6 +435,35 @@ async def api_company_dividend(
     as_of: str | None = Query(None, description=_AS_OF_DESC),
 ):
     return await query_dividend(stock_id, as_of)
+
+
+@app.get(
+    "/api/company/{stock_id}/dividend/yfinance",
+    response_model=DividendResponse,
+    tags=["Company (per-source)"],
+    summary="股利資訊（yfinance Ticker.dividends、與 FinMind 版 spec 一致）",
+    description=(
+        "**資料來源網站正式名稱**：yfinance Python Library（Yahoo Finance 非官方 wrapper）。\n\n"
+        "**資料源 API 用法**：\n"
+        "- `yfinance.Ticker(\"{stock_id}.TW\")` 上市、`{stock_id}.TWO` 上櫃。\n"
+        "- `ticker.dividends` 取得歷年配息 Series（index=除息日 Timestamp、value=每股現金股利）。\n"
+        "- 以 `ticker.actions` 替代亦可，但本 endpoint 只專注現金配息欄位。\n\n"
+        "**處理邏輯**（與原 endpoint 輸出欄位 100% 一致）：\n"
+        "1. 依 basic 表 `market` 決定 `.TW` / `.TWO` 後綴。\n"
+        "2. 將 yfinance Series 轉為與 FinMind `TaiwanStockDividend` 同欄位的 rows："
+        "   `CashEarningsDistribution`=每股現金股利、`CashExDividendTradingDate`=除息日；"
+        "   yfinance 不提供股票股利 / 公告日 / 現金股利發放日，對應欄位為 `null` 或 0。\n"
+        "3. 依 `CashExDividendTradingDate` 選「除息日 ≤ as_of」最後一次（共用原 `_pick_dividend`）。\n"
+        "4. 無合適股利時 `dividend=null`。\n\n"
+        "**優點**：yfinance 速度快，適合取單一股票的長期歷史資料；請求限制遠寬於 FinMind（經驗值每小時可達數千次）、免費、無需 token。\n"
+        "**缺點**：歷史深度與資料完整性依 Yahoo Finance 支援程度而不同；股票股利 / 公告日 / 發放日不提供。"
+    ),
+)
+async def api_company_dividend_yfinance(
+    stock_id: str,
+    as_of: str | None = Query(None, description=_AS_OF_DESC),
+):
+    return await query_dividend_yfinance(stock_id, as_of)
 
 
 @app.get(
