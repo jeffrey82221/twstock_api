@@ -92,9 +92,9 @@ twstock_api/
 
 **Milestone：擴充 PoC SQL 層覆蓋更多 endpoint（yfinance 財報 / 月營收 / 股利 / 產品營收 / 公司價值鏈定位）**
 
-- 不動現有 11 個 `db/poc/*.sql`，新增 14 個 view，完全從現有 view 往下接，並以現有表為欄位 alignment 基準：
+- 不動現有 11 個 `db/poc/*.sql`，新增 13 個 view，完全從現有 view 往下接，並以現有表為欄位 alignment 基準：
   - `raw_product_revenue` + `product_revenue`（上游：`company_list` → MOPS t05st08）
-  - `raw_company_value_chain` + `company_value_chain`（上游：`company_list` → 櫃買 ic.tpex.org.tw，欄位 align `chain_info`）
+  - `company_value_chain`（上游：`chain_info`；純衍生 view，不額外呼叫 `/value-chain`。`/company/{id}/value-chain` 與 `/chain/{ic_code}` 共用同一份 `chain_tree` raw data，公司視角可完全由 `chain_info` self-join 展開，符合 PoC 規則 #2「不重複攤平同源資料」）
   - `raw_yearly_financials_yfinance` + `financial_yearly_yfinance`（上游：`financial_year_list` → yfinance；欄位 align `financial_quarterly`）
   - `raw_monthly_revenue` + `monthly_revenue`（上游：`financial_year_list` → FinMind 月營收）
   - `raw_monthly_revenue_twse` + `monthly_revenue_twse`（上游：`financial_year_list` → 證交所體系 TWSE/TPEx t187ap05 + MOPS t21sc03；欄位 align `monthly_revenue`）

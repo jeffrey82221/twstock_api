@@ -22,25 +22,24 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 4. [company_list](#company_list)
 5. [raw_product_revenue](#raw_product_revenue)
 6. [product_revenue](#product_revenue)
-7. [raw_company_value_chain](#raw_company_value_chain)
-8. [company_value_chain](#company_value_chain)
-9. [raw_company_info](#raw_company_info)
-10. [company_basic_info](#company_basic_info)
-11. [company_business_items](#company_business_items)
-12. [financial_year_list](#financial_year_list)
-13. [raw_yearly_financials](#raw_yearly_financials)
-14. [raw_yearly_financials_yfinance](#raw_yearly_financials_yfinance)
-15. [financial_yearly_yfinance](#financial_yearly_yfinance)
-16. [raw_monthly_revenue](#raw_monthly_revenue)
-17. [monthly_revenue](#monthly_revenue)
-18. [raw_monthly_revenue_twse](#raw_monthly_revenue_twse)
-19. [monthly_revenue_twse](#monthly_revenue_twse)
-20. [raw_yearly_dividend](#raw_yearly_dividend)
-21. [yearly_dividend](#yearly_dividend)
-22. [raw_yearly_dividend_yfinance](#raw_yearly_dividend_yfinance)
-23. [yearly_dividend_yfinance](#yearly_dividend_yfinance)
-24. [financial_quarter_list](#financial_quarter_list)
-25. [financial_quarterly](#financial_quarterly)
+7. [company_value_chain](#company_value_chain)
+8. [raw_company_info](#raw_company_info)
+9. [company_basic_info](#company_basic_info)
+10. [company_business_items](#company_business_items)
+11. [financial_year_list](#financial_year_list)
+12. [raw_yearly_financials](#raw_yearly_financials)
+13. [raw_yearly_financials_yfinance](#raw_yearly_financials_yfinance)
+14. [financial_yearly_yfinance](#financial_yearly_yfinance)
+15. [raw_monthly_revenue](#raw_monthly_revenue)
+16. [monthly_revenue](#monthly_revenue)
+17. [raw_monthly_revenue_twse](#raw_monthly_revenue_twse)
+18. [monthly_revenue_twse](#monthly_revenue_twse)
+19. [raw_yearly_dividend](#raw_yearly_dividend)
+20. [yearly_dividend](#yearly_dividend)
+21. [raw_yearly_dividend_yfinance](#raw_yearly_dividend_yfinance)
+22. [yearly_dividend_yfinance](#yearly_dividend_yfinance)
+23. [financial_quarter_list](#financial_quarter_list)
+24. [financial_quarterly](#financial_quarterly)
 
 ---
 
@@ -137,36 +136,25 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 
 ---
 
-## raw_company_value_chain
+## company_value_chain
 
-- **上游 SQL**：[company_list](#company_list)
-- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/value-chain`
-  - 上游：[櫃買中心 · 產業價值鏈資訊平台](https://ic.tpex.org.tw/) (server-rendered HTML，首次查詢觸發背景任務拉 47 條鏈，TTL 7 天)
+- **上游 SQL**：[chain_info](#chain_info)
+- **HTTP API endpoint**：無（純衍生 view，不額外呼叫 `/value-chain`）
+- 設計理念：`/company/{id}/value-chain` 與 `/chain/{ic_code}` 共用同一份 `chain_tree` raw data，API 內部的 `company_index` 只是 `chain_tree` 的反向索引（純 dict 操作、無額外 HTTP）。因此公司視角的價值鏈完全可由 `chain_info` 衍生，符合規則 #2「不重複攤平同源資料」。
+- 攤平顆粒度與 [chain_info](#chain_info) 相同；欄位 align（`ic_code` / `ic_name` / `segment_key` / `top_code` / `top_name` / `sub_code` / `sub_name` / `stk_code`），額外提供同 sub_chain 下的鄰居公司（self-join）。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
-| `stk_code` | TEXT | 股票代號 | `company_list.stk_code` |
-| `value_chain` | JSONB | `/value-chain` endpoint 回傳整包 JSON（含 `status`, `memberships[]`, `neighbors_by_chain`） | `custom.http_get_content('.../value-chain')` |
-
----
-
-## company_value_chain
-
-- **上游 SQL**：[raw_company_value_chain](#raw_company_value_chain)
-- **HTTP API endpoint**：無（純 JSON 攤平）
-- 欄位刻意與 [chain_info](#chain_info) align；差別是以「公司視角」展開，並新增 `segment` (上/中/下游中文字串)
-- WHERE 僅取 `status = 'ready'` 避免背景載入未完成時的空結果
-
-| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
-| --- | --- | --- | --- |
-| `stk_code` | TEXT | 股票代號 | `raw_company_value_chain.stk_code` |
-| `ic_code` | TEXT | 產業鏈代碼 | `value_chain.memberships[].ic_code` |
-| `ic_name` | TEXT | 產業鏈中文名 | `value_chain.memberships[].ic_name` |
-| `segment` | TEXT | 上/中/下游中文字串 | `value_chain.memberships[].segment` |
-| `top_code` | TEXT | 主分類代碼 | `value_chain.memberships[].top_code` |
-| `top_name` | TEXT | 主分類中文名 | `value_chain.memberships[].top_name` |
-| `sub_code` | TEXT | 次分類代碼 | `value_chain.memberships[].sub_code` |
-| `sub_name` | TEXT | 次分類中文名 | `value_chain.memberships[].sub_name` |
+| `stk_code` | TEXT | 公司股票代號（視角） | `chain_info.stk_code` |
+| `ic_code` | TEXT | 產業鏈代碼 | `chain_info.ic_code` |
+| `ic_name` | TEXT | 產業鏈中文名 | `chain_info.ic_name` |
+| `segment_key` | TEXT | 段位代號（`upstream` / `midstream` / `downstream`） | `chain_info.segment_key` |
+| `top_code` | TEXT | 主分類代碼 | `chain_info.top_code` |
+| `top_name` | TEXT | 主分類中文名 | `chain_info.top_name` |
+| `sub_code` | TEXT | 次分類代碼 | `chain_info.sub_code` |
+| `sub_name` | TEXT | 次分類中文名 | `chain_info.sub_name` |
+| `neighbor_stk_code` | TEXT | 同 sub_chain 下的鄰居公司股票代號 | `chain_info.stk_code`（self-join） |
+| `neighbor_company_name` | TEXT | 鄰居公司名稱 | `chain_info.company_name`（self-join） |
 
 ---
 
