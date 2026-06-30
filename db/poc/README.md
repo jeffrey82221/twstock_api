@@ -2,13 +2,15 @@
 
 ## 規則
 
-1. 非 `_list` 結尾的 SQL **禁止** 使用 mutable function（例如 `http_get_content`）。
+1. 非 `_list` 結尾的 SQL **禁止** 使用 mutable 操作（例如 `::DATE`, `http_get`）。
 2. `_list` 結尾的 SQL **不可** 呼叫 `http_get_content`。
 3. 若需要 mutable 邏輯或型別轉換，請封裝為 immutable function 放在 `db/settings.sql`。
 4. 每個 PoC SQL 對應一個 table/view。
-5. `_list` 表把資料模型的實體（chain、company、quarter…）落到一張慢慢增長的表，下游 view 才不需要每查一次就重打外部 API。
+5. `_list` 表把資料模型的實體（chain、company、quarter…）落到一張慢慢增長的表，下游 view 透過
+incremental materialized view 建構，可以與 `_list` 表同步擴充資料，避免一次性大量發查 API。
 6. 每張表的 rows 都必須是唯一的。
 7. `_list.sql` 的欄位即為下游 view 的 primary key。
+8. 沒有上游的 SQL 必須是 `_list.sql`
 
 ## 章節索引
 
