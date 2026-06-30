@@ -1,6 +1,6 @@
 # TWStock Query · 台灣上市櫃公司查詢平台
 
-> **Version: v0.0.9**
+> **Version: v0.0.10**
 
 整合免費公開資料源（TWSE OpenAPI、TPEx OpenAPI、FinMind v4、經濟部商工 API），
 提供任一上市/上櫃公司的基本資料、主要營業項目、EPS、營收、淨利、股利、營業利潤率、營收成長率、總經理等資訊。
@@ -87,6 +87,19 @@ twstock_api/
 ```
 
 ## 版本紀錄
+
+### v0.0.10 — 2026-06-30
+
+**Milestone：擴充 PoC SQL 層覆蓋更多 endpoint（yfinance 財報 / 月營收 / 股利 / 產品營收 / 公司價值鏈定位）**
+
+- 不動現有 11 個 `db/poc/*.sql`，新增 10 個 view，完全從現有 view 往下接，並以現有表為欄位 alignment 基準：
+  - `raw_product_revenue` + `product_revenue`（上游：`company_list` → MOPS t05st08）
+  - `raw_company_value_chain` + `company_value_chain`（上游：`company_list` → 櫃買 ic.tpex.org.tw，欄位 align `chain_info`）
+  - `raw_yearly_financials_yfinance` + `financial_yearly_yfinance`（上游：`financial_year_list` → yfinance；欄位 align `financial_quarterly`）
+  - `raw_monthly_revenue` + `monthly_revenue`（上游：`financial_year_list` → FinMind 月營收）
+  - `raw_yearly_dividend` + `yearly_dividend`（上游：`financial_year_list` → FinMind 股利）
+- 遵守 `db/poc/README.md` 規則：`raw_*` 可呼叫 `http_get_content`，其餘 view 純 JSON 攤平；non-`_list` 不呼叫 HTTP。
+- README 同步詳述每個新 view 的欄位中英描述、來源 JSON 路徑、上游 SQL link 跳轉。
 
 ### v0.0.9 — 2026-06-29
 

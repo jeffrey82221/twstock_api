@@ -20,13 +20,23 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 2. [raw_chain_info](#raw_chain_info)
 3. [chain_info](#chain_info)
 4. [company_list](#company_list)
-5. [raw_company_info](#raw_company_info)
-6. [company_basic_info](#company_basic_info)
-7. [company_business_items](#company_business_items)
-8. [financial_year_list](#financial_year_list)
-9. [raw_yearly_financials](#raw_yearly_financials)
-10. [financial_quarter_list](#financial_quarter_list)
-11. [financial_quarterly](#financial_quarterly)
+5. [raw_product_revenue](#raw_product_revenue)
+6. [product_revenue](#product_revenue)
+7. [raw_company_value_chain](#raw_company_value_chain)
+8. [company_value_chain](#company_value_chain)
+9. [raw_company_info](#raw_company_info)
+10. [company_basic_info](#company_basic_info)
+11. [company_business_items](#company_business_items)
+12. [financial_year_list](#financial_year_list)
+13. [raw_yearly_financials](#raw_yearly_financials)
+14. [raw_yearly_financials_yfinance](#raw_yearly_financials_yfinance)
+15. [financial_yearly_yfinance](#financial_yearly_yfinance)
+16. [raw_monthly_revenue](#raw_monthly_revenue)
+17. [monthly_revenue](#monthly_revenue)
+18. [raw_yearly_dividend](#raw_yearly_dividend)
+19. [yearly_dividend](#yearly_dividend)
+20. [financial_quarter_list](#financial_quarter_list)
+21. [financial_quarterly](#financial_quarterly)
 
 ---
 
@@ -87,6 +97,72 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號（例 `2330`） | `chain_info.stk_code` |
 | `company_name` | TEXT | 公司名稱（產業鏈樹中的顯示名稱） | `chain_info.company_name` |
+
+---
+
+## raw_product_revenue
+
+- **上游 SQL**：[company_list](#company_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/product-revenue`（無 `as_of`參數，回傳公司最後一次申報期）
+  - 上游：[公開資訊觀測站 (MOPS) t05st08「各項產品業務營收統計表」](https://mops.twse.com.tw/mops/web/t05st08)。三步驟HTTP流程（描述見 `app/main.py` endpoint）
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `company_list.stk_code` |
+| `product_revenue` | JSONB | `/product-revenue` endpoint 回傳整包 JSON（含 `year`, `month`, `company_name`, `items[]`） | `custom.http_get_content('.../product-revenue')` |
+
+---
+
+## product_revenue
+
+- **上游 SQL**：[raw_product_revenue](#raw_product_revenue)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位 align `ProductRevenueItem` + `ProductRevenueResponse`
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_product_revenue.stk_code` |
+| `stock_id` | TEXT | 股票代號（API 規範格式） | `product_revenue.stock_id` |
+| `company_name` | TEXT | 公司名稱（由 MOPS 表頭解析得到） | `product_revenue.company_name` |
+| `year` | TEXT | 申報年度（民國年，字串，例 `113`） | `product_revenue.year` |
+| `month` | TEXT | 申報月份（`MM`） | `product_revenue.month` |
+| `rank` | TEXT | 產品序號標籤，例 `(1)`、`(2)`、`其他` | `product_revenue.items[].rank` |
+| `name` | TEXT | 產品/業務項目名稱 | `product_revenue.items[].name` |
+| `amount` | NUMERIC | 該項目營收金額（新台幣元；原始 HTML 為仟元，已乘以 1000） | `product_revenue.items[].amount` |
+| `percentage` | NUMERIC | 該項目佔合計業務營收淨額 + 銷貨退回及折讓的百分比 (%) | `product_revenue.items[].percentage` |
+
+---
+
+## raw_company_value_chain
+
+- **上游 SQL**：[company_list](#company_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/value-chain`
+  - 上游：[櫃買中心 · 產業價值鏈資訊平台](https://ic.tpex.org.tw/) (server-rendered HTML，首次查詢觸發背景任務拉 47 條鏈，TTL 7 天)
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `company_list.stk_code` |
+| `value_chain` | JSONB | `/value-chain` endpoint 回傳整包 JSON（含 `status`, `memberships[]`, `neighbors_by_chain`） | `custom.http_get_content('.../value-chain')` |
+
+---
+
+## company_value_chain
+
+- **上游 SQL**：[raw_company_value_chain](#raw_company_value_chain)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位刻意與 [chain_info](#chain_info) align；差別是以「公司視角」展開，並新增 `segment` (上/中/下游中文字串)
+- WHERE 僅取 `status = 'ready'` 避免背景載入未完成時的空結果
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_company_value_chain.stk_code` |
+| `ic_code` | TEXT | 產業鏈代碼 | `value_chain.memberships[].ic_code` |
+| `ic_name` | TEXT | 產業鏈中文名 | `value_chain.memberships[].ic_name` |
+| `segment` | TEXT | 上/中/下游中文字串 | `value_chain.memberships[].segment` |
+| `top_code` | TEXT | 主分類代碼 | `value_chain.memberships[].top_code` |
+| `top_name` | TEXT | 主分類中文名 | `value_chain.memberships[].top_name` |
+| `sub_code` | TEXT | 次分類代碼 | `value_chain.memberships[].sub_code` |
+| `sub_name` | TEXT | 次分類中文名 | `value_chain.memberships[].sub_name` |
 
 ---
 
@@ -175,6 +251,112 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 | `stk_code` | TEXT | 股票代號 | `financial_year_list.stk_code` |
 | `financials` | JSONB | `/financials` endpoint 整包 JSON（含 `eps`, `net_income`, `operating_margin_pct`, `revenue_ttm_from_financial_statements`, `eps.ttm_quarters`, `net_income.ttm_quarters` …） | `custom.http_get_content(url)` |
 | `as_of` | DATE | 本筆對應的查詢基準日（即 `year_start_date`） | `financial_year_list.year_start_date` |
+
+---
+
+## raw_yearly_financials_yfinance
+
+- **上游 SQL**：[financial_year_list](#financial_year_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/financials/yfinance?as_of={year_start_date}`
+  - 上游：yfinance Python Library（Yahoo Finance 非官方 wrapper）。與 FinMind 版同一輸出 spec，限流寬鬆許多、免 token；適合產 PoC 階段對比 / 其他 ad-hoc 研究。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `financial_year_list.stk_code` |
+| `financials` | JSONB | `/financials/yfinance` endpoint 整包 JSON（結構與 raw_yearly_financials 一致） | `custom.http_get_content(url)` |
+| `as_of` | DATE | 本筆對應的查詢基準日 | `financial_year_list.year_start_date` |
+
+---
+
+## financial_yearly_yfinance
+
+- **上游 SQL**：[raw_yearly_financials_yfinance](#raw_yearly_financials_yfinance)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位完全與 [financial_quarterly](#financial_quarterly) align，只差在資料源 (yfinance vs FinMind) 以及以年度為關鍵 (vs financial_quarterly 以季為關鍵)
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_yearly_financials_yfinance.stk_code` |
+| `as_of` | DATE | 本筆指標的查詢基準日 | `financials.as_of` |
+| `stock_id` | TEXT | 股票代號（API 規範格式） | `financials.stock_id` |
+| `eps_ttm` | NUMERIC | EPS TTM | `financials.eps.ttm` |
+| `latest_quarter_date` | DATE | 最新可得的單季財報日 | `financials.eps.latest_quarter_date` |
+| `latest_quarter_eps` | NUMERIC | 最新單季的 EPS | `financials.eps.latest_quarter_value` |
+| `net_income_ttm` | NUMERIC | 稅後淨利 TTM | `financials.net_income.ttm` |
+| `latest_quarter_net_income` | NUMERIC | 最新單季稅後淨利 | `financials.net_income.latest_quarter_value` |
+| `operating_margin_pct` | NUMERIC | 營業利潤率 (%) | `financials.operating_margin_pct` |
+| `revenue_ttm` | NUMERIC | 營收 TTM（取自財報） | `financials.revenue_ttm_from_financial_statements` |
+
+---
+
+## raw_monthly_revenue
+
+- **上游 SQL**：[financial_year_list](#financial_year_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/revenue?as_of={year_start_date}`
+  - 上游：[FinMind v4](https://api.finmindtrade.com/api/v4/data) dataset `TaiwanStockMonthRevenue`
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `financial_year_list.stk_code` |
+| `revenue` | JSONB | `/revenue` endpoint 整包 JSON（含 `latest_month_label`, `latest_month_value`, `latest_month_yoy_pct`, `ttm_value`, `ttm_yoy_pct`） | `custom.http_get_content(url)` |
+| `as_of` | DATE | 本筆對應的查詢基準日（即 `year_start_date`） | `financial_year_list.year_start_date` |
+
+---
+
+## monthly_revenue
+
+- **上游 SQL**：[raw_monthly_revenue](#raw_monthly_revenue)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位 align `RevenueResponse`；主鍵顯示規則與 [financial_quarterly](#financial_quarterly) 同 (`stk_code` + `as_of`)
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_monthly_revenue.stk_code` |
+| `as_of` | DATE | 本筆指標的查詢基準日 | `revenue.as_of` |
+| `stock_id` | TEXT | 股票代號（API 規範格式） | `revenue.stock_id` |
+| `latest_month_label` | TEXT | 最近一個月的年/月標籤（例 `2026/04`） | `revenue.latest_month_label` |
+| `latest_month_value` | NUMERIC | 最近一個月營收（新台幣元） | `revenue.latest_month_value` |
+| `latest_month_yoy_pct` | NUMERIC | 該月年增率 (%) | `revenue.latest_month_yoy_pct` |
+| `ttm_value` | NUMERIC | 最近 12 個完整月份營收加總（TTM） | `revenue.ttm_value` |
+| `ttm_yoy_pct` | NUMERIC | TTM 營收年增率 (%) | `revenue.ttm_yoy_pct` |
+
+---
+
+## raw_yearly_dividend
+
+- **上游 SQL**：[financial_year_list](#financial_year_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/dividend?as_of={year_start_date}`
+  - 上游：[FinMind v4](https://api.finmindtrade.com/api/v4/data) dataset `TaiwanStockDividend`
+  - 出身：各公司股利累計公告；依 `CashExDividendTradingDate` / `StockExDividendTradingDate` / `date` 順序選「除息日 ≤ as_of」最後一次
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `financial_year_list.stk_code` |
+| `dividend` | JSONB | `/dividend` endpoint 整包 JSON（含 `dividend.{year, reference_date, cash_dividend, stock_dividend, cash_ex_dividend_date, cash_payment_date, stock_ex_dividend_date, announcement_date}`） | `custom.http_get_content(url)` |
+| `as_of` | DATE | 本筆對應的查詢基準日（即 `year_start_date`） | `financial_year_list.year_start_date` |
+
+---
+
+## yearly_dividend
+
+- **上游 SQL**：[raw_yearly_dividend](#raw_yearly_dividend)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位 align `DividendSection`；主鍵顯示規則與 [financial_quarterly](#financial_quarterly) 同 (`stk_code` + `as_of`)
+- WHERE 僅取 `dividend != null` (即 endpoint 有找到股利的 row)
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_yearly_dividend.stk_code` |
+| `as_of` | DATE | 本筆股利的查詢基準日 | `dividend.as_of` |
+| `stock_id` | TEXT | 股票代號（API 規範格式） | `dividend.stock_id` |
+| `dividend_year` | TEXT | 股利所屬年度 (FinMind 原始 `year`) | `dividend.dividend.year` |
+| `reference_date` | DATE | 本服務挑選使用的「除息日 ≤ as_of」基準日 | `dividend.dividend.reference_date` |
+| `cash_dividend` | NUMERIC | 每股現金股利 (元) | `dividend.dividend.cash_dividend` |
+| `stock_dividend` | NUMERIC | 每股股票股利 (元) | `dividend.dividend.stock_dividend` |
+| `cash_ex_dividend_date` | DATE | 現金股利除息交易日 | `dividend.dividend.cash_ex_dividend_date` |
+| `cash_payment_date` | DATE | 現金股利發放日 | `dividend.dividend.cash_payment_date` |
+| `stock_ex_dividend_date` | DATE | 股票股利除權交易日 | `dividend.dividend.stock_ex_dividend_date` |
+| `announcement_date` | DATE | 股利公告日 | `dividend.dividend.announcement_date` |
 
 ---
 
