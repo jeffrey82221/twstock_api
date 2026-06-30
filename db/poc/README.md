@@ -1,5 +1,7 @@
 # db/poc — PoC SQL 說明
 
+> 整體 db / pipeline 設計理念請見 [`db/README.md`](../README.md)。本目錄是其中 `poc` schema（研發層）的實作。
+
 ## 規則
 
 1. 非 `_list` 結尾的 SQL **禁止** 使用 mutable 操作（例如 `::DATE`, `http_get`）。
