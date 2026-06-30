@@ -33,10 +33,14 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 15. [financial_yearly_yfinance](#financial_yearly_yfinance)
 16. [raw_monthly_revenue](#raw_monthly_revenue)
 17. [monthly_revenue](#monthly_revenue)
-18. [raw_yearly_dividend](#raw_yearly_dividend)
-19. [yearly_dividend](#yearly_dividend)
-20. [financial_quarter_list](#financial_quarter_list)
-21. [financial_quarterly](#financial_quarterly)
+18. [raw_monthly_revenue_twse](#raw_monthly_revenue_twse)
+19. [monthly_revenue_twse](#monthly_revenue_twse)
+20. [raw_yearly_dividend](#raw_yearly_dividend)
+21. [yearly_dividend](#yearly_dividend)
+22. [raw_yearly_dividend_yfinance](#raw_yearly_dividend_yfinance)
+23. [yearly_dividend_yfinance](#yearly_dividend_yfinance)
+24. [financial_quarter_list](#financial_quarter_list)
+25. [financial_quarterly](#financial_quarterly)
 
 ---
 
@@ -322,6 +326,40 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 
 ---
 
+## raw_monthly_revenue_twse
+
+- **上游 SQL**：[financial_year_list](#financial_year_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/revenue/twse?as_of={year_start_date}`
+  - 上游：證交所體系雙來源。「最新一個月」：[TWSE OpenAPI](https://openapi.twse.com.tw/v1/opendata/t187ap05_L) / [TPEx OpenAPI](https://mopsfin.twse.com.tw/opendata/t187ap05_O.csv) t187ap05；「歷史月營收」：[公開資訊觀測站 MOPS](https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_113_5_0.html) t21sc03 採用 IFRSs 後每月營業收入彙總表。
+  - 與 FinMind 版同一輸出 spec，提供「官方」源頭供審計溯源，免 token、免限流。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `financial_year_list.stk_code` |
+| `revenue` | JSONB | `/revenue/twse` endpoint 整包 JSON（結構與 raw_monthly_revenue 一致） | `custom.http_get_content(url)` |
+| `as_of` | DATE | 本筆對應的查詢基準日（即 `year_start_date`） | `financial_year_list.year_start_date` |
+
+---
+
+## monthly_revenue_twse
+
+- **上游 SQL**：[raw_monthly_revenue_twse](#raw_monthly_revenue_twse)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位完全與 [monthly_revenue](#monthly_revenue) align，只差在資料源（TWSE/MOPS vs FinMind）
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_monthly_revenue_twse.stk_code` |
+| `as_of` | DATE | 本筆指標的查詢基準日 | `revenue.as_of` |
+| `stock_id` | TEXT | 股票代號（API 規範格式） | `revenue.stock_id` |
+| `latest_month_label` | TEXT | 最近一個月的年/月標籤（例 `2026/04`） | `revenue.latest_month_label` |
+| `latest_month_value` | NUMERIC | 最近一個月營收（新台幣元） | `revenue.latest_month_value` |
+| `latest_month_yoy_pct` | NUMERIC | 該月年增率 (%) | `revenue.latest_month_yoy_pct` |
+| `ttm_value` | NUMERIC | 最近 12 個完整月份營收加總（TTM） | `revenue.ttm_value` |
+| `ttm_yoy_pct` | NUMERIC | TTM 營收年增率 (%) | `revenue.ttm_yoy_pct` |
+
+---
+
 ## raw_yearly_dividend
 
 - **上游 SQL**：[financial_year_list](#financial_year_list)
@@ -357,6 +395,43 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 | `cash_payment_date` | DATE | 現金股利發放日 | `dividend.dividend.cash_payment_date` |
 | `stock_ex_dividend_date` | DATE | 股票股利除權交易日 | `dividend.dividend.stock_ex_dividend_date` |
 | `announcement_date` | DATE | 股利公告日 | `dividend.dividend.announcement_date` |
+
+---
+
+## raw_yearly_dividend_yfinance
+
+- **上游 SQL**：[financial_year_list](#financial_year_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/dividend/yfinance?as_of={year_start_date}`
+  - 上游：yfinance Python Library (Yahoo Finance) — `ticker.dividends`
+  - 與 FinMind 版同一輸出 spec；yfinance 不提供股票股利 / 公告日 / 現金股利發放日（對應欄位為 null / 0）。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `financial_year_list.stk_code` |
+| `dividend` | JSONB | `/dividend/yfinance` endpoint 整包 JSON（結構與 raw_yearly_dividend 一致） | `custom.http_get_content(url)` |
+| `as_of` | DATE | 本筆對應的查詢基準日（即 `year_start_date`） | `financial_year_list.year_start_date` |
+
+---
+
+## yearly_dividend_yfinance
+
+- **上游 SQL**：[raw_yearly_dividend_yfinance](#raw_yearly_dividend_yfinance)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位完全與 [yearly_dividend](#yearly_dividend) align，只差在資料源（yfinance vs FinMind）。`stock_dividend` / `cash_payment_date` / `stock_ex_dividend_date` / `announcement_date` 上游 endpoint 已回 null/0，此處保留同 schema。
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_yearly_dividend_yfinance.stk_code` |
+| `as_of` | DATE | 本筆股利的查詢基準日 | `dividend.as_of` |
+| `stock_id` | TEXT | 股票代號（API 規範格式） | `dividend.stock_id` |
+| `dividend_year` | TEXT | 股利所屬年度 | `dividend.dividend.year` |
+| `reference_date` | DATE | 「除息日 ≤ as_of」基準日 | `dividend.dividend.reference_date` |
+| `cash_dividend` | NUMERIC | 每股現金股利 (元) | `dividend.dividend.cash_dividend` |
+| `stock_dividend` | NUMERIC | 每股股票股利 (yfinance 不提供，為 0) | `dividend.dividend.stock_dividend` |
+| `cash_ex_dividend_date` | DATE | 現金股利除息交易日 | `dividend.dividend.cash_ex_dividend_date` |
+| `cash_payment_date` | DATE | 現金股利發放日 (yfinance 不提供，為 null) | `dividend.dividend.cash_payment_date` |
+| `stock_ex_dividend_date` | DATE | 股票股利除權交易日 (yfinance 不提供，為 null) | `dividend.dividend.stock_ex_dividend_date` |
+| `announcement_date` | DATE | 股利公告日 (yfinance 不提供，為 null) | `dividend.dividend.announcement_date` |
 
 ---
 
