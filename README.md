@@ -1,6 +1,6 @@
 # TWStock Query · 台灣上市櫃公司查詢平台
 
-> **Version: v0.0.8**
+> **Version: v0.0.9**
 
 整合免費公開資料源（TWSE OpenAPI、TPEx OpenAPI、FinMind v4、經濟部商工 API），
 提供任一上市/上櫃公司的基本資料、主要營業項目、EPS、營收、淨利、股利、營業利潤率、營收成長率、總經理等資訊。
@@ -47,7 +47,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 5000
 - `GET /api/company/{stock_id}/basic` 公司基本資料
 - `GET /api/company/{stock_id}/business-items` 主要營業項目
 - `GET /api/company/{stock_id}/financials?as_of=YYYY-MM-DD` 財務指標（EPS、淨利、營業利潤率）
-- `GET /api/company/{stock_id}/revenue?as_of=YYYY-MM-DD` 月營收與 TTM / YoY
+- `GET /api/company/{stock_id}/revenue?as_of=YYYY-MM-DD` 月營收與 TTM / YoY（FinMind）
+- `GET /api/company/{stock_id}/revenue/twse?as_of=YYYY-MM-DD` 月營收與 YoY（TWSE/TPEx OpenAPI t187ap05；TTM 欄位始終為 null）
 - `GET /api/company/{stock_id}/dividend?as_of=YYYY-MM-DD` 股利（FinMind）
 - `GET /api/company/{stock_id}/dividend/yfinance?as_of=YYYY-MM-DD` 股利（yfinance）
 - `GET /api/company/{stock_id}/value-chain` 公司在產業鏈的定位與鄰居
@@ -86,6 +87,31 @@ twstock_api/
 ```
 
 ## 版本紀錄
+
+### v0.0.9 — 2026-06-29
+
+**Milestone：新增「證交所體系」作為「月營收 / YoY / TTM」的首選替代資料源（patch：加入 MOPS 歷史來源，TTM 完全可計算）**
+
+- 保留原 `GET /api/company/{stock_id}/revenue` (FinMind `TaiwanStockMonthRevenue`) 邏輯不變。
+- 新增 `GET /api/company/{stock_id}/revenue/twse`，與原 endpoint **input / output spec 完全一致**，上游改為證交所體系雙來源：
+  - 「最新一個月」：TWSE / TPEx OpenAPI t187ap05
+    - 上市：`https://openapi.twse.com.tw/v1/opendata/t187ap05_L`（JSON）
+    - 上櫃：`https://mopsfin.twse.com.tw/opendata/t187ap05_O.csv`（CSV；TPEx OpenAPI 目前無 `_O` JSON 變體）
+  - 「歷史月營收」：公開資訊觀測站 (MOPS)，採用 IFRSs 後每月營業收入彙總表 t21sc03。
+    - `https://mopsov.twse.com.tw/nas/t21/{sii|otc}/t21sc03_{民國YYY}_{M}_0.html`
+    - 以查詢基準月為起點往回推 26 個月，併發抓取（semaphore = 6）並以 24h TTL cache。
+- 設計重點：
+  - 自動從 basic 表 `market` 欄位決定走 `_L` (sii) 或 `_O` (otc)；拿不到 basic 時兩市場都試。
+  - **今月 YoY**：若 t187ap05 拿到且「最新月 == as_of 本月」則直接取其「營業收入-去年同月增減(%)」；其餘狀況由 MOPS 歷史動態計算。
+  - **TTM / TTM YoY**：以 MOPS 歷史 last12 / prev12 加總計算，邏輯與 FinMind 版一樣（`ttm = sum(last12)`、`ttm_yoy = (sum(last12) - sum(prev12)) / sum(prev12) × 100`）。
+  - **歷史 as_of**：支援以任意 `as_of=YYYY-MM-DD` 查詢過去年份的月營收 / YoY / TTM，不再局限於「最新一個月」。
+  - 單位換算：證交所體系「當月營收」為仟元，×1000 對齊 FinMind `revenue`（元）。
+  - 來源錯誤接入 v0.0.2 的 SourceError tracking 機制，遵「查不到 → found=False」原則。
+- 適用情境：需跳出 FinMind 免費限額 / 需以「官方」源頭供審計溯源時，可改走 `revenue/twse`。
+- 驗證（本機）：
+  - 2330（上市）與 5483（上櫃）同一 `as_of` 下、`latest_month_value` / `latest_month_yoy_pct` / `ttm_value` / `ttm_yoy_pct` 與 FinMind 版 endpoint **1:1 完全一致**。
+  - 例 2330 as_of=2026-06-29：latest_month=2026/05、416,975,163,000 元、YoY=30.09%、TTM=4,261,521,438,000 元、TTM YoY=27.39%。
+  - 例 2330 as_of=2023-12-31（歷史）：latest_month=2023/11、206,026,179,000 元、TTM=2,177,996,217,000 元——均與 FinMind 一致。
 
 ### v0.0.8 — 2026-06-29
 

@@ -9,6 +9,7 @@
 - query_business_items        → 經濟部商工 GCIS 所營事業
 - query_financials            → FinMind TaiwanStockFinancialStatements（EPS / 淨利 / 營業利潤率）
 - query_revenue               → FinMind TaiwanStockMonthRevenue（月營收 / YoY / TTM）
+- query_revenue_twse          → TWSE/TPEx OpenAPI t187ap05（v0.0.9；與 query_revenue 同 spec）
 - query_dividend              → FinMind TaiwanStockDividend
 - query_dividend_yfinance     → yfinance Ticker.dividends（v0.0.8；與 query_dividend 同 spec）
 - query_value_chain           → 櫃買中心 ic.tpex.org.tw（產業鏈定位 + 鄰居公司）
@@ -31,6 +32,7 @@ from .sources import (
     get_product_revenue,
     get_product_revenue_at,
     get_source_errors,
+    get_twse_monthly_revenue_all,
     load_basic_table,
 )
 from .yfinance_source import get_dividend_yf, get_financial_statements_yf
@@ -373,6 +375,212 @@ async def query_revenue(stock_id: str, as_of_str: Optional[str] = None) -> dict[
         "ttm_yoy_pct": revenue_ttm_yoy,
         "source": "FinMind v4 TaiwanStockMonthRevenue",
     }
+
+
+# =====================================================================
+# 4b) /api/company/{stock_id}/revenue/twse — TWSE/MOPS 月營收 (v0.0.9)
+# =====================================================================
+# 設計理念：保留與 query_revenue 完全相同的 input / output schema，但把上游從 FinMind
+# TaiwanStockMonthRevenue 切換為「證交所體系」原始資料來源：
+#   1. 「最新一個月」走 TWSE/TPEx OpenAPI t187ap05_L / t187ap05_O（快、低延遲）
+#   2. 「歷史多月」走公開資訊觀測站 MOPS t21sc03 公告 HTML 頁
+#      (https://mopsov.twse.com.tw/nas/t21/{sii|otc}/t21sc03_{民國YYY}_{M}_0.html)
+#
+# v0.0.9 原始實作只拿 t187ap05，使 TTM/TTM-YoY 始終為 null；後續 patch 加入 MOPS 歷史來源→
+# 現在 ttm_value / ttm_yoy_pct 與 query_revenue (FinMind) 一致可計算。
+# 單位換算：證交所體系「當月營收」單位為仟元；FinMind revenue 為元，需 ×1000。
+@with_source_error_tracking
+async def query_revenue_twse(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
+    stock_id = stock_id.strip()
+    as_of = _resolve_as_of(as_of_str)
+
+    # 依 basic 表的 market 決定走 L 或 O；拿不到則兩個都試
+    basic = await _get_basic(stock_id)
+    market = (basic or {}).get("market") if basic else None
+    if market == "上市":
+        market_codes: tuple[str, ...] = ("L",)
+    elif market == "上櫃":
+        market_codes = ("O",)
+    else:
+        market_codes = ("L", "O")
+
+    import calendar as _cal
+    from app.sources import get_mops_revenue_history
+
+    # ---- Step 1: 從 t187ap05 取「最新一個月」（僅當 as_of 正好在 t187ap05 公告月以後時才用）----
+    t187ap05_matched: Optional[dict] = None
+    t187ap05_code: Optional[str] = None
+    for code in market_codes:
+        rows = await get_twse_monthly_revenue_all(code)
+        for r in rows:
+            if str(r.get("公司代號") or "").strip() == stock_id:
+                yyymm = str(r.get("資料年月") or "")
+                if not yyymm.isdigit() or len(yyymm) not in (5, 6):
+                    continue
+                roc_year = int(yyymm[:-2])
+                month = int(yyymm[-2:])
+                year_ce = roc_year + 1911
+                if (year_ce, month) <= (as_of.year, as_of.month):
+                    t187ap05_matched = r
+                    t187ap05_code = code
+                    break
+        if t187ap05_matched:
+            break
+
+    # 決定 market_code for MOPS：若 t187ap05 拿到就用他的，否則依賴 basic / fallback 依序試
+    if t187ap05_code is not None:
+        mops_markets: tuple[str, ...] = (t187ap05_code,)
+    else:
+        mops_markets = market_codes
+
+    # ---- Step 2: 從 MOPS t21sc03 拉 「as_of 為起點」往回 26 個月歷史 ----
+    history: list[dict] = []
+    matched_mops_market: Optional[str] = None
+    for mkt in mops_markets:
+        rows_hist = await get_mops_revenue_history(
+            stock_id=stock_id,
+            market_code=mkt,
+            as_of_year=as_of.year,
+            as_of_month=as_of.month,
+            months=26,
+        )
+        if rows_hist:
+            history = rows_hist
+            matched_mops_market = mkt
+            break
+
+    # ---- Step 3: 合併 t187ap05 最新月（若有）+ MOPS 歷史 ----
+    merged: list[dict] = []
+    seen_ym: set[tuple[int, int]] = set()
+
+    if t187ap05_matched is not None:
+        yyymm = str(t187ap05_matched.get("資料年月") or "")
+        roc_year_l = int(yyymm[:-2])
+        month_l = int(yyymm[-2:])
+        year_ce_l = roc_year_l + 1911
+        raw_amount_l = _twse_to_int(t187ap05_matched.get("營業收入-當月營收"))
+        latest_value_l = raw_amount_l * 1000 if raw_amount_l is not None else None
+        if latest_value_l is not None:
+            last_day_l = _cal.monthrange(year_ce_l, month_l)[1]
+            merged.append({
+                "date": f"{year_ce_l:04d}-{month_l:02d}-{last_day_l:02d}",
+                "revenue_year": year_ce_l,
+                "revenue_month": month_l,
+                "revenue": latest_value_l,
+            })
+            seen_ym.add((year_ce_l, month_l))
+
+    for row in history:
+        ym = (row["revenue_year"], row["revenue_month"])
+        if ym in seen_ym:
+            continue
+        seen_ym.add(ym)
+        merged.append(row)
+
+    # 依 as_of 過濾 + 排序（newest first）
+    eligible = [m for m in merged if _parse_date(m["date"]) and _parse_date(m["date"]) <= as_of]
+    eligible.sort(key=lambda x: x["date"], reverse=True)
+
+    if not eligible:
+        return {
+            "found": False,
+            "stock_id": stock_id,
+            "as_of": as_of.isoformat(),
+            "latest_month_label": None,
+            "latest_month_value": None,
+            "latest_month_yoy_pct": None,
+            "ttm_value": None,
+            "ttm_yoy_pct": None,
+            "source": "TWSE/TPEx OpenAPI t187ap05 + MOPS t21sc03",
+            "error": "未在 t187ap05 或 MOPS t21sc03 中找到該公司以 as_of 為基準的月營收資料。",
+        }
+
+    latest = eligible[0]
+    latest_value = latest["revenue"]
+    label = f"{latest['revenue_year']}/{latest['revenue_month']:02d}"
+
+    # 今月 YoY：若 t187ap05 本身提供且 latest 正好是 t187ap05 那個月則直接取，否則用 MOPS 歷史計算
+    latest_yoy: Optional[float] = None
+    if t187ap05_matched is not None and (
+        latest["revenue_year"], latest["revenue_month"]
+    ) == (
+        int(str(t187ap05_matched.get("資料年月"))[:-2]) + 1911,
+        int(str(t187ap05_matched.get("資料年月"))[-2:]),
+    ):
+        latest_yoy = _twse_to_float(t187ap05_matched.get("營業收入-去年同月增減(%)"))
+    if latest_yoy is None and latest_value is not None:
+        ty = latest["revenue_year"] - 1
+        tm = latest["revenue_month"]
+        for m_row in eligible:
+            if (m_row["revenue_year"], m_row["revenue_month"]) == (ty, tm):
+                if m_row["revenue"]:
+                    latest_yoy = (latest_value - m_row["revenue"]) / m_row["revenue"] * 100
+                break
+
+    last12 = eligible[:12]
+    prev12 = eligible[12:24]
+    revenue_ttm: Optional[int] = (
+        sum(m["revenue"] for m in last12)
+        if len(last12) == 12 and all(m["revenue"] is not None for m in last12)
+        else None
+    )
+    revenue_ttm_yoy: Optional[float] = None
+    if revenue_ttm is not None and len(prev12) == 12 and all(m["revenue"] is not None for m in prev12):
+        prev_sum = sum(m["revenue"] for m in prev12)
+        if prev_sum:
+            revenue_ttm_yoy = (revenue_ttm - prev_sum) / prev_sum * 100
+
+    matched_market = t187ap05_code or matched_mops_market or "L"
+    if t187ap05_matched is not None and (
+        latest["revenue_year"], latest["revenue_month"]
+    ) == (
+        int(str(t187ap05_matched.get("資料年月"))[:-2]) + 1911,
+        int(str(t187ap05_matched.get("資料年月"))[-2:]),
+    ):
+        source_name = (
+            "TWSE OpenAPI t187ap05_L + MOPS t21sc03 (history)"
+            if matched_market == "L"
+            else "TPEx OpenAPI t187ap05_O + MOPS t21sc03 (history)"
+        )
+    else:
+        source_name = "MOPS t21sc03 (history)"
+
+    return {
+        "found": True,
+        "stock_id": stock_id,
+        "as_of": as_of.isoformat(),
+        "latest_month_label": label,
+        "latest_month_value": latest_value,
+        "latest_month_yoy_pct": latest_yoy,
+        "ttm_value": revenue_ttm,
+        "ttm_yoy_pct": revenue_ttm_yoy,
+        "source": source_name,
+    }
+
+
+def _twse_to_int(s: Any) -> Optional[int]:
+    """清理 TWSE/TPEx 數字欄位字串 → int。空值 / '-' / 其他異常回 None。"""
+    if s is None:
+        return None
+    s = str(s).strip().replace(",", "")
+    if not s or s in ("-", "--"):
+        return None
+    try:
+        return int(float(s))
+    except (TypeError, ValueError):
+        return None
+
+
+def _twse_to_float(s: Any) -> Optional[float]:
+    if s is None:
+        return None
+    s = str(s).strip().replace(",", "")
+    if not s or s in ("-", "--"):
+        return None
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
 
 
 # =====================================================================

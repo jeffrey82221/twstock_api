@@ -117,6 +117,10 @@ def _classify_http_exc(exc: Exception, url: str) -> tuple[Optional[int], str, bo
 TWSE_BASIC_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
 TPEX_BASIC_URL = "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
+# t187ap05 每月營業收入彙總表（上市 _L / 上櫃 _O）— 公開發行公司「最新一個月」全市場資料
+# 上市：openapi.twse.com.tw 提供 JSON；上櫃：同網域目前無 _O，改用 mopsfin.twse.com.tw 的 CSV
+TWSE_REVENUE_L_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap05_L"
+TPEX_REVENUE_O_CSV_URL = "https://mopsfin.twse.com.tw/opendata/t187ap05_O.csv"
 # 經濟部商工 - 公司登記基本資料(應用三)，含「所營事業 Cmp_Business」
 GCIS_BUSINESS_URL = "https://data.gcis.nat.gov.tw/od/data/api/236EE382-4942-41A9-BD03-CA0709025E7C"
 # MOPS 公開資訊觀測站「各項產品業務營收統計表 t05st08」
@@ -138,6 +142,13 @@ _mops_filer_cache: TTLCache = TTLCache(maxsize=4096, ttl=60 * 60 * 6)
 _product_revenue_at_cache: TTLCache = TTLCache(maxsize=4096, ttl=60 * 60 * 6)
 # MOPS 該公司「最後申報期」(year, month) 或 None，24 小時；來自 t05st08（單一公司）快取加速回溯
 _last_filed_cache: TTLCache = TTLCache(maxsize=4096, ttl=60 * 60 * 24)
+# TWSE/TPEx t187ap05 每月營收彙總表：每市場一次取全市場 1000+ 筆，cache 1 小時
+_twse_revenue_cache: TTLCache = TTLCache(maxsize=4, ttl=60 * 60)
+# MOPS t21sc03 歷史月營收彙總表：以 (market_code, roc_year, month) 為 key 快取整張表 (dict[stock_id] = row)
+# 歷史資料不會回頭變動 → 24 小時 TTL，最多 200 個 (kind, year, month) 切片
+_mops_revenue_history_cache: TTLCache = TTLCache(maxsize=200, ttl=60 * 60 * 24)
+# 同 (kind, roc_year, month) 併發抓取時的 lock：避免多顆協程同時 GET 同一個 MOPS 頁面
+_mops_revenue_history_locks: dict[tuple[str, int, int], asyncio.Lock] = {}
 
 _basic_lock = asyncio.Lock()
 
@@ -311,6 +322,295 @@ async def get_financial_statements(stock_id: str, start_date: str, end_date: str
 
 async def get_dividend(stock_id: str, start_date: str, end_date: str) -> list[dict]:
     return await finmind_fetch("TaiwanStockDividend", stock_id, start_date, end_date)
+
+
+# ---------- TWSE/TPEx 每月營業收入彙總表 t187ap05 ----------
+async def get_twse_monthly_revenue_all(market_code: str) -> list[dict]:
+    """一次取得全市場「最新一個月」每月營業收入彙總表 t187ap05。
+
+    參數：
+      - market_code: 'L'（上市）或 'O'（上櫃）
+
+    回傳：list[dict]，每列至少包含：
+      - 出表日期、資料年月（民國 YYYMM）、公司代號、公司名稱、產業別
+      - 營業收入-當月營收、營業收入-上月營收、營業收入-去年當月營收（單位：仟元）
+      - 營業收入-上月比較增減(%)、營業收入-去年同月增減(%)
+      - 累計營業收入-當月累計營收、累計營業收入-去年累計營收、累計營業收入-前期比較增減(%)
+      - 備註
+
+    上市使用 openapi.twse.com.tw 提供的 JSON；上櫃使用 mopsfin.twse.com.tw 提供的 CSV
+    （目前 openapi.twse.com.tw 無 _O 變體；TPEx openapi 入口也無對應 _O JSON）。
+    結果以 market_code 為 key 進 _twse_revenue_cache，TTL 1 小時。
+    """
+    market_code = (market_code or "").upper().strip()
+    if market_code not in ("L", "O"):
+        return []
+    if market_code in _twse_revenue_cache:
+        return _twse_revenue_cache[market_code]
+
+    source_name = "TWSE" if market_code == "L" else "TPEx"
+    try:
+        if market_code == "L":
+            data = await _http_get(
+                TWSE_REVENUE_L_URL, timeout=20.0, retries=2, source_name=source_name,
+            )
+            rows = data if isinstance(data, list) else []
+        else:
+            # CSV：以 httpx 直接抓，header 帶 user-agent 避免被擋；解析後組成 list[dict]
+            url = TPEX_REVENUE_O_CSV_URL
+            rows = []
+            last_exc: Optional[Exception] = None
+            for attempt in range(3):
+                try:
+                    async with httpx.AsyncClient(
+                        timeout=30.0, follow_redirects=True,
+                        headers={"User-Agent": "Mozilla/5.0 (twstock_api)"},
+                    ) as client:
+                        r = await client.get(url)
+                        r.raise_for_status()
+                        text = r.content.decode("utf-8-sig", errors="replace")
+                    break
+                except Exception as e:
+                    last_exc = e
+                    if attempt < 2:
+                        await asyncio.sleep(0.6 * (attempt + 1))
+            else:
+                text = None
+            if text is None:
+                assert last_exc is not None
+                status, msg, rl = _classify_http_exc(last_exc, url)
+                _record_source_error(SourceError(
+                    source=source_name, url=url, status_code=status, message=msg, is_rate_limited=rl,
+                ))
+                rows = []
+            else:
+                import csv as _csv
+                from io import StringIO
+                reader = _csv.DictReader(StringIO(text))
+                rows = [dict(r) for r in reader]
+    except Exception as e:
+        # _http_get 已記錄錯誤；這裡空 list 不進 cache 避免複製錯誤
+        logger.warning("get_twse_monthly_revenue_all(%s) failed: %s", market_code, e)
+        return []
+
+    _twse_revenue_cache[market_code] = rows
+    return rows
+
+
+# ---------- MOPS 歷史月營收（t21sc03 公告 HTML 頁） ----------
+# 公開資訊觀測站 (MOPS) 採用 IFRSs 後每月營業收入彙總表，依「市場別 / 民國年 / 月份」公告。
+# 自 2025-02-23 起，新版 MOPS 網域改為 mops.twse.com.tw，舊版 nas/t21/... 靜態檔路徑
+# 仍保留於 mopsov.twse.com.tw（原網站網址）。
+#
+#   https://mopsov.twse.com.tw/nas/t21/{kind}/t21sc03_{民國YYY}_{M}_{co_type}.html
+#     kind     = sii (上市) / otc (上櫃) / rotc (興櫃) / pub (公開發行)
+#     民國YYY  = 西元年 - 1911
+#     M        = 月份 1~12
+#     co_type  = 0 (本國公司) / 1 (外國 KY 公司)
+#
+# 表格欄位（11 欄）：公司代號 / 公司名稱 / 當月營收 / 上月營收 / 去年當月營收 /
+#   上月比較增減(%) / 去年同月增減(%) / 當月累計營收 / 去年累計營收 / 前期比較增減(%) / 備註
+# 金額單位為「仟元」（與 t187ap05 一致）。
+MOPS_HISTORY_BASE = "https://mopsov.twse.com.tw/nas/t21"
+
+
+def _market_code_to_kind(market_code: str) -> str:
+    """L 上市→sii，O 上櫃→otc。"""
+    market_code = (market_code or "").upper().strip()
+    return "sii" if market_code == "L" else "otc" if market_code == "O" else ""
+
+
+def _parse_mops_revenue_html(html_text: str) -> dict[str, dict]:
+    """解析 MOPS t21sc03 整張頁面 → {公司代號: {欄位...}}。
+
+    頁面每個產業/類別重複包了多個 <table>，data row 共 11 欄、首欄為 4 位數字公司代號。
+    """
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html_text, "lxml")
+    out: dict[str, dict] = {}
+    for tbl in soup.find_all("table"):
+        for tr in tbl.find_all("tr"):
+            cells = tr.find_all(["td", "th"])
+            if len(cells) != 11:
+                continue
+            vals = [c.get_text(strip=True) for c in cells]
+            code = vals[0]
+            # 4 位數字 = 一般股票代號；ETF / KY / 興櫃可能 5~6 位，這裡仍接受 4~6 位數字
+            if not (code.isdigit() and 4 <= len(code) <= 6):
+                continue
+            if code in out:
+                # 同公司可能在頁面內出現多次（不同 anchor / 分頁），第一筆即可
+                continue
+            out[code] = {
+                "公司代號": code,
+                "公司名稱": vals[1],
+                "當月營收": vals[2],
+                "上月營收": vals[3],
+                "去年當月營收": vals[4],
+                "上月比較增減(%)": vals[5],
+                "去年同月增減(%)": vals[6],
+                "當月累計營收": vals[7],
+                "去年累計營收": vals[8],
+                "前期比較增減(%)": vals[9],
+                "備註": vals[10],
+            }
+    return out
+
+
+async def _fetch_mops_revenue_page(kind: str, roc_year: int, month: int) -> dict[str, dict]:
+    """抓取單一 (kind, 民國年, 月份) 的 MOPS 月營收頁，回傳 {stock_id: row}。
+
+    - 失敗、404、解析無資料時回空 dict（並進 cache 避免反覆重抓）。
+    - 同 key 併發時用 lock 確保只發一次 GET。
+    """
+    cache_key = (kind, roc_year, month)
+    if cache_key in _mops_revenue_history_cache:
+        return _mops_revenue_history_cache[cache_key]
+
+    lock = _mops_revenue_history_locks.setdefault(cache_key, asyncio.Lock())
+    async with lock:
+        if cache_key in _mops_revenue_history_cache:
+            return _mops_revenue_history_cache[cache_key]
+
+        # 嘗試 _0（本國公司）；同 (year, month) 對外國 KY 公司是 _1，這裡只關心本國
+        # （ETF / KY 透過 5483 之類仍取得到，因為本國上櫃也以 _0 彙整）
+        url = f"{MOPS_HISTORY_BASE}/{kind}/t21sc03_{roc_year}_{month}_0.html"
+        source_name = "MOPS"
+        text: Optional[str] = None
+        last_exc: Optional[Exception] = None
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+        }
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(
+                    timeout=30.0, follow_redirects=True, headers=headers,
+                ) as client:
+                    r = await client.get(url)
+                    if r.status_code == 404:
+                        # 該月份尚未公告 / 不存在
+                        text = ""
+                        break
+                    r.raise_for_status()
+                    # MOPS t21sc03 採用 big5 編碼
+                    text = r.content.decode("big5", errors="replace")
+                break
+            except Exception as e:
+                last_exc = e
+                if attempt < 2:
+                    await asyncio.sleep(0.8 * (attempt + 1))
+
+        if text is None:
+            assert last_exc is not None
+            status, msg, rl = _classify_http_exc(last_exc, url)
+            _record_source_error(SourceError(
+                source=source_name, url=url, status_code=status,
+                message=msg, is_rate_limited=rl,
+            ))
+            return {}
+
+        if not text:
+            # 404 → 沒資料；仍寫進 cache 避免下一次 N 個 stock 再撈同月
+            _mops_revenue_history_cache[cache_key] = {}
+            return {}
+
+        try:
+            parsed = _parse_mops_revenue_html(text)
+        except Exception as e:
+            logger.warning("_parse_mops_revenue_html(%s) failed: %s", url, e)
+            parsed = {}
+
+        _mops_revenue_history_cache[cache_key] = parsed
+        return parsed
+
+
+async def get_mops_revenue_history(
+    stock_id: str,
+    market_code: str,
+    as_of_year: int,
+    as_of_month: int,
+    months: int = 26,
+) -> list[dict]:
+    """取得某公司過去 N 個月的 MOPS 月營收（最新月→舊月）。
+
+    輸入：
+      - stock_id: 股票代號
+      - market_code: 'L'（上市）→ sii / 'O'（上櫃）→ otc
+      - as_of_year, as_of_month: 查詢基準月（西元年, 月）。最新一筆會由「上一個月」開始往回掃，
+        因為每月營收公佈日是「次月 10 日前」，故查 (as_of_year, as_of_month) 當月可能尚未公佈。
+      - months: 要回溯抓的月數（含起始月）。預設 26 個月（剛好夠算 24 個月內的 TTM + TTM-YoY）。
+
+    回傳 list[dict]，每列以 FinMind TaiwanStockMonthRevenue 同型欄位輸出：
+      - revenue_year: 西元年
+      - revenue_month: 月份 1~12
+      - revenue: 當月營收（元；MOPS 仟元 ×1000）
+      - date: 該月最後一日 YYYY-MM-DD（與 FinMind 同 convention：以資料月「次月 10 日」之前→這裡使用 EOM）
+
+    沒抓到的月（404 / 該公司未在表中）自動跳過。
+    """
+    kind = _market_code_to_kind(market_code)
+    if not kind:
+        return []
+
+    # 從 (as_of_year, as_of_month - 1) 開始往回算 N 個月
+    start_year = as_of_year
+    start_month = as_of_month - 1
+    if start_month <= 0:
+        start_month += 12
+        start_year -= 1
+
+    target_months: list[tuple[int, int]] = []  # (西元年, 月)
+    y, m = start_year, start_month
+    for _ in range(months):
+        target_months.append((y, m))
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+
+    # 同時併發抓所有月份；以 semaphore 限制 6 個併發避免打爆 MOPS
+    sem = asyncio.Semaphore(6)
+
+    async def _fetch_one(yr: int, mo: int) -> tuple[int, int, dict[str, dict]]:
+        roc = yr - 1911
+        async with sem:
+            table = await _fetch_mops_revenue_page(kind, roc, mo)
+        return (yr, mo, table)
+
+    results = await asyncio.gather(*[_fetch_one(yr, mo) for (yr, mo) in target_months])
+
+    rows: list[dict] = []
+    sid = str(stock_id).strip()
+    for (yr, mo, table) in results:
+        row = table.get(sid)
+        if not row:
+            continue
+        # 「當月營收」是仟元 → 轉元
+        raw = row.get("當月營收") or ""
+        cleaned = str(raw).replace(",", "").strip()
+        if not cleaned or cleaned in ("-", "--", "－"):
+            continue
+        try:
+            value = int(float(cleaned)) * 1000  # 仟元 → 元
+        except ValueError:
+            continue
+        # date 用該月最後一天（與 FinMind month_revenue date 慣例一致：'YYYY-MM-DD'）
+        import calendar as _cal
+        last_day = _cal.monthrange(yr, mo)[1]
+        rows.append({
+            "date": f"{yr:04d}-{mo:02d}-{last_day:02d}",
+            "revenue_year": yr,
+            "revenue_month": mo,
+            "revenue": value,
+        })
+
+    # 已照 newest→oldest 順序（target_months 即是 newest→oldest）
+    return rows
 
 
 # ---------- 商工：所營事業 ----------
