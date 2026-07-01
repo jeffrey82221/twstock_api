@@ -90,18 +90,23 @@ twstock_api/
 
 ### v0.0.10 — 2026-06-30
 
-**Milestone：擴充 PoC SQL 層覆蓋更多 endpoint（yfinance 財報 / 月營收 / 股利 / 產品營收 / 公司價值鏈定位）**
+**Milestone：擴充 PoC SQL 層覆蓋更多 endpoint（yfinance 財報 / 月營收 / 股利 / 產品營收）**
 
-- 不動現有 11 個 `db/poc/*.sql`，新增 13 個 view，完全從現有 view 往下接，並以現有表為欄位 alignment 基準：
-  - `raw_product_revenue` + `product_revenue`（上游：`company_list` → MOPS t05st08）
-  - `company_value_chain`（上游：`chain_info`；純衍生 view，不額外呼叫 `/value-chain`。`/company/{id}/value-chain` 與 `/chain/{ic_code}` 共用同一份 `chain_tree` raw data，公司視角可完全由 `chain_info` self-join 展開，符合 PoC 規則 #2「不重複攤平同源資料」）
+- 不動現有 11 個 `db/poc/*.sql`，新增 13 個 SQL（1 個 `_list.sql` + 6 個 `raw_*` + 6 個 view），完全從現有 view 往下接，並以現有表為欄位 alignment 基準：
+  - `financial_month_list`（上游：`company_basic_info`；月頻專屬 `_list.sql`，以每公司 `incorporation_date` 之月首起 `generate_series` 每月一筆 `month_start_date`，供 `raw_monthly_revenue*` 使用；符合 PoC 規則 #11 與 #14「不同時間維度資料應基於不同 `_list.sql`；月營收以公佈日為單位而非日」）
+  - `raw_product_revenue` + `product_revenue`（上游：`company_list` → MOPS t05st08；`product_revenue` 將民國年月合成 `report_month DATE`，以 `LEFT JOIN LATERAL ... ON TRUE` 保留公司層 `sales_return`/`total_revenue`，即使 `items` 為 null 也保留一列）
   - `raw_yearly_financials_yfinance` + `financial_yearly_yfinance`（上游：`financial_year_list` → yfinance；欄位 align `financial_quarterly`）
-  - `raw_monthly_revenue` + `monthly_revenue`（上游：`financial_year_list` → FinMind 月營收）
-  - `raw_monthly_revenue_twse` + `monthly_revenue_twse`（上游：`financial_year_list` → 證交所體系 TWSE/TPEx t187ap05 + MOPS t21sc03；欄位 align `monthly_revenue`）
+  - `raw_monthly_revenue` + `monthly_revenue`（上游：`financial_month_list` → FinMind 月營收）
+  - `raw_monthly_revenue_twse` + `monthly_revenue_twse`（上游：`financial_month_list` → 證交所體系 TWSE/TPEx t187ap05 + MOPS t21sc03；欄位 align `monthly_revenue`）
   - `raw_yearly_dividend` + `yearly_dividend`（上游：`financial_year_list` → FinMind 股利）
   - `raw_yearly_dividend_yfinance` + `yearly_dividend_yfinance`（上游：`financial_year_list` → yfinance；欄位 align `yearly_dividend`）
-- 遵守 `db/poc/README.md` 規則：`raw_*` 可呼叫 `http_get_content`，其餘 view 純 JSON 攤平；non-`_list` 不呼叫 HTTP。
-- README 同步詳述每個新 view 的欄位中英描述、來源 JSON 路徑、上游 SQL link 跳轉。
+- 遵守 `db/poc/README.md` 規則 9-14：
+  - 規則 11 & 14：新增 `financial_month_list` 讓月頻 raw 有專屬月度 `_list` 上游，避免用 `financial_year_list` 造成過稀。
+  - 規則 12：民國年 / 月統一轉為 `DATE`（`make_date(民國年+1911, 月, 1)`），如 `product_revenue.report_month`。
+  - 規則 13：所有新 view 皆**移除 WHERE 過濾**，PoC 階段對 raw 母體做 full scan，由下游自行 filter NULL；資料邊界完全由 `_list.sql` 決定。
+  - 規則 6（uniqueness）：不使用會破壞唯一性的 self-join；`/company/{id}/value-chain` 由下游直接查 `chain_info` 即可，本 PR 不新增 SQL。
+- `raw_*` 可呼叫 `http_get_content`，其餘 view 純 JSON 攤平；non-`_list` 不呼叫 HTTP。
+- `db/poc/README.md` 同步詳述每個新 SQL 的欄位中英描述、來源 JSON 路徑、上游 SQL link 跳轉。
 
 ### v0.0.9 — 2026-06-29
 

@@ -28,14 +28,14 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 4. [company_list](#company_list)
 5. [raw_product_revenue](#raw_product_revenue)
 6. [product_revenue](#product_revenue)
-7. [company_value_chain](#company_value_chain)
-8. [raw_company_info](#raw_company_info)
-9. [company_basic_info](#company_basic_info)
-10. [company_business_items](#company_business_items)
-11. [financial_year_list](#financial_year_list)
-12. [raw_yearly_financials](#raw_yearly_financials)
-13. [raw_yearly_financials_yfinance](#raw_yearly_financials_yfinance)
-14. [financial_yearly_yfinance](#financial_yearly_yfinance)
+7. [raw_company_info](#raw_company_info)
+8. [company_basic_info](#company_basic_info)
+9. [company_business_items](#company_business_items)
+10. [financial_year_list](#financial_year_list)
+11. [raw_yearly_financials](#raw_yearly_financials)
+12. [raw_yearly_financials_yfinance](#raw_yearly_financials_yfinance)
+13. [financial_yearly_yfinance](#financial_yearly_yfinance)
+14. [financial_month_list](#financial_month_list)
 15. [raw_monthly_revenue](#raw_monthly_revenue)
 16. [monthly_revenue](#monthly_revenue)
 17. [raw_monthly_revenue_twse](#raw_monthly_revenue_twse)
@@ -127,40 +127,21 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 - **上游 SQL**：[raw_product_revenue](#raw_product_revenue)
 - **HTTP API endpoint**：無（純 JSON 攤平）
 - 欄位 align `ProductRevenueItem` + `ProductRevenueResponse`
+- 設計理念（規則 12）：民國年 + 月份 → 西元年月日 DATE。西元年 = 民國年 + 1911，日子固定為該月 1 日。
+- 設計理念（規則 13）：不做 WHERE過濾，以 LEFT JOIN LATERAL 攤平，保留 `found=false` / `items=null` / 空 array 的公司列（產品欄位為 NULL）。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `raw_product_revenue.stk_code` |
 | `stock_id` | TEXT | 股票代號（API 規範格式） | `product_revenue.stock_id` |
 | `company_name` | TEXT | 公司名稱（由 MOPS 表頭解析得到） | `product_revenue.company_name` |
-| `year` | TEXT | 申報年度（民國年，字串，例 `113`） | `product_revenue.year` |
-| `month` | TEXT | 申報月份（`MM`） | `product_revenue.month` |
+| `report_month` | DATE | 申報年月（西元，該月 1 日）。例 `113/12` → `2024-12-01` | `product_revenue.year` + `product_revenue.month` 合成 |
+| `sales_return` | NUMERIC | 減：銷貨退回及折讓金額（新台幣元） | `product_revenue.sales_return` |
+| `total_revenue` | NUMERIC | 合計業務營收淨額（新台幣元） | `product_revenue.total_revenue` |
 | `rank` | TEXT | 產品序號標籤，例 `(1)`、`(2)`、`其他` | `product_revenue.items[].rank` |
 | `name` | TEXT | 產品/業務項目名稱 | `product_revenue.items[].name` |
 | `amount` | NUMERIC | 該項目營收金額（新台幣元；原始 HTML 為仟元，已乘以 1000） | `product_revenue.items[].amount` |
 | `percentage` | NUMERIC | 該項目佔合計業務營收淨額 + 銷貨退回及折讓的百分比 (%) | `product_revenue.items[].percentage` |
-
----
-
-## company_value_chain
-
-- **上游 SQL**：[chain_info](#chain_info)
-- **HTTP API endpoint**：無（純衍生 view，不額外呼叫 `/value-chain`）
-- 設計理念：`/company/{id}/value-chain` 與 `/chain/{ic_code}` 共用同一份 `chain_tree` raw data，API 內部的 `company_index` 只是 `chain_tree` 的反向索引（純 dict 操作、無額外 HTTP）。因此公司視角的價值鏈完全可由 `chain_info` 衍生，符合規則 #2「不重複攤平同源資料」。
-- 攤平顆粒度與 [chain_info](#chain_info) 相同；欄位 align（`ic_code` / `ic_name` / `segment_key` / `top_code` / `top_name` / `sub_code` / `sub_name` / `stk_code`），額外提供同 sub_chain 下的鄰居公司（self-join）。
-
-| 欄位 | 型別 | 中文描述 | 來源 |
-| --- | --- | --- | --- |
-| `stk_code` | TEXT | 公司股票代號（視角） | `chain_info.stk_code` |
-| `ic_code` | TEXT | 產業鏈代碼 | `chain_info.ic_code` |
-| `ic_name` | TEXT | 產業鏈中文名 | `chain_info.ic_name` |
-| `segment_key` | TEXT | 段位代號（`upstream` / `midstream` / `downstream`） | `chain_info.segment_key` |
-| `top_code` | TEXT | 主分類代碼 | `chain_info.top_code` |
-| `top_name` | TEXT | 主分類中文名 | `chain_info.top_name` |
-| `sub_code` | TEXT | 次分類代碼 | `chain_info.sub_code` |
-| `sub_name` | TEXT | 次分類中文名 | `chain_info.sub_name` |
-| `neighbor_stk_code` | TEXT | 同 sub_chain 下的鄰居公司股票代號 | `chain_info.stk_code`（self-join） |
-| `neighbor_company_name` | TEXT | 鄰居公司名稱 | `chain_info.company_name`（self-join） |
 
 ---
 
@@ -271,6 +252,7 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 - **上游 SQL**：[raw_yearly_financials_yfinance](#raw_yearly_financials_yfinance)
 - **HTTP API endpoint**：無（純 JSON 攤平）
 - 欄位完全與 [financial_quarterly](#financial_quarterly) align，只差在資料源 (yfinance vs FinMind) 以及以年度為關鍵 (vs financial_quarterly 以季為關鍵)
+- 設計理念（規則 13）：不做 WHERE 過濾，保留 raw 母體的所有 rows。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
@@ -287,17 +269,31 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 
 ---
 
-## raw_monthly_revenue
+## financial_month_list
 
-- **上游 SQL**：[financial_year_list](#financial_year_list)
-- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/revenue?as_of={year_start_date}`
-  - 上游：[FinMind v4](https://api.finmindtrade.com/api/v4/data) dataset `TaiwanStockMonthRevenue`
+- **上游 SQL**：[company_basic_info](#company_basic_info)
+- **HTTP API endpoint**：無（純 SQL 產生）
+- 設計理念（規則 11, 14）：月營收公布頻率為每月一次（次月 10 日前），因此以「每月一次」的 as_of 已足以遍歷所有月份切片，不必以日為單位密集抓取。本表將 endpoint 可能的 as_of input space 壓到最小、無重複，供下游 `raw_monthly_revenue` / `raw_monthly_revenue_twse` 使用。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
-| `stk_code` | TEXT | 股票代號 | `financial_year_list.stk_code` |
+| `stk_code` | TEXT | 股票代號 | `company_basic_info.stk_code` |
+| `month_start_date` | DATE | 從公司成立日所屬月份開始、每月 1 日 generate 一列，直到 CURRENT_DATE | `generate_series(...)` |
+
+---
+
+## raw_monthly_revenue
+
+- **上游 SQL**：[financial_month_list](#financial_month_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/revenue?as_of={month_start_date}`
+  - 上游：[FinMind v4](https://api.finmindtrade.com/api/v4/data) dataset `TaiwanStockMonthRevenue`
+- 設計理念（規則 14）：月頻資料須有專屬 `_list`（financial_month_list），不與年頻 dividend / financials 混用同一個 `financial_year_list`。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `financial_month_list.stk_code` |
 | `revenue` | JSONB | `/revenue` endpoint 整包 JSON（含 `latest_month_label`, `latest_month_value`, `latest_month_yoy_pct`, `ttm_value`, `ttm_yoy_pct`） | `custom.http_get_content(url)` |
-| `as_of` | DATE | 本筆對應的查詢基準日（即 `year_start_date`） | `financial_year_list.year_start_date` |
+| `as_of` | DATE | 本筆對應的查詢基準日（即 `month_start_date`） | `financial_month_list.month_start_date` |
 
 ---
 
@@ -306,6 +302,7 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 - **上游 SQL**：[raw_monthly_revenue](#raw_monthly_revenue)
 - **HTTP API endpoint**：無（純 JSON 攤平）
 - 欄位 align `RevenueResponse`；主鍵顯示規則與 [financial_quarterly](#financial_quarterly) 同 (`stk_code` + `as_of`)
+- 設計理念（規則 13）：不做 WHERE 過濾，保留 raw 母體的所有 rows（含 found=false / 值為 null 的列）。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
@@ -322,16 +319,17 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 
 ## raw_monthly_revenue_twse
 
-- **上游 SQL**：[financial_year_list](#financial_year_list)
-- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/revenue/twse?as_of={year_start_date}`
+- **上游 SQL**：[financial_month_list](#financial_month_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/revenue/twse?as_of={month_start_date}`
   - 上游：證交所體系雙來源。「最新一個月」：[TWSE OpenAPI](https://openapi.twse.com.tw/v1/opendata/t187ap05_L) / [TPEx OpenAPI](https://mopsfin.twse.com.tw/opendata/t187ap05_O.csv) t187ap05；「歷史月營收」：[公開資訊觀測站 MOPS](https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_113_5_0.html) t21sc03 採用 IFRSs 後每月營業收入彙總表。
   - 與 FinMind 版同一輸出 spec，提供「官方」源頭供審計溯源，免 token、免限流。
+- 設計理念（規則 14）：與 `raw_monthly_revenue` 共用 `financial_month_list`，避免重複建 `_list`。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
-| `stk_code` | TEXT | 股票代號 | `financial_year_list.stk_code` |
+| `stk_code` | TEXT | 股票代號 | `financial_month_list.stk_code` |
 | `revenue` | JSONB | `/revenue/twse` endpoint 整包 JSON（結構與 raw_monthly_revenue 一致） | `custom.http_get_content(url)` |
-| `as_of` | DATE | 本筆對應的查詢基準日（即 `year_start_date`） | `financial_year_list.year_start_date` |
+| `as_of` | DATE | 本筆對應的查詢基準日（即 `month_start_date`） | `financial_month_list.month_start_date` |
 
 ---
 
@@ -340,6 +338,7 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 - **上游 SQL**：[raw_monthly_revenue_twse](#raw_monthly_revenue_twse)
 - **HTTP API endpoint**：無（純 JSON 攤平）
 - 欄位完全與 [monthly_revenue](#monthly_revenue) align，只差在資料源（TWSE/MOPS vs FinMind）
+- 設計理念（規則 13）：不做 WHERE 過濾，保留 raw 母體的所有 rows。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
@@ -374,7 +373,7 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 - **上游 SQL**：[raw_yearly_dividend](#raw_yearly_dividend)
 - **HTTP API endpoint**：無（純 JSON 攤平）
 - 欄位 align `DividendSection`；主鍵顯示規則與 [financial_quarterly](#financial_quarterly) 同 (`stk_code` + `as_of`)
-- WHERE 僅取 `dividend != null` (即 endpoint 有找到股利的 row)
+- 設計理念（規則 13）：不做 WHERE 過濾，保留 raw 母體的所有 rows（含 found=false / dividend=null 的列）。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
@@ -412,6 +411,7 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 - **上游 SQL**：[raw_yearly_dividend_yfinance](#raw_yearly_dividend_yfinance)
 - **HTTP API endpoint**：無（純 JSON 攤平）
 - 欄位完全與 [yearly_dividend](#yearly_dividend) align，只差在資料源（yfinance vs FinMind）。`stock_dividend` / `cash_payment_date` / `stock_ex_dividend_date` / `announcement_date` 上游 endpoint 已回 null/0，此處保留同 schema。
+- 設計理念（規則 13）：不做 WHERE 過濾，保留 raw 母體的所有 rows。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
