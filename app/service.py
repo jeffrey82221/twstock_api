@@ -31,6 +31,7 @@ from .sources import (
     get_month_revenue,
     get_product_revenue,
     get_product_revenue_at,
+    get_product_revenue_filers,
     get_source_errors,
     get_twse_monthly_revenue_all,
     load_basic_table,
@@ -653,6 +654,107 @@ def _pick_dividend(rows: list[dict], as_of: date) -> Optional[dict]:
         "cash_payment_date": r.get("CashDividendPaymentDate"),
         "stock_ex_dividend_date": r.get("StockExDividendTradingDate"),
         "announcement_date": r.get("AnnouncementDate"),
+    }
+
+
+# =====================================================================
+# 5c) /api/company/{stock_id}/dividend/history — 事件母體（v0.0.10）
+# =====================================================================
+# 設計理念（rule 15）：
+#   `_pick_dividend` 只回 as_of 前最後一次除息（單筆）。若要以「歷史除息日」作為
+#   下游 view 的 as_of 遍歷母體，就必須有一個 endpoint 直接回歷史所有配息事件的
+#   完整 rows；這樣 PoC SQL 可以在 raw layer 一次抓下整包歷史，再在 view 層攤平出
+#   每個除息日一列。
+#
+# spec 決策：
+#   - Input：僅 stock_id（不吃 as_of）。回整段歷史。
+#   - Output：與 FinMind TaiwanStockDividend row 同欄位（reuse _pick_dividend 結構
+#     的每一項），一次回一個 array `events`。events 順序：cash_ex_dividend_date DESC。
+#   - 空 array 表示該公司歷史無配息（或上游失敗，另外用 source_errors 表達）。
+@with_source_error_tracking
+async def query_dividend_history(stock_id: str) -> dict[str, Any]:
+    stock_id = stock_id.strip()
+    # 用「往前 20 年到今天」當窗，覆蓋 FinMind 可回溯範圍
+    end = date.today()
+    start = (end - timedelta(days=365 * 20)).isoformat()
+    end_str = end.isoformat()
+    dv_rows = await get_dividend(stock_id, start, end_str)
+    events = [_dividend_row_to_event(r) for r in dv_rows]
+    events = [e for e in events if e is not None]
+    events.sort(key=lambda e: e.get("cash_ex_dividend_date") or "", reverse=True)
+    return {
+        "found": True,
+        "stock_id": stock_id,
+        "events": events,
+        "source": "FinMind v4 TaiwanStockDividend",
+    }
+
+
+# =====================================================================
+# 5d) /api/company/{stock_id}/dividend/history/yfinance — yfinance 版
+# =====================================================================
+# 與 5c 同 spec，只換 upstream 為 yfinance Ticker.dividends。
+@with_source_error_tracking
+async def query_dividend_history_yfinance(stock_id: str) -> dict[str, Any]:
+    stock_id = stock_id.strip()
+    basic = await _get_basic(stock_id)
+    market = basic.get("market") if basic else None
+    end = date.today()
+    start = (end - timedelta(days=365 * 20)).isoformat()
+    end_str = end.isoformat()
+    dv_rows = await get_dividend_yf(stock_id, market, start, end_str)
+    events = [_dividend_row_to_event(r) for r in dv_rows]
+    events = [e for e in events if e is not None]
+    events.sort(key=lambda e: e.get("cash_ex_dividend_date") or "", reverse=True)
+    return {
+        "found": True,
+        "stock_id": stock_id,
+        "events": events,
+        "source": "yfinance Ticker.dividends",
+    }
+
+
+def _dividend_row_to_event(r: dict) -> Optional[dict]:
+    """共用：把 FinMind / yfinance TaiwanStockDividend-style row 轉為 event dict。
+
+    只保留具備 CashExDividendTradingDate 的事件（因下游 _list 需以除息日為 as_of）。
+    金額欄位缺失時以 0 補齊，維持與 _pick_dividend 完全相容。
+    """
+    ex_cash = r.get("CashExDividendTradingDate") or None
+    ex_stock = r.get("StockExDividendTradingDate") or None
+    if not ex_cash and not ex_stock:
+        return None
+    return {
+        "year": r.get("year"),
+        "reference_date": ex_cash or ex_stock,
+        "cash_dividend": (r.get("CashEarningsDistribution", 0) or 0) + (r.get("CashStatutorySurplus", 0) or 0),
+        "stock_dividend": (r.get("StockEarningsDistribution", 0) or 0) + (r.get("StockStatutorySurplus", 0) or 0),
+        "cash_ex_dividend_date": ex_cash,
+        "cash_payment_date": r.get("CashDividendPaymentDate"),
+        "stock_ex_dividend_date": ex_stock,
+        "announcement_date": r.get("AnnouncementDate"),
+    }
+
+
+# =====================================================================
+# 5e) /api/product-revenue/filers — MOPS 該月申報公司清單（v0.0.10）
+# =====================================================================
+# 設計理念（rule 15）：
+#   MOPS「各項產品業務營收」IFRS 後改自願申報。若對 (公司 × 每月) 笛卡兒積
+#   打 as_of endpoint，會落到 last_filed_ym 產生大量重複行。改由 MOPS 官方
+#   的「該月該市場所有申報公司清單」endpoint (ajax_t05st08_all) 直接列出「真正
+#   有申報的 (co_id, ym)」作為事件母體，_list.sql 由此攤平。
+@with_source_error_tracking
+async def query_product_revenue_filers(ym: str, market: str) -> dict[str, Any]:
+    ym = (ym or "").strip()
+    market = (market or "").strip().lower()
+    co_ids = await get_product_revenue_filers(ym, market)
+    return {
+        "found": True,
+        "ym": ym,
+        "market": market,
+        "co_ids": co_ids,
+        "source": "MOPS ajax_t05st08_all",
     }
 
 

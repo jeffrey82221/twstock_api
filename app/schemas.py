@@ -544,6 +544,42 @@ class DividendResponse(BaseModel):
     source: Optional[str] = Field(None, description="本筆資料來源註記。")
 
 
+class DividendHistoryResponse(BaseModel):
+    """`GET /api/company/{stock_id}/dividend/history` 回應（v0.0.10，rule 15 事件母體）。
+
+    目的：供 PoC SQL 層建立 `dividend_event_list` 使用。每公司一次回完整歷史除息事件，
+    避免以規則時間格點重複呼叫 `/dividend?as_of=...`。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否正常回應（不代表一定有事件；無事件時 events 為空 array）。")
+    stock_id: str = Field(..., description="查詢股票代號。")
+    events: list[DividendSection] = Field(
+        default_factory=list,
+        description="歷史所有配息事件，以 `cash_ex_dividend_date` DESC 排序。欄位同 `DividendSection`。",
+    )
+    source: Optional[str] = Field(None, description="本筆資料來源註記（FinMind or yfinance）。")
+
+
+class ProductRevenueFilersResponse(BaseModel):
+    """`GET /api/product-revenue/filers` 回應（v0.0.10，rule 15 事件母體）。
+
+    MOPS `ajax_t05st08_all` 的對外 wrapper：列出指定民國年月 (`ym`) 與市場 (`market`)下
+    真正申報「各項產品業務營收」的公司代碼清單。供 PoC SQL 層 `product_revenue_filer_list`
+    使用，避免對未申報的 (公司, 月份) 打 as_of API。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否正常回應（空清單也回 True）。")
+    ym: str = Field(..., description="民國年月 5碼字串，例 `11312`。")
+    market: str = Field(..., description="市場別：`sii`（上市）/ `otc`（上櫃）。")
+    co_ids: list[str] = Field(
+        default_factory=list,
+        description="該月該市場於 MOPS t05st08_all 申報的公司代碼清單（升序）。",
+    )
+    source: Optional[str] = Field(None, description="本筆資料來源註記。")
+
+
 class CompanyValueChainResponse(BaseModel):
     """`GET /api/company/{stock_id}/value-chain` 回應。"""
     model_config = ConfigDict(extra="allow")

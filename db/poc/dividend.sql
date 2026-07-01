@@ -1,8 +1,11 @@
--- yearly_dividend
--- 上游：raw_yearly_dividend
--- 攤平：每行為某公司在某 as_of 命中的「除息日 ≤ as_of」最後一次股利
--- 欄位 align DividendSection；命名規則同 financial_quarterly（`as_of`, `stock_id`, `stk_code`）
--- 設計理念（rule 13）：不做 WHERE 過濾，保留 raw 母體的所有 rows。
+-- dividend
+-- 上游：raw_dividend
+-- 攤平：每列 = 該公司歷史某次除息事件對應的股利明細
+-- 欄位 align DividendSection；命名規則同 financial_quarterly。
+--
+-- 設計理念（rule 15）：每列對應歷史一次真實除息事件（by cash_ex_dividend_date），
+--                    非規則性時間格點採樣。
+-- 設計理念（rule 13）：不做 WHERE 過濾，保留 raw 母體所有 rows。
 SELECT
     stk_code,
     custom.parse_iso_date(TRIM('"' FROM (dividend->'as_of')::TEXT)) AS as_of,
@@ -15,4 +18,4 @@ SELECT
     custom.parse_iso_date(TRIM('"' FROM (dividend->'dividend'->>'cash_payment_date'))) AS cash_payment_date,
     custom.parse_iso_date(TRIM('"' FROM (dividend->'dividend'->>'stock_ex_dividend_date'))) AS stock_ex_dividend_date,
     custom.parse_iso_date(TRIM('"' FROM (dividend->'dividend'->>'announcement_date'))) AS announcement_date
-FROM {{ schema }}.raw_yearly_dividend
+FROM {{ schema }}.raw_dividend

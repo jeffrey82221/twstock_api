@@ -1012,6 +1012,39 @@ async def _resolve_typek_for_stock(stock_id: str) -> list[str]:
     return ["sii", "otc"]
 
 
+async def get_product_revenue_filers(ym: str, market: str) -> list[str]:
+    """對外 wrapper：回傳指定民國年月 (YM) 與市場 (market) 下，於 MOPS t05st08_all
+    申報“各項產品業務營收”的公司代碼清單（回排序後的 list）。
+
+    參數：
+        ym: 民國年月 5碼字串，例 `11312` = 民國 113 年 12 月。
+        market: `sii`（上市）或 `otc`（上櫃）。
+
+    用途：PoC SQL 層以此當作 product_revenue 的事件母體 (Rule 15)，
+         避免對未申報的 (公司, 月份) 打 API。
+    """
+    if not ym or not isinstance(ym, str) or len(ym) != 5 or not ym.isdigit():
+        return []
+    if market not in ("sii", "otc"):
+        return []
+    try:
+        async with httpx.AsyncClient(
+            timeout=30.0,
+            follow_redirects=True,
+            headers=_MOPS_HEADERS,
+        ) as client:
+            co_ids, _form_fields, _url2 = await _fetch_filer_list(client, ym, market)
+    except Exception as e:
+        _record_source_error(SourceError(
+            source="MOPS",
+            url=MOPS_REDIRECT_URL_FOR_ALL,
+            status_code=None,
+            message=f"get_product_revenue_filers({ym},{market}) failed: {type(e).__name__}: {str(e)[:200]}",
+        ))
+        return []
+    return sorted(co_ids)
+
+
 async def _fetch_filer_list(client: httpx.AsyncClient, ym: str, typek: str) -> tuple[set[str], Optional[dict], Optional[str]]:
     """取得 (YM, TYPEK) 的申報公司清單與 form-fm 欄位。
 

@@ -108,6 +108,31 @@ twstock_api/
 - `raw_*` 可呼叫 `http_get_content`，其餘 view 純 JSON 攤平；non-`_list` 不呼叫 HTTP。
 - `db/poc/README.md` 同步詳述每個新 SQL 的欄位中英描述、來源 JSON 路徑、上游 SQL link 跳轉。
 
+#### v0.0.10 追加補丁：事件驅動 `_list` 重構（rule 15）
+
+**背景**：初版 v0.0.10 把 `yearly_dividend*` / `product_revenue` 都掛在規則性時間格點 `_list` 上（`financial_year_list` / `company_list`）。但這兩類資料本質是**事件性資料**：
+
+- 股利：每公司每年 0～數次除息事件，`/dividend?as_of=X` 只回 as_of 前最後一筆 → 用每年 1/1 遍歷會反覆命中同一筆舊事件。
+- MOPS 各項產品業務營收：IFRS 後改自願申報,非每公司每月都有,笛卡兒積 (公司 × 月) 遍歷會落到 `last_filed_ym` 產生大量重複、也浪費 API。
+
+**新增 PoC 規則 15**：事件性資料應建立「事件母體 endpoint」作為 `_list` 上游,由資料本身告訴我們哪些日期真正有事件,而非以規則性時間格點採樣。並補 rule 13 例外：`_list.sql` 允許 `WHERE <field> IS NOT NULL` 過濾「不可用事件」。
+
+**Backend 新增 endpoint（不動舊 endpoint,保留 backward compatibility）**：
+
+- `GET /api/company/{stock_id}/dividend/history`（FinMind）與 `/dividend/history/yfinance`：回傳該公司歷史整段除息事件 array（20 年區間全量）。
+- `GET /api/product-revenue/filers?ym=&market=`：透過既有 `_fetch_filer_list`（MOPS `ajax_t05st08_all`）回傳該月該市場真正申報「各項產品業務營收」的 co_id 陣列。
+
+**SQL 層改造**：
+
+- 刪除：`raw_yearly_dividend*` / `yearly_dividend*`（規則性年度採樣過時)。
+- 新增：`raw_dividend_history*`（每公司一包歷史 events）→ `dividend_event_list*`（攤平出真實除息日,rule 13 例外過濾 NULL）→ `raw_dividend*`（`as_of = cash_ex_dividend_date`）→ `dividend*`（每列 = 一次除息事件）。
+- 新增：`product_revenue_filer_scope`（**唯一時間邊界調整點**,PoC 預設近 5 年）→ `raw_product_revenue_filers`（對每 (ym, market) 打 filers endpoint）→ `product_revenue_filer_list`（攤平出 `(stk_code, ym, report_month DATE)` 事件母體）。
+- 改造：`raw_product_revenue` 上游改為 `product_revenue_filer_list`,`as_of = date_to_iso(report_month)`（用月首因 IMMUTABLE 限制,MOPS 同月申報 as_of 落月首月末皆鎖同一次申報）;`product_revenue` view 直接沿用 raw 表的 `report_month DATE`,不再從 JSON 民國年月合成。
+- 保留（月營收）：`financial_month_list` + `raw_monthly_revenue*` 不動 — 月營收每月都有公佈,規則性格點恰等於事件母體,為 rule 15 的退化特例。
+- `db/poc/README.md` 同步：加入 rule 15、rule 13 例外、新增/移除章節、索引更新。
+
+**副作用**：SQL 檔案數量從 13 個新增擴展為 ~20 個新增（含 filer scope/list、event list、history raw 等）。5 年 default 讓初次 load 只需 ~120 次 filer endpoint 呼叫,MOPS 內部有 24h cache;未來全量掃描只需改 `product_revenue_filer_scope` 一處。
+
 ### v0.0.9 — 2026-06-29
 
 **Milestone：新增「證交所體系」作為「月營收 / YoY / TTM」的首選替代資料源（patch：加入 MOPS 歷史來源，TTM 完全可計算）**
