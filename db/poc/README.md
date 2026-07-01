@@ -13,6 +13,12 @@ incremental materialized view 建構，可以與 `_list` 表同步擴充資料�
 6. 每張表的 rows 都必須是唯一的。
 7. `_list.sql` 的欄位即為下游 view 的 primary key。
 8. 沒有上游的 SQL 必須是 `_list.sql`
+9. `raw_` 開頭的SQL用途是抓取 app/main.py 的 endpoint API return 結果
+10. 非 `raw_`, `_list.sql` 的 sql 目的是做 json 內容的欄位正規化，請以資料可用性來決定如何整理資料
+11. `raw_` 開頭的SQL，需搭配一個 `_list.sql`作為上游，`_list.sql` 的邏輯要能指定 endpoint 的 API calling 可以遍歷所有 endpoint function 可能的 input ，但請避免重複的結果抓取。(e.g., 雖然「月營收」可以以日為單位去 call，但沒有必要在時間軸上這麼密集的抓取資料，最好只針對公佈日去抓取資料)
+12. 請把民國年月日整合成西元年月日（以DATE來存）
+13. 避免使用 WHERE 條件，讓 POC 階段會 full scan 整個上游表，應透過對 endpoint 的資料源的理解，從 相關 endpoint 找出資料邊界，融入到 `_list.sql` 表的邏輯中，讓下游的 `raw_` 表資料爬取可以有合理的起始點。
+14. 不同時間維度的資料，如 monthly, yearly, quarterly 資料，應基於不同的 `_list.sql` 來設定母體範圍
 
 ## 章節索引
 
