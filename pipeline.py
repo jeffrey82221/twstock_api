@@ -230,16 +230,17 @@ class Pipeline:
         result = self._db_tool.fetch_all(check_sql)
         return result[0][0] # Assuming the result is a list of tuples
 
-    def create_mat_views(self):
+    def create_mat_views(self, recreate: bool = False):
         """
         從 seed tables 往後接 materialized view 
         (建立 materialized view ，如果已經存在就建立到 hidden schema)
 
         作法：
         """
-        self._db_tool.execute_query('DROP SCHEMA IF EXISTS pop CASCADE;')
-        self._db_tool.execute_query('CREATE SCHEMA IF NOT EXISTS pop;')
-        self._db_tool.execute_query('DROP SCHEMA IF EXISTS hidden CASCADE;')
+        if recreate:
+            self._db_tool.execute_query('DROP SCHEMA IF EXISTS pop CASCADE;')
+            self._db_tool.execute_query('DROP SCHEMA IF EXISTS hidden CASCADE;')
+        self._db_tool.execute_query('CREATE SCHEMA IF NOT EXISTS pop;')    
         self._db_tool.execute_query('CREATE SCHEMA IF NOT EXISTS hidden;')
         self.create_seed_tables()
         for sql_path in self.ordered_sql_paths:

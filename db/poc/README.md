@@ -12,7 +12,7 @@
 incremental materialized view 建構,可以與 `_list` 表同步擴充資料,避免一次性大量發查 API。
 6. 每張表的 rows 都必須是唯一的。
 7. `_list.sql` 的欄位即為下游 view 的 primary key。
-8. 沒有上游的 SQL 必須是 `_list.sql`
+8. 沒有上游的 SQL 必須是 `_list.sql`，檢查 .sql 裡面有沒有 {{ schema }} 來判斷是否有上游
 9. `raw_` 開頭的SQL用途是抓取 app/main.py 的 endpoint API return 結果
 10. 非 `raw_`, `_list.sql` 的 sql 目的是做 json 內容的欄位正規化,請以資料可用性來決定如何整理資料
 11. `raw_` 開頭的SQL,需搭配一個 `_list.sql`作為上游,`_list.sql` 的邏輯要能指定 endpoint 的 API calling 可以遍歷所有 endpoint function 可能的 input ,但請避免重複的結果抓取。(e.g., 雖然「月營收」可以以日為單位去 call,但沒有必要在時間軸上這麼密集的抓取資料,最好只針對公佈日去抓取資料)
@@ -25,6 +25,7 @@ incremental materialized view 建構,可以與 `_list` 表同步擴充資料,避
     - 應在 `app/main.py` 新增「事件母體」endpoint（例：`/dividend/history` 回整段除息歷史 events array、`/product-revenue/filers?ym=&market=` 回該月該市場真正申報的公司清單）。
     - `_list.sql` 透過該事件母體 endpoint 產出「實際有事件的 (stk_code, event_date)」,下游 `raw_*` 只對真正有事件的 (id, date) 呼叫 as_of endpoint。
     - Rule 11 的「避免重複」本質是「不對沒事件的日期打 API」;規則性格點只是規則 15 的特例（月營收每月都公佈,格點恰等於事件母體）。
+16. 避免使用 outter join, left join，因為 pg_ivm 只支援 inner join
 
 ## 章節索引
 

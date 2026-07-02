@@ -20,4 +20,4 @@ SELECT
     (item->>'amount')::NUMERIC AS amount,
     (item->>'percentage')::NUMERIC AS percentage
 FROM {{ schema }}.raw_product_revenue
-LEFT JOIN LATERAL jsonb_array_elements(COALESCE(product_revenue->'items', '[]'::jsonb)) AS item ON TRUE
+INNER JOIN LATERAL jsonb_array_elements(COALESCE(product_revenue->'items', '[]'::jsonb)) AS item ON TRUE

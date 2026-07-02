@@ -16,4 +16,4 @@ SELECT
     custom.http_get_content(
         ('http://host.docker.internal:5002/api/product-revenue/filers?ym=' || ym || '&market=' || market)::TEXT
     ) AS filers
-FROM {{ schema }}.product_revenue_filer_scope
+FROM {{ schema }}.product_revenue_filer_scope_list
