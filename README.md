@@ -133,6 +133,21 @@ twstock_api/
 
 **副作用**：SQL 檔案數量從 13 個新增擴展為 ~20 個新增（含 filer scope/list、event list、history raw 等）。5 年 default 讓初次 load 只需 ~120 次 filer endpoint 呼叫,MOPS 內部有 24h cache;未來全量掃描只需改 `product_revenue_filer_scope` 一處。
 
+#### v0.0.10 二次補丁：yfinance quarterly 拆兩段 + jsonb null 型別安全
+
+**背景**：PoC schema 建完後對每個 view 跑 `SELECT * LIMIT 1` 隱現兩個問題：
+
+- `financial_yearly_yfinance`：`cannot cast jsonb null to type numeric` — 欄位使用 `->`（回 jsonb）後直接 `::NUMERIC`,遇到 jsonb null 就爆。
+- `financial_quarterly_yfinance`：`QueryCanceled: statement timeout` — view 內直接對數百個 (stk_code × quarter) 同步發 HTTP,單一 SELECT 包不住。
+
+**修復**：
+
+- 新增 `raw_quarterly_financials_yfinance`（上游 = `financial_quarter_yfinance_list`），把 HTTP 呼叫從 view 內拆出,落實 [`db/poc/README.md`](db/poc/README.md#financial_quarterly) 早已提醒的「兩段式重構」,同時滿足 rule 1 與 rule 9。
+- 重寫 `financial_quarterly_yfinance`：上游改為 `raw_quarterly_financials_yfinance`,本 view 不再發 HTTP,只做 JSON 攤平。欄位完全與 `financial_yearly_yfinance` / `financial_quarterly` (FinMind 版) align。
+- 修 `financial_yearly_yfinance`：所有 numeric 欄位一律改走 `->>`（text）再 `::NUMERIC`,jsonb null 會安全轉為 SQL NULL。同步拉齊 `financial_quarterly_yfinance` 的型別安全寫法。
+- README：`db/poc/README.md` 章節索引新增 32/33/34（`financial_quarter_yfinance_list` / `raw_quarterly_financials_yfinance` / `financial_quarterly_yfinance`）,同步描述型別安全規範。
+- FinMind 版 `financial_quarterly` 不動（保留 backward compatibility，但章節提醒已改寫）;若未來 FinMind 版與 yfinance 同樣受 timeout 影響,可以同樣 pattern 拆兩段。
+
 ### v0.0.9 — 2026-06-29
 
 **Milestone：新增「證交所體系」作為「月營收 / YoY / TTM」的首選替代資料源（patch：加入 MOPS 歷史來源，TTM 完全可計算）**

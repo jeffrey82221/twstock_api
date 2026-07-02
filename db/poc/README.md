@@ -59,6 +59,9 @@ incremental materialized view 建構,可以與 `_list` 表同步擴充資料,避
 29. [dividend_yfinance](#dividend_yfinance)
 30. [financial_quarter_list](#financial_quarter_list)
 31. [financial_quarterly](#financial_quarterly)
+32. [financial_quarter_yfinance_list](#financial_quarter_yfinance_list)
+33. [raw_quarterly_financials_yfinance](#raw_quarterly_financials_yfinance)
+34. [financial_quarterly_yfinance](#financial_quarterly_yfinance)
 
 ---
 
@@ -313,8 +316,9 @@ incremental materialized view 建構,可以與 `_list` 表同步擴充資料,避
 
 - **上游 SQL**：[raw_yearly_financials_yfinance](#raw_yearly_financials_yfinance)
 - **HTTP API endpoint**：無（純 JSON 攤平）
-- 欄位完全與 [financial_quarterly](#financial_quarterly) align,只差在資料源 (yfinance vs FinMind) 以及以年度為關鍵 (vs financial_quarterly 以季為關鍵)
+- 欄位完全與 [financial_quarterly](#financial_quarterly)、[financial_quarterly_yfinance](#financial_quarterly_yfinance) align,只差在資料源 (yfinance vs FinMind) 以及以年度為關鍵。
 - 設計理念（規則 13）：不做 WHERE 過濾,保留 raw 母體的所有 rows。
+- 型別安全：所有 numeric 欄位一律走 `->>` (回傳 text) 再 `::NUMERIC`,jsonb null 會安全轉為 SQL NULL,避免 `cannot cast jsonb null to type numeric`。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
@@ -584,4 +588,57 @@ incremental materialized view 建構,可以與 `_list` 表同步擴充資料,避
 | `revenue_ttm` | NUMERIC | 營收 TTM（取自財報;月營收 TTM 請另用 `/api/company/{id}/revenue`） | `financials.revenue_ttm_from_financial_statements` |
 
 > 篩選：僅保留 `financials.eps.ttm <> null` 的 row（過濾掉 FinMind 不足 4 季的舊年代）。
-> 注意：本檔在 view 內呼叫 `custom.http_get_content`,與規則 #1 有衝突,未來建議改為 `raw_financial_quarterly` + 衍生 view 兩段式。
+> 注意：本檔在 view 內呼叫 `custom.http_get_content`,與規則 #1 有衝突,未來建議改為 `raw_financial_quarterly` + 衍生 view 兩段式。yfinance 版已完成拆分,請見下方 `raw_quarterly_financials_yfinance` + `financial_quarterly_yfinance`。
+
+---
+
+## financial_quarter_yfinance_list
+
+- **上游 SQL**：[raw_yearly_financials_yfinance](#raw_yearly_financials_yfinance)
+- **HTTP API endpoint**：無（純 JSONB 展開）
+- 設計理念（規則 14, 15）：季度屬離散事件（每公司只有真正揭露的那幾季有資料）。事件母體由 `raw_yearly_financials_yfinance.financials.eps.ttm_quarters ∪ net_income.ttm_quarters` 告訴我們,而非規則性時間格點。與 `financial_quarter_list` (FinMind 版) 結構完全一致,只差資料源。
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_yearly_financials_yfinance.stk_code` |
+| `quater` | DATE | 該季最後一日（如 `2024-12-31`、`2024-09-30`） | `financials.eps.ttm_quarters[] ∪ financials.net_income.ttm_quarters[]` |
+
+> 註：欄位名 `quater` 沿用 [financial_quarter_list](#financial_quarter_list) 現有拼字以維持下游 align。
+
+---
+
+## raw_quarterly_financials_yfinance
+
+- **上游 SQL**：[financial_quarter_yfinance_list](#financial_quarter_yfinance_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/financials/yfinance?as_of={quarter}`
+  - 上游：yfinance Python Library（Yahoo Finance）。與 FinMind 版同一輸出 spec,免 token、限流寬鬆。
+- 設計理念（規則 1, 9）：把 HTTP 呼叫從 view 內攤平拆出來,避免下游 `financial_quarterly_yfinance` 在單一 SELECT 中觸發數百次同步 HTTP 造成 `statement_timeout`。這也是 [financial_quarterly](#financial_quarterly) 章節提到的「兩段式重構」在 yfinance 版的落實。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `financial_quarter_yfinance_list.stk_code` |
+| `financials` | JSONB | `/financials/yfinance` endpoint 整包 JSON（結構與 raw_yearly_financials_yfinance 一致） | `custom.http_get_content(url)` |
+| `as_of` | DATE | 本筆對應的查詢基準日（即 `quater`） | `financial_quarter_yfinance_list.quater` |
+
+---
+
+## financial_quarterly_yfinance
+
+- **上游 SQL**：[raw_quarterly_financials_yfinance](#raw_quarterly_financials_yfinance)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位完全與 [financial_quarterly](#financial_quarterly)、[financial_yearly_yfinance](#financial_yearly_yfinance) align,只差在資料源 (yfinance vs FinMind) 以及以季底為關鍵。
+- 設計理念（規則 13）：不做 WHERE 過濾,保留 raw 母體的所有 rows。
+- 型別安全：所有 numeric 欄位一律走 `->>` (回傳 text) 再 `::NUMERIC`,jsonb null 會安全轉為 SQL NULL,避免 `cannot cast jsonb null to type numeric`。
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_quarterly_financials_yfinance.stk_code` |
+| `as_of` | DATE | 本筆指標的查詢基準日 | `financials.as_of` |
+| `stock_id` | TEXT | 股票代號（API 規範格式） | `financials.stock_id` |
+| `eps_ttm` | NUMERIC | EPS TTM | `financials.eps.ttm` |
+| `latest_quarter_date` | DATE | 最新可得的單季財報日 | `financials.eps.latest_quarter_date` |
+| `latest_quarter_eps` | NUMERIC | 最新單季的 EPS | `financials.eps.latest_quarter_value` |
+| `net_income_ttm` | NUMERIC | 稅後淨利 TTM | `financials.net_income.ttm` |
+| `latest_quarter_net_income` | NUMERIC | 最新單季稅後淨利 | `financials.net_income.latest_quarter_value` |
+| `operating_margin_pct` | NUMERIC | 營業利潤率 (%) | `financials.operating_margin_pct` |
+| `revenue_ttm` | NUMERIC | 營收 TTM（取自財報） | `financials.revenue_ttm_from_financial_statements` |
