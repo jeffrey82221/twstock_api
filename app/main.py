@@ -21,9 +21,11 @@ from .schemas import (
     CompanyBasicResponse,
     CompanyResponse,
     CompanyValueChainResponse,
+    DividendHistoryResponse,
     DividendResponse,
     FinancialsResponse,
     HealthResponse,
+    ProductRevenueFilersResponse,
     ProductRevenueResponse,
     RevenueResponse,
     SearchResponse,
@@ -33,11 +35,14 @@ from .service import (
     query_basic,
     query_business_items,
     query_dividend,
+    query_dividend_history,
+    query_dividend_history_yfinance,
     query_dividend_yfinance,
     query_revenue_twse,
     query_financials,
     query_financials_yfinance,
     query_product_revenue,
+    query_product_revenue_filers,
     query_revenue,
     query_value_chain,
     search_companies,
@@ -500,6 +505,65 @@ async def api_company_dividend_yfinance(
     as_of: str | None = Query(None, description=_AS_OF_DESC),
 ):
     return await query_dividend_yfinance(stock_id, as_of)
+
+
+@app.get(
+    "/api/company/{stock_id}/dividend/history",
+    response_model=DividendHistoryResponse,
+    tags=["Company (per-source)"],
+    summary="股利完整歷史事件（v0.0.10、供 PoC SQL 層事件母體使用）",
+    description=(
+        "**資料來源網站正式名稱**：FinMind v4 開放金融資料庫。\n\n"
+        "**目的**：不同於 `/dividend?as_of=X` 只回 as_of 前最後一筆，本 endpoint 回該公司歷史所有"
+        "配息事件，供 PoC SQL 層 `dividend_event_list` 以「除息日」作為事件母體。\n\n"
+        "**處理邏輯**：\n"
+        "1. FinMind `TaiwanStockDividend`，取「往前 20 年 → 今天」的全量 rows。\n"
+        "2. 以「具備 `CashExDividendTradingDate`」為必要條件（下游 _list 需以除息日為 as_of）。\n"
+        "3. `events` 以 `cash_ex_dividend_date` DESC 排序；金額欄位缺失以 0 補齊（與 `_pick_dividend` 完全相容）。\n\n"
+        "**使用情境**：PoC SQL `raw_dividend_history` 將本 endpoint 回包全量 array 写入 raw，"
+        "`dividend_event_list.sql` 再攤平出 (stk_code, cash_ex_dividend_date) 供下游對 `/dividend?as_of=<除息日>` 呼叫。"
+    ),
+)
+async def api_company_dividend_history(stock_id: str):
+    return await query_dividend_history(stock_id)
+
+
+@app.get(
+    "/api/company/{stock_id}/dividend/history/yfinance",
+    response_model=DividendHistoryResponse,
+    tags=["Company (per-source)"],
+    summary="股利完整歷史事件（yfinance Ticker.dividends 版，與 FinMind 版 spec 完全一致）",
+    description=(
+        "**資料來源網站正式名稱**：yfinance Python Library（Yahoo Finance non-official wrapper）。\n\n"
+        "與 `/dividend/history` 同 spec，只換 upstream 為 yfinance `Ticker.dividends`。"
+        "同樣供 PoC SQL 層 `dividend_event_list_yfinance` 以除息日為事件母體使用。\n\n"
+        "**邊位限制**：yfinance 不提供股票股利 / 公告日 / 現金股利發放日，對應欄位為 `null` 或 0。"
+    ),
+)
+async def api_company_dividend_history_yfinance(stock_id: str):
+    return await query_dividend_history_yfinance(stock_id)
+
+
+@app.get(
+    "/api/product-revenue/filers",
+    response_model=ProductRevenueFilersResponse,
+    tags=["Company (per-source)"],
+    summary="MOPS 該月該市場「各項產品業務營收」申報公司清單（v0.0.10、供 PoC SQL 事件母體使用）",
+    description=(
+        "**資料來源網站正式名稱**：MOPS 公開資訊觀測站（公開資訊觀測站 mops.twse.com.tw）。\n\n"
+        "**資料源 API URL 與呼叫方法**：\n"
+        "- `POST https://mops.twse.com.tw/mops/api/redirectToOld`，`apiName=ajax_t05st08_all`；`YM=民國年月 5碼`、`TYPEK=sii|otc`。\n"
+        "- Output：該月該市場所有申報公司的 HTML 清單頁；以 regex 提取 `co_id.value='...'` 取得公司代碼。\n\n"
+        "**目的**：MOPS 「各項產品業務營收」IFRS 後改自願申報，非所有公司每月都有申報。本 endpoint 直接"
+        "列出「真正有申報的 (co_id, ym)」，供 PoC SQL 層 `product_revenue_filer_list` 作為事件母體。\n\n"
+        "**參數**：`ym` = 民國年月 5碼（例 `11312` = 民國 113 年 12 月）；`market` = `sii`（上市）/ `otc`（上櫃）。"
+    ),
+)
+async def api_product_revenue_filers(
+    ym: str = Query(..., description="民國年月 5碼字串，例 `11312`。"),
+    market: str = Query(..., description="市場別：`sii`（上市）/ `otc`（上櫃）。"),
+):
+    return await query_product_revenue_filers(ym, market)
 
 
 @app.get(

@@ -1,6 +1,6 @@
 # TWStock Query · 台灣上市櫃公司查詢平台
 
-> **Version: v0.0.9**
+> **Version: v0.0.10**
 
 整合免費公開資料源（TWSE OpenAPI、TPEx OpenAPI、FinMind v4、經濟部商工 API），
 提供任一上市/上櫃公司的基本資料、主要營業項目、EPS、營收、淨利、股利、營業利潤率、營收成長率、總經理等資訊。
@@ -87,6 +87,66 @@ twstock_api/
 ```
 
 ## 版本紀錄
+
+### v0.0.10 — 2026-06-30
+
+**Milestone：擴充 PoC SQL 層覆蓋更多 endpoint（yfinance 財報 / 月營收 / 股利 / 產品營收）**
+
+- 不動現有 11 個 `db/poc/*.sql`，新增 13 個 SQL（1 個 `_list.sql` + 6 個 `raw_*` + 6 個 view），完全從現有 view 往下接，並以現有表為欄位 alignment 基準：
+  - `financial_month_list`（上游：`company_basic_info`；月頻專屬 `_list.sql`，以每公司 `incorporation_date` 之月首起 `generate_series` 每月一筆 `month_start_date`，供 `raw_monthly_revenue*` 使用；符合 PoC 規則 #11 與 #14「不同時間維度資料應基於不同 `_list.sql`；月營收以公佈日為單位而非日」）
+  - `raw_product_revenue` + `product_revenue`（上游：`company_list` → MOPS t05st08；`product_revenue` 將民國年月合成 `report_month DATE`，以 `LEFT JOIN LATERAL ... ON TRUE` 保留公司層 `sales_return`/`total_revenue`，即使 `items` 為 null 也保留一列）
+  - `raw_yearly_financials_yfinance` + `financial_yearly_yfinance`（上游：`financial_year_list` → yfinance；欄位 align `financial_quarterly`）
+  - `raw_monthly_revenue` + `monthly_revenue`（上游：`financial_month_list` → FinMind 月營收）
+  - `raw_monthly_revenue_twse` + `monthly_revenue_twse`（上游：`financial_month_list` → 證交所體系 TWSE/TPEx t187ap05 + MOPS t21sc03；欄位 align `monthly_revenue`）
+  - `raw_yearly_dividend` + `yearly_dividend`（上游：`financial_year_list` → FinMind 股利）
+  - `raw_yearly_dividend_yfinance` + `yearly_dividend_yfinance`（上游：`financial_year_list` → yfinance；欄位 align `yearly_dividend`）
+- 遵守 `db/poc/README.md` 規則 9-14：
+  - 規則 11 & 14：新增 `financial_month_list` 讓月頻 raw 有專屬月度 `_list` 上游，避免用 `financial_year_list` 造成過稀。
+  - 規則 12：民國年 / 月統一轉為 `DATE`（`make_date(民國年+1911, 月, 1)`），如 `product_revenue.report_month`。
+  - 規則 13：所有新 view 皆**移除 WHERE 過濾**，PoC 階段對 raw 母體做 full scan，由下游自行 filter NULL；資料邊界完全由 `_list.sql` 決定。
+  - 規則 6（uniqueness）：不使用會破壞唯一性的 self-join；`/company/{id}/value-chain` 由下游直接查 `chain_info` 即可，本 PR 不新增 SQL。
+- `raw_*` 可呼叫 `http_get_content`，其餘 view 純 JSON 攤平；non-`_list` 不呼叫 HTTP。
+- `db/poc/README.md` 同步詳述每個新 SQL 的欄位中英描述、來源 JSON 路徑、上游 SQL link 跳轉。
+
+#### v0.0.10 追加補丁：事件驅動 `_list` 重構（rule 15）
+
+**背景**：初版 v0.0.10 把 `yearly_dividend*` / `product_revenue` 都掛在規則性時間格點 `_list` 上（`financial_year_list` / `company_list`）。但這兩類資料本質是**事件性資料**：
+
+- 股利：每公司每年 0～數次除息事件，`/dividend?as_of=X` 只回 as_of 前最後一筆 → 用每年 1/1 遍歷會反覆命中同一筆舊事件。
+- MOPS 各項產品業務營收：IFRS 後改自願申報,非每公司每月都有,笛卡兒積 (公司 × 月) 遍歷會落到 `last_filed_ym` 產生大量重複、也浪費 API。
+
+**新增 PoC 規則 15**：事件性資料應建立「事件母體 endpoint」作為 `_list` 上游,由資料本身告訴我們哪些日期真正有事件,而非以規則性時間格點採樣。並補 rule 13 例外：`_list.sql` 允許 `WHERE <field> IS NOT NULL` 過濾「不可用事件」。
+
+**Backend 新增 endpoint（不動舊 endpoint,保留 backward compatibility）**：
+
+- `GET /api/company/{stock_id}/dividend/history`（FinMind）與 `/dividend/history/yfinance`：回傳該公司歷史整段除息事件 array（20 年區間全量）。
+- `GET /api/product-revenue/filers?ym=&market=`：透過既有 `_fetch_filer_list`（MOPS `ajax_t05st08_all`）回傳該月該市場真正申報「各項產品業務營收」的 co_id 陣列。
+
+**SQL 層改造**：
+
+- 刪除：`raw_yearly_dividend*` / `yearly_dividend*`（規則性年度採樣過時)。
+- 新增：`raw_dividend_history*`（每公司一包歷史 events）→ `dividend_event_list*`（攤平出真實除息日,rule 13 例外過濾 NULL）→ `raw_dividend*`（`as_of = cash_ex_dividend_date`）→ `dividend*`（每列 = 一次除息事件）。
+- 新增：`product_revenue_filer_scope`（**唯一時間邊界調整點**,PoC 預設近 5 年）→ `raw_product_revenue_filers`（對每 (ym, market) 打 filers endpoint）→ `product_revenue_filer_list`（攤平出 `(stk_code, ym, report_month DATE)` 事件母體）。
+- 改造：`raw_product_revenue` 上游改為 `product_revenue_filer_list`,`as_of = date_to_iso(report_month)`（用月首因 IMMUTABLE 限制,MOPS 同月申報 as_of 落月首月末皆鎖同一次申報）;`product_revenue` view 直接沿用 raw 表的 `report_month DATE`,不再從 JSON 民國年月合成。
+- 保留（月營收）：`financial_month_list` + `raw_monthly_revenue*` 不動 — 月營收每月都有公佈,規則性格點恰等於事件母體,為 rule 15 的退化特例。
+- `db/poc/README.md` 同步：加入 rule 15、rule 13 例外、新增/移除章節、索引更新。
+
+**副作用**：SQL 檔案數量從 13 個新增擴展為 ~20 個新增（含 filer scope/list、event list、history raw 等）。5 年 default 讓初次 load 只需 ~120 次 filer endpoint 呼叫,MOPS 內部有 24h cache;未來全量掃描只需改 `product_revenue_filer_scope` 一處。
+
+#### v0.0.10 二次補丁：yfinance quarterly 拆兩段 + jsonb null 型別安全
+
+**背景**：PoC schema 建完後對每個 view 跑 `SELECT * LIMIT 1` 隱現兩個問題：
+
+- `financial_yearly_yfinance`：`cannot cast jsonb null to type numeric` — 欄位使用 `->`（回 jsonb）後直接 `::NUMERIC`,遇到 jsonb null 就爆。
+- `financial_quarterly_yfinance`：`QueryCanceled: statement timeout` — view 內直接對數百個 (stk_code × quarter) 同步發 HTTP,單一 SELECT 包不住。
+
+**修復**：
+
+- 新增 `raw_quarterly_financials_yfinance`（上游 = `financial_quarter_yfinance_list`），把 HTTP 呼叫從 view 內拆出,落實 [`db/poc/README.md`](db/poc/README.md#financial_quarterly) 早已提醒的「兩段式重構」,同時滿足 rule 1 與 rule 9。
+- 重寫 `financial_quarterly_yfinance`：上游改為 `raw_quarterly_financials_yfinance`,本 view 不再發 HTTP,只做 JSON 攤平。欄位完全與 `financial_yearly_yfinance` / `financial_quarterly` (FinMind 版) align。
+- 修 `financial_yearly_yfinance`：所有 numeric 欄位一律改走 `->>`（text）再 `::NUMERIC`,jsonb null 會安全轉為 SQL NULL。同步拉齊 `financial_quarterly_yfinance` 的型別安全寫法。
+- README：`db/poc/README.md` 章節索引新增 32/33/34（`financial_quarter_yfinance_list` / `raw_quarterly_financials_yfinance` / `financial_quarterly_yfinance`）,同步描述型別安全規範。
+- FinMind 版 `financial_quarterly` 不動（保留 backward compatibility，但章節提醒已改寫）;若未來 FinMind 版與 yfinance 同樣受 timeout 影響,可以同樣 pattern 拆兩段。
 
 ### v0.0.9 — 2026-06-29
 
