@@ -90,6 +90,29 @@ class Pipeline:
             print('Executing SQL:\n', create_sql)
             self._db_tool.execute_query(create_sql)
     
+    def check_view_run_speed(self, timeout_seconds: int = 10):
+        """
+        Check the execution speed of each view in the DAG.
+        Using limit 1 to avoid fetching too many rows, 
+        just to check the execution time.
+        """
+        from psycopg.errors import QueryCanceled, InvalidParameterValue
+        sqls_in_concern = []
+        for sql_path in self.ordered_sql_paths:
+            try:
+                table = sql_path.split('.')[0]
+                check_sql = f'SELECT * FROM poc.{table} LIMIT 1'
+                self._db_tool.execute_query(f"""
+                SET statement_timeout = '{timeout_seconds}s';
+                {check_sql};
+                RESET statement_timeout;
+                """)
+                print('[SUCCESS] execution of view', table)
+            except BaseException as e:
+                print('[ERROR] Execution of view', table, 'took too long and was canceled.')
+                sqls_in_concern.append((sql_path, e))
+        return sqls_in_concern
+    
     @property
     def seed_tables(self) -> List[str]:
         """

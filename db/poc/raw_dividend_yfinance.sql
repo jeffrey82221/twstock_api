@@ -10,4 +10,4 @@ SELECT
         ('http://host.docker.internal:5002/api/company/' || stk_code || '/dividend/yfinance?as_of=' || custom.date_to_iso(cash_ex_dividend_date)::TEXT)::TEXT
     ) AS dividend,
     cash_ex_dividend_date AS as_of
-FROM {{ schema }}.dividend_event_list_yfinance
+FROM {{ schema }}.dividend_event_yfinance_list

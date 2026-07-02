@@ -11,11 +11,11 @@
 --   同一公司同一除息日不重複；FinMind 若同日有多筆（罕見），僅取其中一筆歷史欄位。
 --
 -- 註：本檔為 _list 但不呼叫 HTTP（rule 2）— 上游已由 raw_dividend_history 完成抓取。
-SELECT DISTINCT
+SELECT 
     stk_code,
     custom.parse_iso_date(TRIM('"' FROM (event->>'cash_ex_dividend_date'))) AS cash_ex_dividend_date
 FROM {{ schema }}.raw_dividend_history
 CROSS JOIN LATERAL jsonb_array_elements(
     COALESCE(dividend_history->'events', '[]'::jsonb)
 ) AS event
-WHERE (event->>'cash_ex_dividend_date') IS NOT NULL
+--WHERE (event->>'cash_ex_dividend_date') IS NOT NULL

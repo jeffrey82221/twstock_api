@@ -2,7 +2,11 @@ SELECT
 	stk_code,
 	custom.parse_iso_date(TRIM('"' FROM (financials->'as_of')::TEXT)) AS as_of,
 	TRIM('"' FROM (financials->'stock_id')::TEXT) AS stock_id,
-	(financials->'eps'->'ttm')::NUMERIC AS eps_ttm,
+	CASE WHEN (financials->'eps'->'ttm')::text = 'null' THEN NULL
+		ELSE
+	(financials->'eps'->'ttm')::NUMERIC 
+	END
+	AS eps_ttm,
 	custom.parse_iso_date(TRIM('"' FROM (financials->'eps'->'latest_quarter_date')::TEXT)) AS latest_quarter_date,
 	(financials->'eps'->'latest_quarter_value')::NUMERIC AS latest_quarter_eps,
 	(financials->'net_income'->>'ttm')::NUMERIC AS net_income_ttm,
@@ -16,10 +20,10 @@ FROM (
 			stk_code,
 			custom.http_get_content(
 				(
-					'http://host.docker.internal:5002/api/company/' || stk_code || '/financials?as_of=' || custom.date_to_iso(quater)
+					'http://host.docker.internal:5002/api/company/' || stk_code || '/financials/yfinance?as_of=' || custom.date_to_iso(quater)
 				)::TEXT
 				) AS financials
-		FROM {{ schema }}.financial_quarter_list
+		FROM {{ schema }}.financial_quarter_yfinance_list
 	)
 	WHERE (financials->'eps'->'ttm')::text <> 'null'
 )

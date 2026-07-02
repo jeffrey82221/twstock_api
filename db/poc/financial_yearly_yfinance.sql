@@ -2,7 +2,6 @@
 -- 上游：raw_yearly_financials_yfinance
 -- 攤平：每行 = 該公司在某 year_start_date as_of 下，由 yfinance 取得的 TTM 指標一筆
 -- 欄位刻意與 financial_quarterly 完全 align，差別只在資料源
--- 設計理念（rule 13）：不做 WHERE 過濾，保留 raw 母體的所有 rows。
 SELECT
     stk_code,
     custom.parse_iso_date(TRIM('"' FROM (financials->'as_of')::TEXT)) AS as_of,
@@ -15,3 +14,4 @@ SELECT
     (financials->>'operating_margin_pct')::NUMERIC AS operating_margin_pct,
     (financials->>'revenue_ttm_from_financial_statements')::NUMERIC AS revenue_ttm
 FROM {{ schema }}.raw_yearly_financials_yfinance
+WHERE (financials->'eps'->'ttm')::TEXT <> 'null'
