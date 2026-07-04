@@ -119,10 +119,10 @@ class Pipeline:
         Returns a list of seed tables that are 
         aim to be populated step-by-step. 
         """
-        sqls = list(self.dag.all_starts())
-        sqls.extend([p for p in self._sql_paths if p.endswith('_list.sql')])
+        sqls = []
+        sqls.extend([p for p in self.ordered_sql_paths if p.endswith('_list.sql')])
         results = [p.split('.sql')[0] for p in sqls]
-        return list(set(results))
+        return list(dict.fromkeys(results))
 
     def create_seed_tables(self):
         for table in self.seed_tables:
@@ -298,6 +298,19 @@ class Pipeline:
                 'use 60, 120, 180, 240, 360, 480, 720, or 1440.'
             )
         return f'0 */{hours} * * *'
+    
+    def setup_schedules(self, period_minutes: int = 1, row_cnt: int = 1):
+        """Set up pg_cron jobs for all seed tables.
+
+        Each job will insert `row_cnt` new rows from hidden.<table> into
+        pop.<table> every `period_minutes` minutes.
+        """
+        for table in self.seed_tables:
+            self.schedule_seed_table_refresh(
+                table=table,
+                period_minutes=period_minutes,
+                row_cnt=row_cnt,
+            )
 
     def schedule_seed_table_refresh(
         self,
