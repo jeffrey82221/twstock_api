@@ -58,8 +58,8 @@
 關鍵運作方式：
 
 1. **PoC schema 用來「設計 SQL」**。任何新欄位、新資料源都先在 `poc` 寫成 view，串通整條鏈再說。`poc` 允許 mutable function，可以直接打 HTTP。
-2. **`hidden` 是慢慢長大的母體**。pg_cron 排程每隔幾分鐘 / 幾小時跑一次，從 `_list` view 取出尚未進母體表的新列，`INSERT` 進 `hidden.<list_name>`。
-3. **`pop` 是 IMV**。`hidden.<list_name>` 每多一列，pg_ivm 自動把下游所有依賴的 `pop.*` materialized view 做增量重算。`pop` 不直接呼叫 HTTP，所以重算很便宜。
+2. **`pop.xxx_list` 是慢慢長大的母體**。pg_cron 排程每隔幾分鐘 / 幾小時跑一次，從 `_list` view 取出尚未進母體表的新列，`INSERT` 進 `pop.<list_name>`。
+3. **其它 `pop` 表是 IMV**。`hidden.<list_name>` 每多一列，pg_ivm 自動把下游所有依賴的 `pop.*` materialized view 做增量重算。`pop` 不直接呼叫 HTTP，所以重算很便宜。
 4. **分析性加工層** 最後可以混合 `pop.*` MV 與少量即時 `poc.*` V，作為對外查詢用的 final layer。
 
 ## 為什麼要這樣設計
