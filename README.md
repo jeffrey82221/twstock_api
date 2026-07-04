@@ -148,6 +148,19 @@ twstock_api/
 - README：`db/poc/README.md` 章節索引新增 32/33/34（`financial_quarter_yfinance_list` / `raw_quarterly_financials_yfinance` / `financial_quarterly_yfinance`）,同步描述型別安全規範。
 - FinMind 版 `financial_quarterly` 不動（保留 backward compatibility，但章節提醒已改寫）;若未來 FinMind 版與 yfinance 同樣受 timeout 影響,可以同樣 pattern 拆兩段。
 
+#### v0.0.10 三次補丁：yearly 財報分流 seed（rule 20）
+
+**背景**：`raw_yearly_financials`（FinMind）與 `raw_yearly_financials_yfinance` 兩張於 v0.0.10 完工後共用同一張 `financial_year_list` 作為上游 seed。但兩邊限流差很多：FinMind免費層 300 req/hr、yfinance 每小時可數千次。共用 seed 意味 pop schema 只能以兩邊都能跟上的保守 doubling limit 進度填充，yfinance 的寬鬆限流優勢白白浪費。
+
+**修復**：
+
+- 新增 `db/poc/financial_year_yfinance_list.sql`，內容完全等同 `financial_year_list`。拆兩張的目的不在邏輯差異，而在兩張對應到不同 `pop.<seed>` 空表，可各自以不同 doubling limit 進度填充，互不阻塞。
+- 就地改 `db/poc/raw_yearly_financials_yfinance.sql` 上游從 `financial_year_list` 換為 `financial_year_yfinance_list`。與 rule 18 「新增優先於修改」不衝突：PK、欄位、型別均不變，只換 seed 來源，屬 rule 18 末尾定義的「規格完全相容可就地改寫」例外。
+- 新增 **rule 20**（db/poc/README.md）：「不同限流 / 不同資料源的同型態 endpoint 要分流」。與 rule 14（時間維度分 list）、rule 15（事件 vs 連續型分 list）並列，形成完整的 `_list.sql` 切分三軸。
+- `db/poc/README.md` 章節索引新增 15 (`financial_year_yfinance_list`)，後面項目編號 +1。
+- Pipeline 零改動：`seed_tables` 自動掃所有 `_list.sql`，新 seed 自動被 pick up。
+- FinMind 版 `raw_yearly_financials` 不動，仍用 `financial_year_list`，保留 backward compatibility。
+
 ### v0.0.9 — 2026-06-29
 
 **Milestone：新增「證交所體系」作為「月營收 / YoY / TTM」的首選替代資料源（patch：加入 MOPS 歷史來源，TTM 完全可計算）**
