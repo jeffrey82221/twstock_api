@@ -4,7 +4,7 @@
 
 ## 規則
 
-> 規則分五組：語法層、`_list.sql` 角色、資料邊界與事件母體、正規化與欄位處理、執行環境相容性（pop schema / pg_ivm / seed pattern）。規則編號保留歷史順序以便追溯 commit 討論，新規則排在尾端（rule 17, 18）。
+> 規則分五組：語法層、`_list.sql` 角色、資料邊界與事件母體、正規化與欄位處理、執行環境相容性（pop schema / pg_ivm / seed pattern）。規則編號保留歷史順序以便追溯 commit 討論，新規則排在尾端（rule 17, 18, 20）。
 
 ### 語法層
 
@@ -56,6 +56,11 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 18. **SQL 演進策略：保護 pop schema 累積的資料，新增優先於修改**。pop schema 已累積的 raw / 正規化 view 背後都代表實際投於 API 抽取的時間與額度，既有資料實際上非常寶貴。
     - **不可在正常 refresh 時 `DROP SCHEMA pop CASCADE`**。任何 refresh 流程都必須用 `CREATE SCHEMA IF NOT EXISTS pop` 與 `CREATE TABLE IF NOT EXISTS pop.<seed>`。真的要從零重建時走顯式 `recreate=True` 開關（見 [`pipeline.py: create_mat_views()`](../../pipeline.py)）。
     - **新版 SQL 優先「新增另一張」，不要就地改寫既有 SQL**。若新推行的 SQL 會導致 view 欄位規格變動（新增 / 刪除 / 重命名欄位、換上游 endpoint、換 primary key），優先新增一張新名稱的 SQL（如 `<name>_v2.sql` / `<name>_yfinance.sql`）並讓新舊兩張並行一段日子，避免 pop 表因 schema drift 被 drop 重建、重新抽一次 API。只有在規格完全相容（同 primary key、只修 bug 不改欄位）或與使用方確認舊張可棄時，才就地改寫既有 SQL。
+20. **不同限流 / 不同資料源的同型態 endpoint 要分流**。當同一資料層（如年頻財報、除息事件）同時有多個上游資料源實作（FinMind vs yfinance、公開資訊觀測站 vs 商業 API），各實作的限流（rate limit / daily quota）差異很大時，兩邊不可共用同一張 `_list.sql` / `pop.<seed>` 空表，否則快的那邊會被慢的那邊拖累。
+    - **作法**：拆成兩張 `_list.sql`，內容可以完全相同（如 `financial_year_list` 與 `financial_year_yfinance_list`），重點不在邏輯差異，而在兩張對應到獨立 `pop.<seed>` 空表，可各自以不同 doubling limit 進度填充。下游 `raw_*` view 對應換到新 seed。
+    - **命名**：以資料源名稱作尾綴（如 `_yfinance_list`），對應的 raw view 也沿用同尾綴。
+    - **例子**：`financial_year_list` (FinMind、300 req/hr) vs `financial_year_yfinance_list` (yfinance、每小時數千次)。yfinance 可先拉高 LIMIT 快速拉齊，FinMind 保守進度，兩邊互不阻塞。
+    - Rule 20 與 rule 14、rule 15 相輔：rule 14 讓不同時間維度分 `_list`（monthly / yearly / quarterly）；rule 15 讓事件性 vs 連續型資料分 `_list`；rule 20 讓不同上游實作分 `_list`。
 
 ## 章節索引
 
@@ -73,26 +78,27 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 12. [company_business_items](#company_business_items)
 13. [financial_year_list](#financial_year_list)
 14. [raw_yearly_financials](#raw_yearly_financials)
-15. [raw_yearly_financials_yfinance](#raw_yearly_financials_yfinance)
-16. [financial_yearly_yfinance](#financial_yearly_yfinance)
-17. [financial_month_list](#financial_month_list)
-18. [raw_monthly_revenue](#raw_monthly_revenue)
-19. [monthly_revenue](#monthly_revenue)
-20. [raw_monthly_revenue_twse](#raw_monthly_revenue_twse)
-21. [monthly_revenue_twse](#monthly_revenue_twse)
-22. [raw_dividend_history](#raw_dividend_history)
-23. [raw_dividend_history_yfinance](#raw_dividend_history_yfinance)
-24. [dividend_event_list](#dividend_event_list)
-25. [dividend_event_list_yfinance](#dividend_event_list_yfinance)
-26. [raw_dividend](#raw_dividend)
-27. [dividend](#dividend)
-28. [raw_dividend_yfinance](#raw_dividend_yfinance)
-29. [dividend_yfinance](#dividend_yfinance)
-30. [financial_quarter_list](#financial_quarter_list)
-31. [financial_quarterly](#financial_quarterly)
-32. [financial_quarter_yfinance_list](#financial_quarter_yfinance_list)
-33. [raw_quarterly_financials_yfinance](#raw_quarterly_financials_yfinance)
-34. [financial_quarterly_yfinance](#financial_quarterly_yfinance)
+15. [financial_year_yfinance_list](#financial_year_yfinance_list)
+16. [raw_yearly_financials_yfinance](#raw_yearly_financials_yfinance)
+17. [financial_yearly_yfinance](#financial_yearly_yfinance)
+18. [financial_month_list](#financial_month_list)
+19. [raw_monthly_revenue](#raw_monthly_revenue)
+20. [monthly_revenue](#monthly_revenue)
+21. [raw_monthly_revenue_twse](#raw_monthly_revenue_twse)
+22. [monthly_revenue_twse](#monthly_revenue_twse)
+23. [raw_dividend_history](#raw_dividend_history)
+24. [raw_dividend_history_yfinance](#raw_dividend_history_yfinance)
+25. [dividend_event_list](#dividend_event_list)
+26. [dividend_event_list_yfinance](#dividend_event_list_yfinance)
+27. [raw_dividend](#raw_dividend)
+28. [dividend](#dividend)
+29. [raw_dividend_yfinance](#raw_dividend_yfinance)
+30. [dividend_yfinance](#dividend_yfinance)
+31. [financial_quarter_list](#financial_quarter_list)
+32. [financial_quarterly](#financial_quarterly)
+33. [financial_quarter_yfinance_list](#financial_quarter_yfinance_list)
+34. [raw_quarterly_financials_yfinance](#raw_quarterly_financials_yfinance)
+35. [financial_quarterly_yfinance](#financial_quarterly_yfinance)
 
 ---
 
@@ -329,17 +335,31 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 ---
 
-## raw_yearly_financials_yfinance
+## financial_year_yfinance_list
 
-- **上游 SQL**：[financial_year_list](#financial_year_list)
-- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/financials/yfinance?as_of={year_start_date}`
-  - 上游：yfinance Python Library（Yahoo Finance 非官方 wrapper）。與 FinMind 版同一輸出 spec,限流寬鬆許多、免 token;適合產 PoC 階段對比 / 其他 ad-hoc 研究。
+- **上游 SQL**：[company_basic_info](#company_basic_info)
+- **HTTP API endpoint**：無（純 SQL `generate_series`）
+- **設計理念（rule 20）**：內容完全等同 `financial_year_list`,拆成兩張目的在於「分流爬取」：`raw_yearly_financials`（FinMind）與 `raw_yearly_financials_yfinance` 對應到不同 `pop.<seed>` 空表，可各自以不同的 doubling limit 進度填充。yfinance 限流寬（每小時可數千次），可以先拉高 LIMIT 快速拉齊；FinMind 慢，保持保守進度，兩邊互不阻塞。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
-| `stk_code` | TEXT | 股票代號 | `financial_year_list.stk_code` |
+| `stk_code` | TEXT | 股票代號 | `company_basic_info.stk_code` |
+| `year_start_date` | DATE | 公司歷年的 1 月 1 日（從設立年到今年） | `generate_series(trunc_year(incorporation_date), CURRENT_DATE, '1 year')` |
+
+---
+
+## raw_yearly_financials_yfinance
+
+- **上游 SQL**：[financial_year_yfinance_list](#financial_year_yfinance_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/financials/yfinance?as_of={year_start_date}`
+  - 上游：yfinance Python Library（Yahoo Finance 非官方 wrapper）。與 FinMind 版同一輸出 spec,限流寬鬆許多、免 token;適合產 PoC 階段對比 / 其他 ad-hoc 研究。
+- **分流點（rule 20）**：上游 seed 已從 `financial_year_list` 換為 `financial_year_yfinance_list`，與 `raw_yearly_financials` 從同一張 `financial_year_list` 向下分岐的舊架構不同；兩張 raw view 各自對應獨立 `pop.<seed>` 空表，各自進度填充。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `financial_year_yfinance_list.stk_code` |
 | `financials` | JSONB | `/financials/yfinance` endpoint 整包 JSON（結構與 raw_yearly_financials 一致） | `custom.http_get_content(url)` |
-| `as_of` | DATE | 本筆對應的查詢基準日 | `financial_year_list.year_start_date` |
+| `as_of` | DATE | 本筆對應的查詢基準日 | `financial_year_yfinance_list.year_start_date` |
 
 ---
 
