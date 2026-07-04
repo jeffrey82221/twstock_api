@@ -132,6 +132,62 @@ class Pipeline:
             self._db_tool.execute_query(create_sql)
             self._set_seed_table_primary_key('pop', table)
 
+    def _get_table_columns(self, schema: str, table: str) -> List[str]:
+        """Return column names of ``schema.table`` in ordinal order.
+
+        Reads information_schema.columns; returns [] if the table does
+        not exist yet (caller is responsible for handling that case).
+        """
+        return [
+            row[0]
+            for row in self._db_tool.fetch_all(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = %s AND table_name = %s
+                ORDER BY ordinal_position
+                """,
+                (schema, table),
+            )
+        ]
+
+    def _build_seed_insert_sql(self, table: str, row_cnt: int = 1) -> str:
+        """Build the INSERT SQL that copies new rows from hidden.<table>
+        into pop.<table>, skipping any row where any column is NULL.
+
+        Shared by :meth:`_insert_few_rows_to_seed_tables` (one-shot at
+        bootstrap) and :meth:`schedule_seed_table_refresh` (pg_cron tick)
+        so both paths stay in sync.
+
+        Why the NULL filter
+        -------------------
+        Seed tables have a composite PRIMARY KEY over every column, so
+        every column is NOT NULL. Upstream ``hidden.<table>`` views can
+        still emit rows with NULLs (missing joins, upstream data gaps,
+        yfinance / FinMind returning partial records). Without this
+        filter those rows raise ``NotNullViolation`` and the whole
+        INSERT rolls back, stalling seed-table population.
+
+        The filter is derived from the actual columns of pop.<table> at
+        call time -- for :meth:`schedule_seed_table_refresh` that means
+        the string baked into cron.job is fixed at schedule time (the
+        seed table shape is stable once created).
+        """
+        columns = self._get_table_columns('pop', table)
+        if not columns:
+            raise ValueError(
+                f'Cannot build seed INSERT for {table!r}: pop.{table} has no columns '
+                '(was create_seed_tables run?).'
+            )
+        not_null_clause = ' AND '.join(f'"{c}" IS NOT NULL' for c in columns)
+        return (
+            f'INSERT INTO pop.{table} '
+            f'SELECT * FROM hidden.{table} '
+            f'WHERE {not_null_clause} '
+            f'EXCEPT SELECT * FROM pop.{table} '
+            f'LIMIT {row_cnt};'
+        )
+
     def _set_seed_table_primary_key(self, schema: str, table: str) -> None:
         """Promote every column of a freshly created seed table to PRIMARY KEY.
 
@@ -158,18 +214,7 @@ class Pipeline:
             print(f'Primary key already exists on {schema}.{table}, skipping.')
             return
 
-        columns = [
-            row[0]
-            for row in self._db_tool.fetch_all(
-                """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema = %s AND table_name = %s
-                ORDER BY ordinal_position
-                """,
-                (schema, table),
-            )
-        ]
+        columns = self._get_table_columns(schema, table)
         if not columns:
             print(f'No columns found for {schema}.{table}, skipping PK.')
             return
@@ -358,14 +403,10 @@ class Pipeline:
         if job_name is None:
             job_name = f'seed_refresh_{table}'
 
-        # Use the exact same INSERT shape as _insert_few_rows_to_seed_tables.
-        # Single-line SQL keeps it readable in cron.job.
-        command = (
-            f'INSERT INTO pop.{table} '
-            f'SELECT * FROM hidden.{table} '
-            f'EXCEPT SELECT * FROM pop.{table} '
-            f'LIMIT {row_cnt};'
-        )
+        # Use the exact same INSERT shape as _insert_few_rows_to_seed_tables
+        # via the shared _build_seed_insert_sql helper (keeps the null-row
+        # filter in one place). Baked into cron.job at schedule time.
+        command = self._build_seed_insert_sql(table, row_cnt=row_cnt)
 
         # "Upsert" the job: alter if it exists, otherwise schedule.
         existing = self._db_tool.fetch_all(
@@ -395,12 +436,7 @@ class Pipeline:
             table = sql_path.split('.')[0]
             if table in self.seed_tables:
                 time.sleep(sleep_time)
-                insert_sql = f"""
-                INSERT INTO pop.{table}
-                SELECT * FROM hidden.{table} 
-                EXCEPT SELECT * FROM pop.{table}
-                LIMIT {row_cnt};
-                """
+                insert_sql = self._build_seed_insert_sql(table, row_cnt=row_cnt)
                 print('Inserting one row into seed table:', table)
                 print('Executing SQL:\n', insert_sql)
                 try:
