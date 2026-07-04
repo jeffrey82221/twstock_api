@@ -4,7 +4,7 @@
 -- 用途：作為 raw_dividend_yfinance 的上游母體。
 SELECT 
     stk_code,
-    custom.parse_iso_date(TRIM('"' FROM (event->>'cash_ex_dividend_date'))) AS cash_ex_dividend_date
+    custom.parse_iso_date(TRIM('"' FROM (event->>'reference_date'))) AS reference_date
 FROM {{ schema }}.raw_dividend_history_yfinance
 CROSS JOIN LATERAL jsonb_array_elements(
     COALESCE(dividend_history->'events', '[]'::jsonb)

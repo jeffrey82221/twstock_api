@@ -4,21 +4,32 @@
 
 ## 規則
 
+> 規則分五組：語法層、`_list.sql` 角色、資料邊界與事件母體、正規化與欄位處理、執行環境相容性（pop schema / pg_ivm / seed pattern）。規則編號保留歷史順序以便追溯 commit 討論，新規則排在尾端（rule 17, 18）。
+
+### 語法層
+
 1. 非 `_list` 結尾的 SQL **禁止** 使用 mutable 操作（例如 `::DATE`, `http_get`）。
 2. `_list` 結尾的 SQL **不可** 呼叫 `http_get_content`。
 3. 若需要 mutable 邏輯或型別轉換,請封裝為 immutable function 放在 `db/settings.sql`。
 4. 每個 PoC SQL 對應一個 table/view。
+
+### `_list.sql` 角色
+
 5. `_list` 表把資料模型的實體（chain、company、quarter…）落到一張慢慢增長的表,下游 view 透過
 incremental materialized view 建構,可以與 `_list` 表同步擴充資料,避免一次性大量發查 API。
 6. 每張表的 rows 都必須是唯一的。
 7. `_list.sql` 的欄位即為下游 view 的 primary key。
-8. 沒有上游的 SQL 必須是 `_list.sql`
+8. **`_list.sql` = seed table**。所有會被 pop schema 逐步 `LIMIT` 增量填充的表都以 `_list.sql` 結尾命名；判斷是否有上游只要檢查檔內是否引用 `{{ schema }}`：
+    - **沒引用 `{{ schema }}`** → 純上游 seed，從 endpoint / 日期產生器看起（例：`chain_list` 直接打 `/chains`、`financial_quarter_yfinance_list` 只靠 date generator）。【例外】含 `{{ schema }}` 但檔名不含 `_list` 的 seed，必要時需改名（已發生：`product_revenue_filer_scope` → `product_revenue_filer_scope_list`）。
+    - **引用 `{{ schema }}`** → 上游來自其他 poc 表（例：`company_list` 上游是 `chain_info`、`dividend_event_list` 上游是 `raw_dividend_history`）；這種 `_list` 是「事件攤平母體」，仍屬 seed table 角色，仍必須以 `_list.sql` 命名。
+    - `pipeline.py` 的 `seed_tables` 掃描所有 `_list.sql` 對應到 `pop.<name>` 空表，供 PoC 驗證期逐步增量填充使用（填充節奏 SOP 見頂層 [`README.md#LIMIT COUNT 選取`](../../README.md#memo)）。
 9. `raw_` 開頭的SQL用途是抓取 app/main.py 的 endpoint API return 結果
-10. 非 `raw_`, `_list.sql` 的 sql 目的是做 json 內容的欄位正規化,請以資料可用性來決定如何整理資料
 11. `raw_` 開頭的SQL,需搭配一個 `_list.sql`作為上游,`_list.sql` 的邏輯要能指定 endpoint 的 API calling 可以遍歷所有 endpoint function 可能的 input ,但請避免重複的結果抓取。(e.g., 雖然「月營收」可以以日為單位去 call,但沒有必要在時間軸上這麼密集的抓取資料,最好只針對公佈日去抓取資料)
-12. 請把民國年月日整合成西元年月日（以DATE來存）
+
+### 資料邊界與事件母體
+
 13. 避免使用 WHERE 條件,讓 POC 階段會 full scan 整個上游表,應透過對 endpoint 的資料源的理解,從 相關 endpoint 找出資料邊界,融入到 `_list.sql` 表的邏輯中,讓下游的 `raw_` 表資料爬取可以有合理的起始點。
-    - **例外**：`_list.sql` 允許 `WHERE <field> IS NOT NULL` 過濾「不可用事件」（例：除息日為 NULL 的歷史列）,因為此類列對下游 `as_of` API 呼叫無意義。這屬資料品質層清理,不算隱藏 raw 母體邊界。
+    - **例外**：`_list.sql` 允許 `WHERE <field> IS NOT NULL` 過濾「不可用事件」（例：某事件 key 為 NULL 的歷史列）,因為此類列對下游 `as_of` API 呼叫無意義。這屬資料品質層清理,不算隱藏 raw 母體邊界。但在動用本例外前,先見 **rule 17**— 優先換一個不會 NULL 的事件 key，而不是用 WHERE 掃掉 NULL 列。
 14. 不同時間維度的資料,如 monthly, yearly, quarterly 資料,應基於不同的 `_list.sql` 來設定母體範圍
 15. **事件性資料應建立事件層 endpoint 作為 `_list` 母體。** 當資料本質為離散事件（股利除息、產品營收自願申報）而非連續時間序列時：
     - **禁止**用規則性時間格點（每月月首、每年年初）作為 `_list` 母體,因為 as_of endpoint 只會回「該日期前最後一筆」,對格點採樣會產生大量重複命中的舊事件,浪費 API 也讓下游看到冗餘 rows。
@@ -26,13 +37,33 @@ incremental materialized view 建構,可以與 `_list` 表同步擴充資料,避
     - `_list.sql` 透過該事件母體 endpoint 產出「實際有事件的 (stk_code, event_date)」,下游 `raw_*` 只對真正有事件的 (id, date) 呼叫 as_of endpoint。
     - Rule 11 的「避免重複」本質是「不對沒事件的日期打 API」;規則性格點只是規則 15 的特例（月營收每月都公佈,格點恰等於事件母體）。
 
+### 正規化與欄位處理
+
+非 `raw_` 、非 `_list.sql` 的 view 定位為「將 raw JSON 攤平成強型列的正規化層」，下列規則針對這層。
+
+10. 非 `raw_`、非 `_list.sql` 的 sql 目的是做 JSON 內容的欄位正規化，請以資料可用性來決定如何整理資料。
+12. 請把民國年月日整合成西元年月日（以 DATE 來存）。
+
+### 執行環境相容性（pop schema / pg_ivm / seed pattern）
+
+poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https://github.com/sraoss/pg_ivm) incremental materialized view。因此 poc SQL 除了「邏輯正確」還要同時滿足「pg_ivm 相容」與「seed pattern 相容」。
+
+16. **只用 INNER JOIN 與 CROSS JOIN**。pg_ivm 不支援 `LEFT / RIGHT / FULL OUTER JOIN`，連 `LEFT JOIN LATERAL` 也不行。攤平 JSON array 時若要保留空 array 的父列，請在上游 raw view 內以 `COALESCE(json_field, '[]'::jsonb)` 保證非空，再用 `INNER JOIN LATERAL jsonb_array_elements(...)` 或 `CROSS JOIN LATERAL jsonb_array_elements(...)` 攤平，不要用 `LEFT JOIN LATERAL`。
+    - 同理避免：window functions、`DISTINCT`（除非上游本身無重複，可省略）、`GROUP BY`、WHERE 內的 subquery、CTE（WITH clause）。若邏輯必須用到，請看能否推到上游 `raw_` 表或包成 `db/settings.sql` 的 immutable function。
+17. **事件 key 選擇 (取代 rule 13 例外的默認作法)**。當事件層 endpoint 回傳多個候選日期欄位（如 `/dividend/history` 回 `cash_ex_dividend_date` / `stock_ex_dividend_date` / `reference_date` / `announcement_date`），`_list.sql` 攤平事件的 key 必須選「所有已知歷史列都非 NULL」的欄位（如 `reference_date`），不要選「少數為 NULL」的欄位（如 `cash_ex_dividend_date` — 只有股票股利、無現金股利的年份為 NULL）。
+    - 判斷方式：先 sample 歷史 event 統計每個候選欄位的 NULL 率；NULL 率 = 0% 的欄位優先。
+    - 若所有候選都偶有 NULL，才動用 rule 13 例外的 `WHERE <key> IS NOT NULL`，並在 SQL 註解說明原因。
+18. **SQL 演進策略：保護 pop schema 累積的資料，新增優先於修改**。pop schema 已累積的 raw / 正規化 view 背後都代表實際投於 API 抽取的時間與額度，既有資料實際上非常寶貴。
+    - **不可在正常 refresh 時 `DROP SCHEMA pop CASCADE`**。任何 refresh 流程都必須用 `CREATE SCHEMA IF NOT EXISTS pop` 與 `CREATE TABLE IF NOT EXISTS pop.<seed>`。真的要從零重建時走顯式 `recreate=True` 開關（見 [`pipeline.py: create_mat_views()`](../../pipeline.py)）。
+    - **新版 SQL 優先「新增另一張」，不要就地改寫既有 SQL**。若新推行的 SQL 會導致 view 欄位規格變動（新增 / 刪除 / 重命名欄位、換上游 endpoint、換 primary key），優先新增一張新名稱的 SQL（如 `<name>_v2.sql` / `<name>_yfinance.sql`）並讓新舊兩張並行一段日子，避免 pop 表因 schema drift 被 drop 重建、重新抽一次 API。只有在規格完全相容（同 primary key、只修 bug 不改欄位）或與使用方確認舊張可棄時，才就地改寫既有 SQL。
+
 ## 章節索引
 
 1. [chain_list](#chain_list)
 2. [raw_chain_info](#raw_chain_info)
 3. [chain_info](#chain_info)
 4. [company_list](#company_list)
-5. [product_revenue_filer_scope](#product_revenue_filer_scope)
+5. [product_revenue_filer_scope_list](#product_revenue_filer_scope_list)
 6. [raw_product_revenue_filers](#raw_product_revenue_filers)
 7. [product_revenue_filer_list](#product_revenue_filer_list)
 8. [raw_product_revenue](#raw_product_revenue)
@@ -125,10 +156,10 @@ incremental materialized view 建構,可以與 `_list` 表同步擴充資料,避
 
 ---
 
-## product_revenue_filer_scope
+## product_revenue_filer_scope_list
 
 - **上游 SQL**：無外部（純 SQL `generate_series` + `VALUES` 產生時間邊界 × 市場）
-- **HTTP API endpoint**：無（非 `_list`,亦不呼叫 HTTP）
+- **HTTP API endpoint**：無（是 `_list` seed table,不呼叫 HTTP,rule 2）
 - **設計理念（rule 15 支援）**：PoC 階段預設「近 5 年」的 MOPS 產品營收全公司掃描範圍。若未來要擴大到完整歷史,只需修改本檔的 `INTERVAL '5 years'`,此為**唯一時間邊界調整點**,下游 `raw_product_revenue_filers` / `product_revenue_filer_list` / `raw_product_revenue` / `product_revenue` 均自動跟隨擴大。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
@@ -140,15 +171,15 @@ incremental materialized view 建構,可以與 `_list` 表同步擴充資料,避
 
 ## raw_product_revenue_filers
 
-- **上游 SQL**：[product_revenue_filer_scope](#product_revenue_filer_scope)
+- **上游 SQL**：[product_revenue_filer_scope_list](#product_revenue_filer_scope_list)
 - **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/product-revenue/filers?ym={ym}&market={market}`
   - 上游資料源：[公開資訊觀測站 (MOPS) ajax_t05st08_all](https://mops.twse.com.tw/mops/web/ajax_t05st08_all)（該月該市場所有申報「各項產品業務營收」的公司清單）
 - 設計理念（rule 15）：MOPS 各項產品業務營收 IFRS 後改自願申報,非每公司每月都有申報。本 raw 對每 `(ym, market)` 打一次 filers endpoint,取得「真正有申報的 co_id 陣列」,供下游 `product_revenue_filer_list` 攤平為 (co_id × ym) 事件母體。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
-| `ym` | TEXT | 民國年月 5 碼字串 | `product_revenue_filer_scope.ym` |
-| `market` | TEXT | 市場別 | `product_revenue_filer_scope.market` |
+| `ym` | TEXT | 民國年月 5 碼字串 | `product_revenue_filer_scope_list.ym` |
+| `market` | TEXT | 市場別 | `product_revenue_filer_scope_list.market` |
 | `filers` | JSONB | filers endpoint 回傳整包 JSON（含 `co_ids[]`, `ym`, `market`, `total_count`） | `custom.http_get_content(url)` |
 
 ---
