@@ -57,7 +57,7 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 2. [raw_chain_info](#raw_chain_info)
 3. [chain_info](#chain_info)
 4. [company_list](#company_list)
-5. [product_revenue_filer_scope](#product_revenue_filer_scope)
+5. [product_revenue_filer_scope_list](#product_revenue_filer_scope_list)
 6. [raw_product_revenue_filers](#raw_product_revenue_filers)
 7. [product_revenue_filer_list](#product_revenue_filer_list)
 8. [raw_product_revenue](#raw_product_revenue)
@@ -150,10 +150,10 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 ---
 
-## product_revenue_filer_scope
+## product_revenue_filer_scope_list
 
 - **上游 SQL**：無外部（純 SQL `generate_series` + `VALUES` 產生時間邊界 × 市場）
-- **HTTP API endpoint**：無（非 `_list`,亦不呼叫 HTTP）
+- **HTTP API endpoint**：無（是 `_list` seed table,不呼叫 HTTP,rule 2）
 - **設計理念（rule 15 支援）**：PoC 階段預設「近 5 年」的 MOPS 產品營收全公司掃描範圍。若未來要擴大到完整歷史,只需修改本檔的 `INTERVAL '5 years'`,此為**唯一時間邊界調整點**,下游 `raw_product_revenue_filers` / `product_revenue_filer_list` / `raw_product_revenue` / `product_revenue` 均自動跟隨擴大。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
@@ -165,15 +165,15 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 ## raw_product_revenue_filers
 
-- **上游 SQL**：[product_revenue_filer_scope](#product_revenue_filer_scope)
+- **上游 SQL**：[product_revenue_filer_scope_list](#product_revenue_filer_scope_list)
 - **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/product-revenue/filers?ym={ym}&market={market}`
   - 上游資料源：[公開資訊觀測站 (MOPS) ajax_t05st08_all](https://mops.twse.com.tw/mops/web/ajax_t05st08_all)（該月該市場所有申報「各項產品業務營收」的公司清單）
 - 設計理念（rule 15）：MOPS 各項產品業務營收 IFRS 後改自願申報,非每公司每月都有申報。本 raw 對每 `(ym, market)` 打一次 filers endpoint,取得「真正有申報的 co_id 陣列」,供下游 `product_revenue_filer_list` 攤平為 (co_id × ym) 事件母體。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
-| `ym` | TEXT | 民國年月 5 碼字串 | `product_revenue_filer_scope.ym` |
-| `market` | TEXT | 市場別 | `product_revenue_filer_scope.market` |
+| `ym` | TEXT | 民國年月 5 碼字串 | `product_revenue_filer_scope_list.ym` |
+| `market` | TEXT | 市場別 | `product_revenue_filer_scope_list.market` |
 | `filers` | JSONB | filers endpoint 回傳整包 JSON（含 `co_ids[]`, `ym`, `market`, `total_count`） | `custom.http_get_content(url)` |
 
 ---
