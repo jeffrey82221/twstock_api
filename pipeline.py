@@ -457,3 +457,198 @@ class Pipeline:
                 except Exception as e:
                     print(f"[_insert_few_rows_to_seed_tables] Failed to insert into seed table {table}: {e}")
                     raise e
+
+    # ------------------------------------------------------------------
+    # Capacity probing: find the largest safe LIMIT for seed refresh tick
+    # ------------------------------------------------------------------
+
+    def _run_seed_insert_trial(
+        self,
+        table: str,
+        limit_count: int,
+        per_insert_timeout_sec: int = 20,
+        sleep_between_sec: int = 5,
+        trials: int = 3,
+    ) -> bool:
+        """Run one capacity trial at a given ``limit_count``.
+
+        A single trial:
+
+        1. ``TRUNCATE pop.<table>`` so every trial starts from empty and
+           has to actually copy ``limit_count`` fresh rows -- otherwise
+           later trials would benefit from the anti-join short-circuit
+           and skew the result.
+        2. Run ``_build_seed_insert_sql(table, row_cnt=limit_count)``
+           ``trials`` times (default 3), sleeping ``sleep_between_sec``
+           between runs. Each insert is wrapped in
+           ``SET LOCAL statement_timeout`` so any single run exceeding
+           ``per_insert_timeout_sec`` is treated as a failure.
+        3. After each insert, ``SELECT count(*) FROM pop.<table>`` must
+           equal ``i * limit_count`` (accumulated because we do not
+           truncate between the ``trials`` runs -- only at trial start).
+
+        Returns True only if every one of the ``trials`` runs completes
+        under the timeout AND actually inserts ``limit_count`` new rows.
+        """
+        print(
+            f'[probe] trial limit={limit_count} table={table} '
+            f'(runs={trials}, per_insert_timeout={per_insert_timeout_sec}s, '
+            f'sleep={sleep_between_sec}s)'
+        )
+        # Fair-start: empty the seed so every run inserts fresh rows.
+        self._db_tool.execute_query(f'TRUNCATE TABLE pop.{table};')
+
+        insert_sql = self._build_seed_insert_sql(table, row_cnt=limit_count)
+        for i in range(1, trials + 1):
+            if i > 1:
+                time.sleep(sleep_between_sec)
+            wrapped = (
+                f"SET statement_timeout = '{per_insert_timeout_sec}s'; "
+                f'{insert_sql} '
+                f'RESET statement_timeout;'
+            )
+            t0 = time.monotonic()
+            try:
+                self._db_tool.execute_query(wrapped)
+            except BaseException as e:
+                elapsed = time.monotonic() - t0
+                print(
+                    f'[probe]   run {i}/{trials} FAILED after {elapsed:.1f}s '
+                    f'(likely statement_timeout {per_insert_timeout_sec}s hit or '
+                    f'other error): {e}'
+                )
+                return False
+            elapsed = time.monotonic() - t0
+
+            actual = self._db_tool.fetch_all(
+                f'SELECT count(*) FROM pop.{table};'
+            )[0][0]
+            expected = i * limit_count
+            if actual < expected:
+                print(
+                    f'[probe]   run {i}/{trials} inserted {actual - (i - 1) * limit_count} '
+                    f'rows (expected {limit_count}); total={actual} expected={expected}. FAIL'
+                )
+                return False
+            print(
+                f'[probe]   run {i}/{trials} ok in {elapsed:.1f}s '
+                f'(total rows={actual})'
+            )
+        return True
+
+    def probe_seed_insert_limit(
+        self,
+        table: str,
+        per_insert_timeout_sec: int = 20,
+        sleep_between_sec: int = 5,
+        trials: int = 3,
+        max_limit: Optional[int] = None,
+    ) -> int:
+        """Find the largest ``row_cnt`` at which the seed-refresh insert
+        for ``pop.<table>`` is *stably* fast enough.
+
+        "Stable" means all ``trials`` (default 3) consecutive inserts,
+        each starting from a truncated seed and separated by
+        ``sleep_between_sec`` seconds, complete within
+        ``per_insert_timeout_sec`` seconds AND insert exactly
+        ``limit_count`` fresh rows.
+
+        Strategy
+        --------
+        1. **Exponential probe** for the upper bound: start at
+           ``low=1``, double until a trial fails. If ``max_limit`` is
+           given, the probe stops there and returns immediately if it
+           still succeeds (caller-supplied ceiling).
+        2. **Binary search** in ``[last_success, first_failure]`` to
+           pinpoint the largest safe limit.
+
+        Returns the largest limit_count that passed all ``trials``
+        consecutive runs. Returns ``0`` if even ``limit_count=1`` fails
+        (i.e. the underlying INSERT is not viable at all right now).
+
+        The probe uses :meth:`_build_seed_insert_sql`, so it exercises
+        the exact SQL that ``schedule_seed_table_refresh`` bakes into
+        ``cron.job.command`` -- including ``REINDEX`` and the
+        ``IS NOT NULL`` filter. The returned number is therefore a
+        realistic upper bound for ``row_cnt`` in
+        :meth:`schedule_seed_table_refresh`.
+
+        Notes
+        -----
+        * The seed table is left truncated when the probe returns. Run
+          ``_insert_few_rows_to_seed_tables`` or the pg_cron job to
+          re-populate it if needed.
+        * The probe only writes to ``pop.<table>``; other pop tables
+          are untouched.
+        * Result is not persisted -- caller decides what to do with it.
+        """
+        if table not in self.seed_tables:
+            raise ValueError(
+                f'{table!r} is not a seed table. Known seed tables: '
+                f'{self.seed_tables}'
+            )
+
+        print(
+            f'[probe] === probing safe insert limit for pop.{table} ===\n'
+            f'[probe] per_insert_timeout={per_insert_timeout_sec}s '
+            f'sleep_between={sleep_between_sec}s trials={trials} '
+            f'max_limit={max_limit}'
+        )
+
+        # --- 1. Exponential probe to find an upper bound that fails ---
+        low_success = 0            # largest known passing limit
+        high_failure: Optional[int] = None  # smallest known failing limit
+        candidate = 1
+        while True:
+            if max_limit is not None and candidate > max_limit:
+                candidate = max_limit
+            ok = self._run_seed_insert_trial(
+                table,
+                limit_count=candidate,
+                per_insert_timeout_sec=per_insert_timeout_sec,
+                sleep_between_sec=sleep_between_sec,
+                trials=trials,
+            )
+            if ok:
+                low_success = candidate
+                print(f'[probe] exp-up: {candidate} PASS')
+                if max_limit is not None and candidate >= max_limit:
+                    print(
+                        f'[probe] hit caller max_limit={max_limit}; '
+                        'returning without narrowing further'
+                    )
+                    return low_success
+                candidate *= 2
+            else:
+                high_failure = candidate
+                print(f'[probe] exp-up: {candidate} FAIL -> upper bound found')
+                break
+
+        if low_success == 0:
+            print('[probe] even limit=1 failed; returning 0')
+            return 0
+
+        # --- 2. Binary search in (low_success, high_failure) ---
+        print(
+            f'[probe] entering binary search in ({low_success}, {high_failure})'
+        )
+        while high_failure - low_success > 1:
+            mid = (low_success + high_failure) // 2
+            ok = self._run_seed_insert_trial(
+                table,
+                limit_count=mid,
+                per_insert_timeout_sec=per_insert_timeout_sec,
+                sleep_between_sec=sleep_between_sec,
+                trials=trials,
+            )
+            if ok:
+                low_success = mid
+                print(f'[probe] bsearch: {mid} PASS -> low_success={mid}')
+            else:
+                high_failure = mid
+                print(f'[probe] bsearch: {mid} FAIL -> high_failure={mid}')
+
+        print(
+            f'[probe] === done: safe limit for pop.{table} = {low_success} ==='
+        )
+        return low_success
