@@ -159,6 +159,18 @@ class Pipeline:
         bootstrap) and :meth:`schedule_seed_table_refresh` (pg_cron tick)
         so both paths stay in sync.
 
+        Steps in the returned SQL block
+        -------------------------------
+        1. ``REINDEX TABLE pop.<table>`` -- keep the composite PK index
+           compact before the anti-join. Seed tables see many small
+           inserts driven by pg_cron; over time index bloat slows down
+           the ``EXCEPT SELECT * FROM pop.<table>`` scan. REINDEX is
+           cheap on small seed tables and pays for itself on the anti
+           -join that follows.
+        2. ``INSERT ... SELECT ... WHERE <all cols> IS NOT NULL EXCEPT
+           SELECT ... LIMIT row_cnt`` -- copy new rows from
+           ``hidden.<table>`` into ``pop.<table>``.
+
         Why the NULL filter
         -------------------
         Seed tables have a composite PRIMARY KEY over every column, so
@@ -181,6 +193,7 @@ class Pipeline:
             )
         not_null_clause = ' AND '.join(f'"{c}" IS NOT NULL' for c in columns)
         return (
+            f'REINDEX TABLE pop.{table}; '
             f'INSERT INTO pop.{table} '
             f'SELECT * FROM hidden.{table} '
             f'WHERE {not_null_clause} '
