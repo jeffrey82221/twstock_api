@@ -5,6 +5,8 @@ from sql_metadata import Parser
 from typing import List, Dict, Optional
 from paradag import DAG, dag_run, SequentialProcessor
 from pg_tool import PostgreSQLTool
+from psycopg import OperationalError
+import json
 import time
 class ViewExecutor:
     def __init__(self, results: List[str]):
@@ -363,11 +365,16 @@ class Pipeline:
         Each job will insert `row_cnt` new rows from hidden.<table> into
         pop.<table> every `period_minutes` minutes.
         """
+        if os.path.exists("batch_size.json"):
+            with open("batch_size.json", "r") as file:
+                limit_cnts = json.load(file)
+        else:
+            limit_cnts = None
         for table in self.seed_tables:
             self.schedule_seed_table_refresh(
                 table=table,
                 period_minutes=period_minutes,
-                row_cnt=row_cnt,
+                row_cnt=limit_cnts[table] if limit_cnts is not None else row_cnt,
             )
 
     def schedule_seed_table_refresh(
@@ -466,7 +473,7 @@ class Pipeline:
         self,
         table: str,
         limit_count: int,
-        per_insert_timeout_sec: int = 20,
+        per_insert_timeout_sec: int = 50,
         sleep_between_sec: int = 5,
         trials: int = 3,
     ) -> bool:
@@ -491,14 +498,18 @@ class Pipeline:
         under the timeout AND actually inserts ``limit_count`` new rows.
         """
         print(
-            f'[probe] trial limit={limit_count} table={table} '
+            f'[probe {limit_count}] trial limit={limit_count} table={table} '
             f'(runs={trials}, per_insert_timeout={per_insert_timeout_sec}s, '
             f'sleep={sleep_between_sec}s)'
         )
         # Fair-start: empty the seed so every run inserts fresh rows.
-        self._db_tool.execute_query(f'TRUNCATE TABLE pop.{table};')
+        # self._db_tool.execute_query(f'TRUNCATE TABLE pop.{table};')
 
         insert_sql = self._build_seed_insert_sql(table, row_cnt=limit_count)
+        print(f'[probe {limit_count}]   insert SQL:\n{insert_sql}')
+        start_cnt = self._db_tool.fetch_all(
+                f'SELECT count(*) FROM pop.{table};'
+            )[0][0]
         for i in range(1, trials + 1):
             if i > 1:
                 time.sleep(sleep_between_sec)
@@ -513,7 +524,7 @@ class Pipeline:
             except BaseException as e:
                 elapsed = time.monotonic() - t0
                 print(
-                    f'[probe]   run {i}/{trials} FAILED after {elapsed:.1f}s '
+                    f'[probe {limit_count}]   run {i}/{trials} FAILED after {elapsed:.1f}s '
                     f'(likely statement_timeout {per_insert_timeout_sec}s hit or '
                     f'other error): {e}'
                 )
@@ -524,14 +535,15 @@ class Pipeline:
                 f'SELECT count(*) FROM pop.{table};'
             )[0][0]
             expected = i * limit_count
-            if actual < expected:
+            increase = actual - start_cnt
+            if increase < expected:
                 print(
-                    f'[probe]   run {i}/{trials} inserted {actual - (i - 1) * limit_count} '
-                    f'rows (expected {limit_count}); total={actual} expected={expected}. FAIL'
+                    f'[probe {limit_count}]   run {i}/{trials} FAILED: expected {expected} '
+                    f'new rows, but only {increase} were inserted (total rows={actual})'
                 )
                 return False
             print(
-                f'[probe]   run {i}/{trials} ok in {elapsed:.1f}s '
+                f'[probe {limit_count}]   run {i}/{trials} ok in {elapsed:.1f}s '
                 f'(total rows={actual})'
             )
         return True
@@ -539,7 +551,7 @@ class Pipeline:
     def probe_seed_insert_limit(
         self,
         table: str,
-        per_insert_timeout_sec: int = 20,
+        per_insert_timeout_sec: int = 50,
         sleep_between_sec: int = 5,
         trials: int = 3,
         max_limit: Optional[int] = None,
@@ -652,3 +664,72 @@ class Pipeline:
             f'[probe] === done: safe limit for pop.{table} = {low_success} ==='
         )
         return low_success
+
+    def get_upstream_seed_tables(self, table: str) -> List[str]:
+        """Return a list of upstream seed tables for the given table."""
+        upstream_seed_tables = []
+        upstream_sql_paths = list(self.dag.predecessors(table + '.sql'))
+        for upstream_sql_path in upstream_sql_paths:
+            upstream_table = upstream_sql_path.split('.')[0]
+            if upstream_table.endswith('_list'):
+                upstream_seed_tables.append(upstream_table)
+            else:
+                upstream_seed_tables.extend(self.get_upstream_seed_tables(upstream_table))
+        assert all(t.endswith('_list') for t in upstream_seed_tables), 'All upstream seed tables should end with "_list"'
+        return upstream_seed_tables
+    
+    def probe_all(
+        self,
+        per_insert_timeout_sec: int = 50,
+        sleep_between_sec: int = 5,
+        trials: int = 3,
+        max_limit: Optional[int] = None,
+    ) -> Dict[str, int]:
+        """Probe all seed tables and return a dict of {table: safe_limit}."""
+        results = {}
+        if os.path.exists("batch_size.json"):
+            with open("batch_size.json", "r") as file:
+                results = json.load(file)
+        seed_tables = list(self.seed_tables)
+        i = 0
+        while i < len(seed_tables):
+            table = seed_tables[i]
+            if table in results:
+                print(f'[probe_all] skipping seed table no.{i+1}: {table} (already probed)')
+                i += 1
+                continue
+            safe_limit = 0
+            attempts = 0
+            while safe_limit == 0:
+                try:
+                    safe_limit = self.probe_seed_insert_limit(
+                        table=table,
+                        per_insert_timeout_sec=per_insert_timeout_sec,
+                        sleep_between_sec=sleep_between_sec,
+                        trials=trials,
+                        max_limit=max_limit,
+                    )
+                except OperationalError as e:
+                    print(f'[probe_all] ERROR: {table} failed to probe due to OperationalError: {e}. Retrying...')
+                    time.sleep(sleep_between_sec * 10)  # wait longer before retrying
+                    safe_limit = 0
+                results[table] = safe_limit
+                time.sleep(sleep_between_sec)  # avoid hammering the DB too quickly
+                attempts += 1
+                if attempts >= 1 and safe_limit == 0:
+                    print(f'[probe_all] WARNING: {table} failed to find a safe limit after 3 attempts; moving on.')
+                    for upstream_table in self.get_upstream_seed_tables(table):
+                        self._run_seed_insert_trial(
+                            upstream_table,
+                            results[upstream_table],
+                            per_insert_timeout_sec=per_insert_timeout_sec,
+                            sleep_between_sec=sleep_between_sec,
+                            trials= 3
+                        )
+                    continue
+                elif attempts >= 3 and safe_limit == 0:
+                    print(f'[probe_all] ERROR: {table} failed to find a safe limit after 3 attempts; skipping.')
+                    break
+            i += 1
+            with open("batch_size.json", "w") as file:
+                json.dump(results, file, indent=4)
