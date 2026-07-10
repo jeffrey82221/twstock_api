@@ -104,6 +104,22 @@ _state: dict[str, Any] = {
 }
 _load_lock = asyncio.Lock()
 
+# ---- Response JSON bytes cache ----
+# key: ic_code (已 uppercase), value: 完整序列化好的 JSON bytes（約當於
+# `ChainResponse.model_dump_json().encode()`）。命中時 endpoint 直接回
+# `Response(content=cached, media_type="application/json")`，整個跳過 pydantic
+# validation + FastAPI json encode，這兩步是單一鏈回應的主要 CPU 成本
+# (D000 有 492 家公司 / 幾百個 nested node，每次 re-serialize 不便宜)。
+#
+# 作廢時機：只有兩個地方會換 chain_tree 內容──`_fetch_all` 寫新
+# tree 成功與 `_load_from_disk` 載入磁碟 cache 成功──兩者都會呼叫
+# `_invalidate_response_cache()`。避免回舊資料。
+_response_cache: dict[str, bytes] = {}
+
+
+def _invalidate_response_cache() -> None:
+    _response_cache.clear()
+
 # ---- 毒 cache 防線 ----
 # 至少要有這麼多比例的 ic_code 抓到至少一家公司，index 才算健康；
 # 否則視為毒 cache / 壞抓，重新抓取。
@@ -170,6 +186,18 @@ def get_memberships(stock_id: str) -> list[dict]:
 
 def get_chain(ic_code: str) -> Optional[dict]:
     return _state["chain_tree"].get(ic_code)
+
+
+def get_chain_response_bytes(ic_code: str) -> Optional[bytes]:
+    """回這條鏈 pre-serialized 好的 JSON bytes（命中）或 None（miss）。
+
+    Miss 時呼叫者負責建一份、再用下面 `set_chain_response_bytes` 寫入。
+    """
+    return _response_cache.get(ic_code)
+
+
+def set_chain_response_bytes(ic_code: str, payload: bytes) -> None:
+    _response_cache[ic_code] = payload
 
 
 def list_chains() -> list[dict]:
@@ -410,6 +438,8 @@ async def _fetch_all() -> None:
         _state["company_index"] = company_index
         _state["fetched_at"] = int(time.time())
         _state["loaded"] = True
+        # 內容已變，掉舊序列化 cache。
+        _invalidate_response_cache()
         logger.info(
             "[icchain] fetched index OK: healthy=%d/%d ratio=%.2f companies=%d",
             healthy, total, ratio, len(company_index),
@@ -464,6 +494,8 @@ def _load_from_disk() -> bool:
         _state["company_index"] = data.get("company_index") or {}
         _state["fetched_at"] = fetched_at
         _state["loaded"] = bool(_state["chain_tree"])
+        # 從磁碟新載 tree──舊序列化 cache 已不一致，作廢。
+        _invalidate_response_cache()
         return _state["loaded"]
     except Exception as e:
         _state["errors"].append({"phase": "load", "error": str(e)})
