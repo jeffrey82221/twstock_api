@@ -9,5 +9,6 @@
     "chain_list": 2,
     "chain_info_list": 1024,
     "company_list": 1,
-    "financial_month_list": 1
+    "financial_month_list": 1,
+    "financial_month_twse_list": 4
 }
