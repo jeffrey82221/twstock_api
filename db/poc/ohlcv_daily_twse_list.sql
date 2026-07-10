@@ -1,0 +1,15 @@
+-- ohlcv_daily_twse_list
+-- 上游：無外部（純 SQL，CURRENT_DATE 單列 seed）
+-- 用途：TWSE 上市市場「每日全市場 OHLCV」事件母體 — 每個交易日一列 trade_date。
+--
+-- 設計理念（rule 15 / rule 20 / compute-cost）：
+--   * 上游 endpoint https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL 為
+--     「latest-day-only 全市場」— 忽略任何 ?date= 參數，永遠回應「最新一個交易日」全部上市證券。
+--   * 因此本 seed 每 tick 只能新增當日 (CURRENT_DATE) 一列；pipeline._build_seed_insert_sql 用
+--     `EXCEPT SELECT * FROM pop.<seed>` 反重複，同一天多次 tick 只會 INSERT 一次，隔日 CURRENT_DATE
+--     推進才會再累積一列 — 完全符合 rule 6（rows 唯一）與 rule 8（seed pattern）。
+--   * 一天一 HTTP call、一 payload 攤平 ~1370 支上市，遠比 per-stock/per-month 便宜。
+--
+-- 設計理念（rule 3 / rule 16）：僅使用 immutable CURRENT_DATE（STABLE 在 pop 物化時求值一次）與
+--   單列 SELECT，pg_ivm 相容；不引入任何 http 呼叫（rule 2）。
+SELECT CURRENT_DATE AS trade_date;
