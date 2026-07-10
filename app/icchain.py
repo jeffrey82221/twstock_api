@@ -104,6 +104,43 @@ _state: dict[str, Any] = {
 }
 _load_lock = asyncio.Lock()
 
+# ---- 毒 cache 防線 ----
+# 至少要有這麼多比例的 ic_code 抓到至少一家公司，index 才算健康；
+# 否則視為毒 cache / 壞抓，重新抓取。
+# 為什麼是 0.7：實測 46 條鏈全部都應該有公司，留 30% 容忍新增鏈頁
+# 上線初期尚無公司的情況，但也守住「大部分鏈都空」的災難情形。
+MIN_HEALTHY_CHAIN_RATIO = 0.7
+
+
+def _chain_company_count(chain: dict) -> int:
+    """Total companies aggregated across all segments/tops/subs of one chain."""
+    n = 0
+    for tops in (chain or {}).get("segments", {}).values():
+        for top in tops:
+            for sub in top.get("sub_chains", []):
+                n += len(sub.get("companies", []))
+    return n
+
+
+def _index_health(chain_tree: dict) -> tuple[int, int, float]:
+    """Return (healthy_count, total, ratio) where healthy means the chain has >=1 company."""
+    total = len(chain_tree)
+    if total == 0:
+        return 0, 0, 0.0
+    healthy = sum(1 for c in chain_tree.values() if _chain_company_count(c) > 0)
+    return healthy, total, healthy / total
+
+
+def _index_looks_poisoned(chain_tree: dict) -> bool:
+    """True if too many chains ended up with zero companies -- likely a
+    partial or throttled fetch that should not be cached, or a stale
+    poisoned disk cache that should not be loaded.
+    """
+    healthy, total, ratio = _index_health(chain_tree)
+    if total == 0:
+        return True
+    return ratio < MIN_HEALTHY_CHAIN_RATIO
+
 
 def is_loaded() -> bool:
     return _state["loaded"]
@@ -114,11 +151,14 @@ def is_loading() -> bool:
 
 
 def status() -> dict[str, Any]:
+    healthy, total, ratio = _index_health(_state["chain_tree"])
     return {
         "loaded": _state["loaded"],
         "loading": _state["loading"],
         "fetched_at": _state["fetched_at"],
-        "chain_count": len(_state["chain_tree"]),
+        "chain_count": total,
+        "healthy_chain_count": healthy,
+        "health_ratio": round(ratio, 3),
         "indexed_companies": len(_state["company_index"]),
         "errors": _state["errors"][-5:],
     }
@@ -339,10 +379,41 @@ async def _fetch_all() -> None:
                             }
                             company_index.setdefault(c["stk_code"], []).append(mb)
 
+        # 毒 cache 防線：整批抓完後檢查健康度。若太多 ic_code 抓到零家
+        # 公司（通常代表被限流 / 網路壞 / parser 對某批頁面失效），
+        # 不覆蓋 in-memory / 不寫 disk，讓下一次 ensure_loaded 有機會
+        # 重抓，而不是把毒結果 cache 7 天。
+        healthy, total, ratio = _index_health(chain_tree)
+        if _index_looks_poisoned(chain_tree):
+            logger.error(
+                "[icchain] fetched index looks poisoned: healthy=%d/%d ratio=%.2f "
+                "< threshold=%.2f -- NOT caching. Empty ic_codes: %s",
+                healthy, total, ratio, MIN_HEALTHY_CHAIN_RATIO,
+                sorted(
+                    ic for ic, c in chain_tree.items()
+                    if _chain_company_count(c) == 0
+                )[:20],
+            )
+            _state["errors"].append({
+                "phase": "fetch_all",
+                "error": (
+                    f"poisoned fetch: healthy={healthy}/{total} "
+                    f"ratio={ratio:.2f} < {MIN_HEALTHY_CHAIN_RATIO}"
+                ),
+            })
+            # 保留 loaded 狀態不變。若之前是 True（舊 healthy cache 在），
+            # 使用者仍能查到；若之前是 False，維持 False，下次 ensure_loaded
+            # 會再試。
+            return
+
         _state["chain_tree"] = chain_tree
         _state["company_index"] = company_index
         _state["fetched_at"] = int(time.time())
         _state["loaded"] = True
+        logger.info(
+            "[icchain] fetched index OK: healthy=%d/%d ratio=%.2f companies=%d",
+            healthy, total, ratio, len(company_index),
+        )
         _save_to_disk()
     finally:
         _state["loading"] = False
@@ -370,7 +441,26 @@ def _load_from_disk() -> bool:
         fetched_at = data.get("fetched_at") or 0
         if time.time() - fetched_at > CACHE_TTL_SECONDS:
             return False
-        _state["chain_tree"] = data.get("chain_tree") or {}
+        chain_tree = data.get("chain_tree") or {}
+        # 毒 cache 防線：拒絕載入公司數過低的舊 cache（可能是上次
+        # fetch 被限流 / 部分失敗時寫進去的）。留在磁碟上但不進記憶體，
+        # 讓 ensure_loaded 走 _fetch_all 重抓；重抓成功後才會覆蓋 disk。
+        if _index_looks_poisoned(chain_tree):
+            healthy, total, ratio = _index_health(chain_tree)
+            logger.warning(
+                "[icchain] on-disk cache looks poisoned: healthy=%d/%d ratio=%.2f "
+                "< threshold=%.2f -- ignoring, will re-fetch",
+                healthy, total, ratio, MIN_HEALTHY_CHAIN_RATIO,
+            )
+            _state["errors"].append({
+                "phase": "load",
+                "error": (
+                    f"poisoned disk cache: healthy={healthy}/{total} "
+                    f"ratio={ratio:.2f} < {MIN_HEALTHY_CHAIN_RATIO}"
+                ),
+            })
+            return False
+        _state["chain_tree"] = chain_tree
         _state["company_index"] = data.get("company_index") or {}
         _state["fetched_at"] = fetched_at
         _state["loaded"] = bool(_state["chain_tree"])
@@ -380,18 +470,24 @@ def _load_from_disk() -> bool:
         return False
 
 
-async def ensure_loaded(background: bool = True) -> None:
+async def ensure_loaded(background: bool = True, force: bool = False) -> None:
     """若尚未載入，嘗試從磁碟讀；否則背景抓取。
 
-    background=True：立即返回，背景任務跑抓取；首次查詢的公司不會等到結果。
-    background=False：阻塞直到完成（測試用）。
+    - ``background=True``：立即返回，背景任務跑抓取；首次查詢的公司
+      不會等到結果。
+    - ``background=False``：阻塞直到完成（測試用）。
+    - ``force=True``：強制忽略記憶體與磁碟 cache，重新抓一次。用於
+      毒 cache 恢復或手動 refresh。
     """
+    if force:
+        # 清空記憶體 loaded 狀態，讓下面的邏輯走重抓路徑。
+        _state["loaded"] = False
     if _state["loaded"]:
         return
     async with _load_lock:
-        if _state["loaded"]:
+        if _state["loaded"] and not force:
             return
-        if _load_from_disk():
+        if not force and _load_from_disk():
             return
         if _state["loading"]:
             return

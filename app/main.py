@@ -7,7 +7,12 @@
 """
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from fastapi import FastAPI, HTTPException, Query
+
+logger = logging.getLogger("twstock_api.main")
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -177,7 +182,36 @@ async def api_chain(ic_code: str):
     chain = icchain.get_chain(ic_code)
     if not chain:
         raise HTTPException(status_code=404, detail=f"查無產業鏈 {ic_code}")
+    # 守門：若這條鏈回來的完全沒公司（上次 fetch 對它憑空、但其他鏈
+    # 還健康，以致 index-level 毒 cache 防線沒觸發），就在背景冒一次強
+    # 制重抓，下次同一個 ic_code 的查詢就能拿到公司。這里不阻塞本
+    # 次回應，避免將單一 endpoint 的延遲拉到全量抓取的時間。
+    if icchain._chain_company_count(chain) == 0 and not icchain.is_loading():
+        logger.warning(
+            "[api_chain] ic_code=%s has 0 companies in cached tree; "
+            "triggering background force refresh", ic_code,
+        )
+        asyncio.create_task(icchain.ensure_loaded(background=False, force=True))
     return chain
+
+
+@app.post(
+    "/api/chain/refresh",
+    tags=["Value Chain"],
+    summary="強制重抓 47 條產業鏈（恢復毒 cache 用）",
+    description=(
+        "忽略記憶體與磁碟 `data/icchain.json` cache，重新向櫃買網站抓 47 條鏈頁面。\n\n"
+        "使用時機：\n"
+        "1. `/api/chain/{ic_code}` 回 200 但 `segments` 內 companies 全部空（毒 cache 症狀）。\n"
+        "2. `/api/status` 看到 `icchain.health_ratio` 過低。\n"
+        "3. 手動強制刷新這一现已過 TTL 的資料。\n\n"
+        "行為：阻塞直到重抓完成（約 8 秒），這樣呼叫者一回就知道重抓結果（項目數、 "
+        "公司數、毒 cache 防線判定結果）。"
+    ),
+)
+async def api_chain_refresh():
+    await icchain.ensure_loaded(background=False, force=True)
+    return {"ok": True, "status": icchain.status()}
 
 
 # =====================================================================
