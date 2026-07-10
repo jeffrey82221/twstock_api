@@ -1,18 +1,24 @@
 -- ohlcv_daily_tpex_list
--- 上游：無外部（純 SQL，CURRENT_DATE 單列 seed）
--- 用途：TPEx 上櫃市場「每日全市場 OHLCV」事件母體 — 每個交易日一列 trade_date。
+-- 上游：company_basic_info（過濾 market='上櫃'）
+-- 用途：TPEx 上櫃每檔個股 × 每月一列的「日 K 事件母體」。搭配 TPEx tradingStock endpoint
+--       (per-stock-per-month payload) 使用。
 --
--- 設計理念（rule 15 / rule 20 / compute-cost）：
---   * 上游 endpoint https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes
---     為「latest-day-only 全市場」— 無 ?date= 參數可指定日期，永遠回應「最新一個交易日」全部
---     上櫃主板證券（實測 ~10000 列，含 ETF/受益證券等）。
---   * 因此本 seed 每 tick 只能新增當日 (CURRENT_DATE) 一列；pipeline._build_seed_insert_sql 用
---     `EXCEPT SELECT * FROM pop.<seed>` 反重複，同一天多次 tick 只會 INSERT 一次，隔日 CURRENT_DATE
---     推進才會再累積一列 — 完全符合 rule 6（rows 唯一）與 rule 8（seed pattern）。
---   * 一天一 HTTP call、一 payload 攤平 ~10000 列上櫃，遠比 per-stock/per-month 便宜。
---   * 與 ohlcv_daily_twse_list 分流（rule 20）— TWSE OpenAPI 與 TPEx OpenAPI 為不同資料源、
---     不同限流特性，各自對應獨立 pop.<seed>，可各自以不同 batch limit 增量填充。
+-- 設計理念（rule 20 · 資料源分流）：與 ohlcv_daily_twse_list 分流；TPEx 有獨立 endpoint，
+--   限流、payload 格式、欄位單位皆不同。分成兩張獨立 seed 各自控 batch_size。
 --
--- 設計理念（rule 3 / rule 16）：僅使用 immutable CURRENT_DATE（STABLE 在 pop 物化時求值一次）與
---   單列 SELECT，pg_ivm 相容；不引入任何 http 呼叫（rule 2）。
-SELECT CURRENT_DATE AS trade_date;
+-- 設計理念（rule 15 · 母體大小）：seed 從 listing_date 起 generate_series 到 CURRENT_DATE，
+--   月粒度。以 ~800 檔上櫃 × 平均 10 年 × 12 月 ≈ 96k 列 seed 上限。
+--
+-- 設計理念（rule 3 / rule 16）：僅 IMMUTABLE building blocks；pg_ivm 相容。
+-- 設計理念（rule 6）：(stk_code, month_start_date) 唯一。
+-- 設計理念（rule 13）：不做業務過濾；listing_date IS NOT NULL 為技術性 guard。
+SELECT
+    stk_code,
+    generate_series(
+        make_date(EXTRACT(YEAR FROM listing_date)::INT, EXTRACT(MONTH FROM listing_date)::INT, 1),
+        CURRENT_DATE,
+        INTERVAL '1 month'
+    )::DATE AS month_start_date
+FROM {{ schema }}.company_basic_info
+WHERE market = '上櫃'
+  AND listing_date IS NOT NULL;

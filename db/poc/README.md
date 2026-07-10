@@ -816,30 +816,37 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 ## ohlcv_daily_twse_list
 
-- **上游 SQL**：無（純 SQL；`CURRENT_DATE` 單列 seed）
-- **HTTP API endpoint**：無（本層不呼叫外部）
-- **角色**：seed（`_list`）— 每個交易日一列 `trade_date`。
-- **設計理念（rule 20 · 資料源分流）**：上游 endpoint `STOCK_DAY_ALL` 為 latest-day-only 全市場，本 seed 專走 TWSE OpenAPI，與 `ohlcv_daily_tpex_list`（TPEx OpenAPI）分流，各自對應獨立 `pop.<seed>` 增量填滿。
-- **設計理念（rule 6 / rule 8 · 累積機制）**：pipeline `_build_seed_insert_sql` 以 `EXCEPT SELECT * FROM pop.<seed>` 反重複，同一天多次 tick 只會 INSERT 一次；隔日 `CURRENT_DATE` 推進才會累積新的一列 → `pop.ohlcv_daily_twse_list` 每天 rolling 累積歷史 trade_date。
+- **上游 SQL**：[company_basic_info](#company_basic_info)（過濾 `market = '上市'`）
+- **HTTP API endpoint**：無（純 SQL `generate_series`）
+- **角色**：seed（`_list`）— 每 `(stk_code, month_start_date)` 一列，作為 TWSE STOCK_DAY 事件母體。
+- **設計理念（rule 15 · 母體大小）**：從 `company_basic_info.listing_date` 起，月粒度 `generate_series` 到 `CURRENT_DATE`。以 ~1300 檔上市 × 平均 15 年 × 12 月 ≈ 234k 列 seed 上限。
+- **設計理念（rule 20 · 資料源分流）**：與 `ohlcv_daily_tpex_list` 分兩張獨立 seed，各自對應 TWSE / TPEx endpoint、可設不同 batch_size 增量填滿。
+- **設計理念（rule 6 · rows 唯一）**：`(stk_code, month_start_date)` 天然唯一 — `generate_series` step `INTERVAL '1 month'` 且起點為月初。
+- **設計理念（rule 13）**：`listing_date IS NOT NULL` 為技術性 guard（`generate_series` 起點不能是 NULL），非業務過濾。
+- **每日新月觸發機制**：每月 1 日 `CURRENT_DATE` 推進到新月 → `generate_series` 上界改變 → 每檔股票多一列新的 `month_start_date` → pipeline `EXCEPT` anti-join 判定為新列並 INSERT → 觸發 raw 拉該股該月最新日 K。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
-| `trade_date` | DATE | 當日交易日期（西元） | `CURRENT_DATE` |
+| `stk_code` | TEXT | 股票代號 | `company_basic_info.stk_code` |
+| `month_start_date` | DATE | 該月第一日（西元） | `generate_series(month_of(listing_date), CURRENT_DATE, INTERVAL '1 month')` |
 
 ---
 
 ## raw_ohlcv_daily_twse
 
 - **上游 SQL**：[ohlcv_daily_twse_list](#ohlcv_daily_twse_list)
-- **HTTP API endpoint**：`GET https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL?date={YYYYMMDD}`
-  - 上游網站：[TWSE OpenAPI · 每日收盤行情（全部上市）](https://openapi.twse.com.tw/)
-  - 實測 endpoint 忽略 `?date=` 參數，永遠回應「最新一個交易日」全部上市證券（~1370 列）。仍將 `trade_date` 帶入 URL 是為了避免 pg_ivm 對 immutable `http_get_content` 以 URL 為 cache key 時把不同 `trade_date` 但同 URL 的呼叫 dedupe 掉。
-- **設計理念（rule 9 · one payload per event）**：一個 `trade_date` 事件 = 一列整包 JSON 陣列。相比「per-stock/per-month」設計，把 API request 數壓縮到 `1/N`（N ≈ 上市檔數 ~1370）。
+- **HTTP API endpoint**：`GET https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={YYYYMMDD}&stockNo={stk_code}`
+  - 上游網站：[TWSE 證交所 · 個股日成交資訊](https://www.twse.com.tw/zh/trading/historical/stock-day.html)
+  - endpoint 一次回應「指定股票、指定月份」整月日 K（~20 個交易日 rows），支援任意歷史月份回填。
+  - `date` 參數 TWSE 只看年月、忽略日；本 view 直接用 `month_start_date` 保證月初。
+- **設計理念（rule 9 · one payload per event）**：一個 `(stk_code, month_start_date)` = 一列 payload，API request 數壓縮到 1/20。
+- **payload 空回情境**：`stat != 'OK'` 或個股該月未上市 → `data=[]`，正規化層 `CROSS JOIN LATERAL` 自然攤平 0 列。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
-| `trade_date` | DATE | 交易日期 | `ohlcv_daily_twse_list.trade_date` |
-| `ohlcv` | JSONB | 該日全上市 OHLCV 陣列 payload | `custom.http_get_content(STOCK_DAY_ALL URL)` |
+| `stk_code` | TEXT | 股票代號 | `ohlcv_daily_twse_list.stk_code` |
+| `month_start_date` | DATE | 該月第一日 | `ohlcv_daily_twse_list.month_start_date` |
+| `ohlcv` | JSONB | 該股該月日 K JSON | `custom.http_get_content(STOCK_DAY URL)` |
 
 ---
 
@@ -847,54 +854,60 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 - **上游 SQL**：[raw_ohlcv_daily_twse](#raw_ohlcv_daily_twse)
 - **HTTP API endpoint**：無（純 JSONB 攤平）
-- **設計理念（rule 16 · pg_ivm 相容）**：只用 `CROSS JOIN LATERAL jsonb_array_elements(ohlcv)` 攤平陣列成逐股逐日一列。
-- **設計理念（rule 12 · date）**：本 view 直接使用 seed 的 `trade_date`（西元 DATE），不從 payload 讀取民國年 `Date` 欄位（該欄位僅供 raw 層稽核比對）。
-- **設計理念（rule 13）**：不做 WHERE 過濾，保留 payload 每列（含 `Change=0.0000` 平盤日等）。
-- **欄位對齊 ohlcv_daily_tpex**：`market='sii'`（上市）；`volume/trade_value/transaction_count` 命名對齊 TPEx 版，方便下游 UNION 全市場。
+- **設計理念（rule 16 · pg_ivm 相容）**：只用 `CROSS JOIN LATERAL jsonb_array_elements(ohlcv->'data')` 攤平陣列成逐日一列。
+- **設計理念（rule 12 · 民國年 → 西元）**：TWSE `data[*][0]` 為 `'115/06/01'` 形式民國年字串；以 `make_date(SUBSTRING(...,1,3)::INT + 1911, SUBSTRING(...,5,2)::INT, SUBSTRING(...,8,2)::INT)` 展開（同 `product_revenue_filer_list` pattern，全 IMMUTABLE）。
+- **設計理念（rule 13）**：不做過濾；`stat != 'OK'` payload `data=[]` 天然攤平 0 列。
+- **NULL-safe**：`COALESCE(ohlcv->'data', '[]'::jsonb)` 防 payload 缺 `data` key。
+- **欄位對齊 ohlcv_daily_tpex**：`market='sii'`；下游可直接 `UNION` 兩市場。
+- **數字欄位處理**：TWSE payload 數字帶千分位逗號、漲跌欄位可能含前導空白或 `+` 號，一律 `REPLACE(...,',','')` + `TRIM(LEADING '+')` 後 CAST。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
-| `trade_date` | DATE | 交易日期（西元） | `raw_ohlcv_daily_twse.trade_date` |
-| `stk_code` | TEXT | 股票代號 | `ohlcv[*].Code` |
-| `company_name` | TEXT | 公司名稱 | `ohlcv[*].Name` |
+| `trade_date` | DATE | 交易日期（西元） | `data[*][0]` 民國年展開 |
+| `stk_code` | TEXT | 股票代號 | `raw_ohlcv_daily_twse.stk_code` |
 | `market` | TEXT | 市場別（固定 `'sii'`） | 常數 |
-| `open` | NUMERIC | 開盤價 | `ohlcv[*].OpeningPrice` |
-| `high` | NUMERIC | 最高價 | `ohlcv[*].HighestPrice` |
-| `low` | NUMERIC | 最低價 | `ohlcv[*].LowestPrice` |
-| `close` | NUMERIC | 收盤價 | `ohlcv[*].ClosingPrice` |
-| `volume` | NUMERIC | 成交股數 | `ohlcv[*].TradeVolume` |
-| `trade_value` | NUMERIC | 成交金額 | `ohlcv[*].TradeValue` |
-| `transaction_count` | NUMERIC | 成交筆數 | `ohlcv[*].Transaction` |
-| `change` | NUMERIC | 漲跌（帶正負） | `ohlcv[*].Change` |
+| `open` | NUMERIC | 開盤價 | `data[*][3]` |
+| `high` | NUMERIC | 最高價 | `data[*][4]` |
+| `low` | NUMERIC | 最低價 | `data[*][5]` |
+| `close` | NUMERIC | 收盤價 | `data[*][6]` |
+| `volume` | NUMERIC | 成交股數 | `data[*][1]` |
+| `trade_value` | NUMERIC | 成交金額（元） | `data[*][2]` |
+| `transaction_count` | NUMERIC | 成交筆數 | `data[*][8]` |
+| `change` | NUMERIC | 漲跌 | `data[*][7]` |
 
 ---
 
 ## ohlcv_daily_tpex_list
 
-- **上游 SQL**：無（純 SQL；`CURRENT_DATE` 單列 seed）
-- **HTTP API endpoint**：無（本層不呼叫外部）
-- **角色**：seed（`_list`）— 每個交易日一列 `trade_date`。
-- **設計理念（rule 20 · 資料源分流）**：上游 endpoint 為 TPEx OpenAPI latest-day-only 全市場，與 `ohlcv_daily_twse_list`（TWSE OpenAPI）分流。
-- **設計理念（rule 6 / rule 8）**：與 `ohlcv_daily_twse_list` 同 pattern；`EXCEPT` 反重複，每日累積一列 → `pop.ohlcv_daily_tpex_list` rolling 累積上櫃交易日。
+- **上游 SQL**：[company_basic_info](#company_basic_info)（過濾 `market = '上櫃'`）
+- **HTTP API endpoint**：無（純 SQL `generate_series`）
+- **角色**：seed（`_list`）— 每 `(stk_code, month_start_date)` 一列。
+- **設計理念（rule 15 · 母體大小）**：~800 檔上櫃 × 平均 10 年 × 12 月 ≈ 96k 列 seed 上限。
+- **設計理念（rule 20）**：與 `ohlcv_daily_twse_list` 分流，各自獨立 batch_size。
+- **設計理念（rule 6 / rule 13）**：同 TWSE 版本設計理念。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
-| `trade_date` | DATE | 當日交易日期（西元） | `CURRENT_DATE` |
+| `stk_code` | TEXT | 股票代號 | `company_basic_info.stk_code` |
+| `month_start_date` | DATE | 該月第一日（西元） | `generate_series(month_of(listing_date), CURRENT_DATE, INTERVAL '1 month')` |
 
 ---
 
 ## raw_ohlcv_daily_tpex
 
 - **上游 SQL**：[ohlcv_daily_tpex_list](#ohlcv_daily_tpex_list)
-- **HTTP API endpoint**：`GET https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes?_trade_date={YYYYMMDD}`
-  - 上游網站：[TPEx OpenAPI · 上櫃股票每日收盤行情](https://www.tpex.org.tw/openapi/)
-  - endpoint 無 date 參數可指定日期，永遠回應最新交易日全部上櫃主板證券（實測 ~10000 列，含 ETF/受益證券等）；`_trade_date` 為未知 query 參數，TPEx 忽略不影響回應，僅作 pg_ivm URL cache-key 用（避免 dedupe）。
-- **設計理念（rule 9）**：一個 `trade_date` 事件 = 一列整包 JSON 陣列。API request 數壓縮到 `1/N`（N ≈ 上櫃檔數 ~10000）。
+- **HTTP API endpoint**：`GET https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock?code={stk_code}&date={YYYY/MM/DD}&id=&response=json`
+  - 上游網站：[TPEx 櫃買中心 · 個股日成交資訊](https://www.tpex.org.tw/zh-tw/mainboard/trading/info/mi-pricing.html)
+  - endpoint 一次回應指定股票、指定月份整月日 K（~20 個交易日 rows），支援任意歷史月份回填。
+  - date 參數格式為 `YYYY/MM/DD`（與 TWSE 的 `YYYYMMDD` 不同）；`id` 為空字串即可。
+- **設計理念（rule 9）**：一個 `(stk_code, month_start_date)` = 一列 payload。
+- **空回情境**：個股該月未上櫃 → `tables[0].data=[]`（`stat` 仍為 `'ok'`），正規化層攤平 0 列。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
-| `trade_date` | DATE | 交易日期 | `ohlcv_daily_tpex_list.trade_date` |
-| `ohlcv` | JSONB | 該日全上櫃 OHLCV 陣列 payload | `custom.http_get_content(tpex_mainboard_daily_close_quotes URL)` |
+| `stk_code` | TEXT | 股票代號 | `ohlcv_daily_tpex_list.stk_code` |
+| `month_start_date` | DATE | 該月第一日 | `ohlcv_daily_tpex_list.month_start_date` |
+| `ohlcv` | JSONB | 該股該月日 K JSON | `custom.http_get_content(tradingStock URL)` |
 
 ---
 
@@ -902,22 +915,24 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 - **上游 SQL**：[raw_ohlcv_daily_tpex](#raw_ohlcv_daily_tpex)
 - **HTTP API endpoint**：無（純 JSONB 攤平）
-- **設計理念（rule 16 · pg_ivm 相容）**：只用 `CROSS JOIN LATERAL jsonb_array_elements(ohlcv)` 攤平陣列。
-- **設計理念（rule 12 · date）**：直接使用 seed 的 `trade_date`（西元 DATE）。
-- **設計理念（rule 13）**：不做 WHERE 過濾。
-- **欄位對齊 ohlcv_daily_twse**：`market='otc'`（上櫃）；TPEx 原生欄位命名（`SecuritiesCompanyCode`/`CompanyName`/`TradingShares`/`TransactionAmount`/`TransactionNumber`）統一到 `stk_code/company_name/volume/trade_value/transaction_count` 對齊 TWSE 版，方便下游 UNION 全市場。TPEx `Change` 欄位為含正負號字串（如 `"+0.51"` / `"-0.05"`），可直接 CAST NUMERIC。
+- **設計理念（rule 16）**：`CROSS JOIN LATERAL jsonb_array_elements(ohlcv->'tables'->0->'data')` 攤平陣列。
+- **設計理念（rule 12）**：TPEx `data[*][0]` 為 `'115/06/01'` 形式民國年字串，同 TWSE pattern 展開。
+- **設計理念（rule 13）**：不做過濾。
+- **NULL-safe**：`COALESCE(ohlcv->'tables'->0->'data', '[]'::jsonb)`。
+- **欄位對齊 ohlcv_daily_twse**：`market='otc'`。
+- **單位換算（重要）**：TPEx `成交張數` 單位為「張」(1 張 = 1000 股)，`成交仟元` 單位為「仟元」；正規化時一律 `* 1000` 換算成 `volume`（股）、`trade_value`（元）對齊 TWSE 版。
+- **漲跌欄位**：TPEx 為 `'-65.00'` / `'10.00'` 純數字（不含前導 `+`），仍以 `TRIM(LEADING '+')` 幫防禦。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
-| `trade_date` | DATE | 交易日期（西元） | `raw_ohlcv_daily_tpex.trade_date` |
-| `stk_code` | TEXT | 股票代號 | `ohlcv[*].SecuritiesCompanyCode` |
-| `company_name` | TEXT | 公司名稱 | `ohlcv[*].CompanyName` |
+| `trade_date` | DATE | 交易日期（西元） | `tables[0].data[*][0]` 民國年展開 |
+| `stk_code` | TEXT | 股票代號 | `raw_ohlcv_daily_tpex.stk_code` |
 | `market` | TEXT | 市場別（固定 `'otc'`） | 常數 |
-| `open` | NUMERIC | 開盤價 | `ohlcv[*].Open` |
-| `high` | NUMERIC | 最高價 | `ohlcv[*].High` |
-| `low` | NUMERIC | 最低價 | `ohlcv[*].Low` |
-| `close` | NUMERIC | 收盤價 | `ohlcv[*].Close` |
-| `volume` | NUMERIC | 成交股數 | `ohlcv[*].TradingShares` |
-| `trade_value` | NUMERIC | 成交金額 | `ohlcv[*].TransactionAmount` |
-| `transaction_count` | NUMERIC | 成交筆數 | `ohlcv[*].TransactionNumber` |
-| `change` | NUMERIC | 漲跌（帶正負） | `ohlcv[*].Change` |
+| `open` | NUMERIC | 開盤價 | `tables[0].data[*][3]` |
+| `high` | NUMERIC | 最高價 | `tables[0].data[*][4]` |
+| `low` | NUMERIC | 最低價 | `tables[0].data[*][5]` |
+| `close` | NUMERIC | 收盤價 | `tables[0].data[*][6]` |
+| `volume` | NUMERIC | 成交股數（× 1000 換算） | `tables[0].data[*][1]` × 1000 |
+| `trade_value` | NUMERIC | 成交金額（元，× 1000 換算） | `tables[0].data[*][2]` × 1000 |
+| `transaction_count` | NUMERIC | 成交筆數 | `tables[0].data[*][8]` |
+| `change` | NUMERIC | 漲跌 | `tables[0].data[*][7]` |
