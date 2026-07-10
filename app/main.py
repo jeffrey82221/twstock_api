@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException, Query
 
 logger = logging.getLogger("twstock_api.main")
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
@@ -179,20 +179,41 @@ async def api_chain(ic_code: str):
     await icchain.ensure_loaded(background=True)
     if not icchain.is_loaded():
         raise HTTPException(status_code=503, detail="產業價值鏈資料載入中，請稍後重試")
+
+    # 快取回應：已有序列化的 JSON bytes 就直接回，跳過 pydantic
+    # validation 與 FastAPI json encode。cache invalidate 由
+    # icchain._fetch_all / _load_from_disk 兩個寫入點負責，這裡需要
+    # 校正 uppercase，避免大小寫不同顯入 miss/hit 不一致。
+    key = ic_code.upper()
+    cached = icchain.get_chain_response_bytes(key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     chain = icchain.get_chain(ic_code)
     if not chain:
         raise HTTPException(status_code=404, detail=f"查無產業鏈 {ic_code}")
+
     # 守門：若這條鏈回來的完全沒公司（上次 fetch 對它憑空、但其他鏈
     # 還健康，以致 index-level 毒 cache 防線沒觸發），就在背景冒一次強
     # 制重抓，下次同一個 ic_code 的查詢就能拿到公司。這里不阻塞本
     # 次回應，避免將單一 endpoint 的延遲拉到全量抓取的時間。
-    if icchain._chain_company_count(chain) == 0 and not icchain.is_loading():
+    company_count = icchain._chain_company_count(chain)
+    if company_count == 0 and not icchain.is_loading():
         logger.warning(
             "[api_chain] ic_code=%s has 0 companies in cached tree; "
             "triggering background force refresh", ic_code,
         )
         asyncio.create_task(icchain.ensure_loaded(background=False, force=True))
-    return chain
+        # 公司零的回應不 cache：下次 refetch 回來公司已填好，也會作廢
+        # 整區 cache。這邊直接回 dict。
+        return chain
+
+    # 以 pydantic model validate + 序列化一次，存進 cache。沒進 cache 前
+    # 先 validate，若 malformed 新規 data 會在這裡就 500 而不是把壞 bytes
+    # 給下次 request。
+    payload = ChainResponse.model_validate(chain).model_dump_json().encode("utf-8")
+    icchain.set_chain_response_bytes(key, payload)
+    return Response(content=payload, media_type="application/json")
 
 
 @app.post(
