@@ -1,6 +1,6 @@
 # TWStock Query · 台灣上市櫃公司查詢平台
 
-> **Version: v0.0.10**
+> **Version: v0.0.10-patch5**
 
 整合免費公開資料源（TWSE OpenAPI、TPEx OpenAPI、FinMind v4、經濟部商工 API），
 提供任一上市/上櫃公司的基本資料、主要營業項目、EPS、營收、淨利、股利、營業利潤率、營收成長率、總經理等資訊。
@@ -170,6 +170,14 @@ twstock_api/
 **新規 rule 21**：展開型純 view 若下游多方消費，要物化成 `_list` 切斷 lateral 傳染。完整課體見 [`db/poc/README.md#rule-21`](db/poc/README.md)。
 
 **附帶**：`batch_size.json` 新增 `chain_info_list=1024`（純 JSON 展開，無 API cost，可大跨步）。
+
+#### v0.0.10 五次補丁：月營收分流 seed（rule 20 實例二）
+
+**背景**：`raw_monthly_revenue`（FinMind `/api/company/{stock_id}/revenue`）與 `raw_monthly_revenue_twse`（TWSE OpenAPI t187ap05 + MOPS t21sc03）兩張 raw view 於 v0.0.9 完工後共用同一張 `financial_month_list` 作上游 seed。FinMind 免費層限流 300 req/hr、而 TWSE OpenAPI 無明顯 quota + MOPS t21sc03 內部有 24h server-side cache。共用 seed 意味 pop schema 只能以兩邊都能跟上的保守 doubling limit 進度填充，TWSE/MOPS 的實際時間優勢白白浪費。以 `batch_size=1/min`、~570k 列月營收事件母體估算，共用 seed 共需 ~396 天才能拉齊。
+
+**修法**：新增 `db/poc/financial_month_twse_list.sql`（內容與 `financial_month_list` 完全一致），`raw_monthly_revenue_twse.sql` 上游從 `financial_month_list` 換為 `financial_month_twse_list`。FinMind 版 `raw_monthly_revenue` 上游不變（仍使用 `financial_month_list`）。並於 rule 20 新增命名慣例與例子2，把本次拆分作為規則的可重現實例寫進文檔。
+
+**附帶**：`batch_size.json` 新增 `financial_month_twse_list=4`（初版起點，後續由 `probe_seed_insert_limit` 推升），`financial_month_list` 保持 `1`（FinMind 安全進度）。實際拉齊時間從 ~396 天壓縮到 ~100 天（TWSE 端以 4/tick 起跑，後續 doubling 可再大幅壓縮）。
 
 ### v0.0.9 — 2026-06-29
 

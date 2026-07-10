@@ -57,9 +57,10 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
     - **不可在正常 refresh 時 `DROP SCHEMA pop CASCADE`**。任何 refresh 流程都必須用 `CREATE SCHEMA IF NOT EXISTS pop` 與 `CREATE TABLE IF NOT EXISTS pop.<seed>`。真的要從零重建時走顯式 `recreate=True` 開關（見 [`pipeline.py: create_mat_views()`](../../pipeline.py)）。
     - **新版 SQL 優先「新增另一張」，不要就地改寫既有 SQL**。若新推行的 SQL 會導致 view 欄位規格變動（新增 / 刪除 / 重命名欄位、換上游 endpoint、換 primary key），優先新增一張新名稱的 SQL（如 `<name>_v2.sql` / `<name>_yfinance.sql`）並讓新舊兩張並行一段日子，避免 pop 表因 schema drift 被 drop 重建、重新抽一次 API。只有在規格完全相容（同 primary key、只修 bug 不改欄位）或與使用方確認舊張可棄時，才就地改寫既有 SQL。
 20. **不同限流 / 不同資料源的同型態 endpoint 要分流**。當同一資料層（如年頻財報、除息事件）同時有多個上游資料源實作（FinMind vs yfinance、公開資訊觀測站 vs 商業 API），各實作的限流（rate limit / daily quota）差異很大時，兩邊不可共用同一張 `_list.sql` / `pop.<seed>` 空表，否則快的那邊會被慢的那邊拖累。
-    - **作法**：拆成兩張 `_list.sql`，內容可以完全相同（如 `financial_year_list` 與 `financial_year_yfinance_list`），重點不在邏輯差異，而在兩張對應到獨立 `pop.<seed>` 空表，可各自以不同 doubling limit 進度填充。下游 `raw_*` view 對應換到新 seed。
-    - **命名**：以資料源名稱作尾綴（如 `_yfinance_list`），對應的 raw view 也沿用同尾綴。
-    - **例子**：`financial_year_list` (FinMind、300 req/hr) vs `financial_year_yfinance_list` (yfinance、每小時數千次)。yfinance 可先拉高 LIMIT 快速拉齊，FinMind 保守進度，兩邊互不阻塞。
+    - **作法**：拆成兩張 `_list.sql`，內容可以完全相同（如 `financial_year_list` 與 `financial_year_yfinance_list`，或 `financial_month_list` 與 `financial_month_twse_list`），重點不在邏輯差異，而在兩張對應到獨立 `pop.<seed>` 空表，可各自以不同 doubling limit 進度填充。下游 `raw_*` view 對應換到新 seed。
+    - **命名慣例**：保留原名給「默認或原始資料源」（路徑上常為 FinMind），新增另一張以資料源名稱作尾綴（`_yfinance_list`、`_twse_list`），對應的 raw view 也沿用同尾綴，以便 diff 最小並保留既有下游不動。
+    - **例子1**：`financial_year_list` (FinMind、300 req/hr) vs `financial_year_yfinance_list` (yfinance、每小時數千次)。yfinance 可先拉高 LIMIT 快速拉齊，FinMind 保守進度，兩邊互不阻塞。
+    - **例子2**：`financial_month_list` (FinMind `/api/company/{stock_id}/revenue`、300 req/hr) vs `financial_month_twse_list` (TWSE OpenAPI + MOPS t21sc03、TWSE OpenAPI 無明顯 quota + MOPS 內部有 24h cache，實際寬鬆很多)。月頻資料母體實際上非常大（~1900 家 × 每家實際上市以來月份），共用 seed 時 FinMind 建議保守值 1/tick 會拉低 TWSE 端進度；拆分後 TWSE 端可獨立以 4/tick（初版，後續 probe）壓縮拉齊時間。
     - Rule 20 與 rule 14、rule 15 相輔：rule 14 讓不同時間維度分 `_list`（monthly / yearly / quarterly）；rule 15 讓事件性 vs 連續型資料分 `_list`；rule 20 讓不同上游實作分 `_list`。
 21. **展開型純 view 若下游多方消費，要物化成 `_list` 切斷 lateral 傳染**。當一張 view 用 `CROSS JOIN LATERAL jsonb_array_elements(...)` 把 `raw_*` 的 JSONB 攤成多列（一列變 N 列的 fan-out），且有**多張下游** view 直接讀它，pg_ivm 展開整條 SQL 時每個下游都會各自把 lateral 重新算一遍。若那條 lateral 鏈上游是 `raw_*`（背後掛 `http_get_content`），每次下游 refresh 都會**間接**觸發上游 endpoint 重複被呼叫（即使 `raw_*` 已經是 mat view，pg_ivm 對 view chain 的展開行為仍會把整條路徑作為單一表達式重新推算，導致效能崩塌）。
     - **判斷方式**：非 `raw_`、非 `_list` 的展開 view 若被 ≥ 2 張下游引用，或該 view 本身的 fan-out 倍率高（一列 → 幾十/幾百列），就應該把它改造成 `_list`。
@@ -90,21 +91,22 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 18. [financial_month_list](#financial_month_list)
 19. [raw_monthly_revenue](#raw_monthly_revenue)
 20. [monthly_revenue](#monthly_revenue)
-21. [raw_monthly_revenue_twse](#raw_monthly_revenue_twse)
-22. [monthly_revenue_twse](#monthly_revenue_twse)
-23. [raw_dividend_history](#raw_dividend_history)
-24. [raw_dividend_history_yfinance](#raw_dividend_history_yfinance)
-25. [dividend_event_list](#dividend_event_list)
-26. [dividend_event_list_yfinance](#dividend_event_list_yfinance)
-27. [raw_dividend](#raw_dividend)
-28. [dividend](#dividend)
-29. [raw_dividend_yfinance](#raw_dividend_yfinance)
-30. [dividend_yfinance](#dividend_yfinance)
-31. [financial_quarter_list](#financial_quarter_list)
-32. [financial_quarterly](#financial_quarterly)
-33. [financial_quarter_yfinance_list](#financial_quarter_yfinance_list)
-34. [raw_quarterly_financials_yfinance](#raw_quarterly_financials_yfinance)
-35. [financial_quarterly_yfinance](#financial_quarterly_yfinance)
+21. [financial_month_twse_list](#financial_month_twse_list)
+22. [raw_monthly_revenue_twse](#raw_monthly_revenue_twse)
+23. [monthly_revenue_twse](#monthly_revenue_twse)
+24. [raw_dividend_history](#raw_dividend_history)
+25. [raw_dividend_history_yfinance](#raw_dividend_history_yfinance)
+26. [dividend_event_list](#dividend_event_list)
+27. [dividend_event_list_yfinance](#dividend_event_list_yfinance)
+28. [raw_dividend](#raw_dividend)
+29. [dividend](#dividend)
+30. [raw_dividend_yfinance](#raw_dividend_yfinance)
+31. [dividend_yfinance](#dividend_yfinance)
+32. [financial_quarter_list](#financial_quarter_list)
+33. [financial_quarterly](#financial_quarterly)
+34. [financial_quarter_yfinance_list](#financial_quarter_yfinance_list)
+35. [raw_quarterly_financials_yfinance](#raw_quarterly_financials_yfinance)
+36. [financial_quarterly_yfinance](#financial_quarterly_yfinance)
 
 ---
 
@@ -397,7 +399,9 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 - **上游 SQL**：[company_basic_info](#company_basic_info)
 - **HTTP API endpoint**：無（純 SQL 產生）
+- **服務的下游**：[raw_monthly_revenue](#raw_monthly_revenue)（FinMind 版）
 - 設計理念（規則 11, 14, 15）：月營收公布頻率為每月一次（次月 10 日前）,幾乎所有公司每月都有,規則性格點恰等於事件母體 — 為 rule 15 的退化特例。因此仍以「每月一次」的 as_of 遍歷所有月份切片,不必以日為單位密集抓取。
+- **設計理念（規則 20）**：本 seed 專供 FinMind 版 raw_monthly_revenue。TWSE/MOPS 版已於 v0.0.10 五次補丁拆到獨立 seed [financial_month_twse_list](#financial_month_twse_list)。並行拆分目的在避免共用 seed 時慢端（FinMind 免費層 300 req/hr）拖累快端（TWSE OpenAPI + MOPS t21sc03,後者有 24h server-side cache,quota 寬鬆很多）。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
@@ -408,10 +412,11 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 ## raw_monthly_revenue
 
-- **上游 SQL**：[financial_month_list](#financial_month_list)
+- **上游 SQL**：[financial_month_list](#financial_month_list)（FinMind 專屬 seed）
 - **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/revenue?as_of={month_start_date}`
   - 上游：[FinMind v4](https://api.finmindtrade.com/api/v4/data) dataset `TaiwanStockMonthRevenue`
 - 設計理念（規則 14）：月頻資料須有專屬 `_list`（financial_month_list）,不與年頻 dividend / financials 混用同一個 `financial_year_list`。
+- 設計理念（規則 20）：TWSE/MOPS 版 [raw_monthly_revenue_twse](#raw_monthly_revenue_twse) 已拆到獨立 seed [financial_month_twse_list](#financial_month_twse_list)，本 raw 以 FinMind quota (300 req/hr = 5/min) 當上限，不被 TWSE/MOPS 的大跨步 batch 推進相互干擾。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
@@ -441,19 +446,34 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 ---
 
-## raw_monthly_revenue_twse
+## financial_month_twse_list
 
-- **上游 SQL**：[financial_month_list](#financial_month_list)
-- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/revenue/twse?as_of={month_start_date}`
-  - 上游：證交所體系雙來源。「最新一個月」：[TWSE OpenAPI](https://openapi.twse.com.tw/v1/opendata/t187ap05_L) / [TPEx OpenAPI](https://mopsfin.twse.com.tw/opendata/t187ap05_O.csv) t187ap05;「歷史月營收」：[公開資訊觀測站 MOPS](https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_113_5_0.html) t21sc03 採用 IFRSs 後每月營業收入彙總表。
-  - 與 FinMind 版同一輸出 spec,提供「官方」源頭供審計溯源,免 token、免限流。
-- 設計理念（規則 14）：與 `raw_monthly_revenue` 共用 `financial_month_list`,避免重複建 `_list`。
+- **上游 SQL**：[company_basic_info](#company_basic_info)
+- **HTTP API endpoint**：無（純 SQL `generate_series`）
+- **服務的下游**：[raw_monthly_revenue_twse](#raw_monthly_revenue_twse)
+- **設計理念（規則 20）**：內容完全等同 [financial_month_list](#financial_month_list)，拆成兩張目的在於「分流爬取」：`raw_monthly_revenue`（FinMind, 免費層 300 req/hr）與 `raw_monthly_revenue_twse`（TWSE OpenAPI + MOPS t21sc03; TWSE OpenAPI 無明顯 quota、MOPS 內部有 24h server-side cache）對應到不同 `pop.<seed>` 空表，可各自以不同的 batch limit 進度填充。TWSE 端限流寬，可拉高 `batch_size.json` 的 `financial_month_twse_list` 快速拉齊（初版 4/tick，後續由 `probe_seed_insert_limit` 推升），FinMind 端保持 1/tick 不被拖累。
+- 內容與 [financial_month_list](#financial_month_list) 完全一致 — 拆分價值僅在於獨立 seed，不在邏輯差異。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
-| `stk_code` | TEXT | 股票代號 | `financial_month_list.stk_code` |
+| `stk_code` | TEXT | 股票代號 | `company_basic_info.stk_code` |
+| `month_start_date` | DATE | 從公司成立日所屬月份開始、每月 1 日 generate 一列,直到 CURRENT_DATE | `generate_series(...)` |
+
+---
+
+## raw_monthly_revenue_twse
+
+- **上游 SQL**：[financial_month_twse_list](#financial_month_twse_list)（TWSE 專屬 seed）
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/revenue/twse?as_of={month_start_date}`
+  - 上游：證交所體系雙來源。「最新一個月」：[TWSE OpenAPI](https://openapi.twse.com.tw/v1/opendata/t187ap05_L) / [TPEx OpenAPI](https://mopsfin.twse.com.tw/opendata/t187ap05_O.csv) t187ap05;「歷史月營收」：[公開資訊觀測站 MOPS](https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_113_5_0.html) t21sc03 採用 IFRSs 後每月營業收入彙總表。
+  - 與 FinMind 版同一輸出 spec,提供「官方」源頭供審計溯源,免 token、免限流。
+- 設計理念（規則 20）：與 [raw_monthly_revenue](#raw_monthly_revenue) 分流爬取，各自對應獨立 `pop.<seed>` 空表。本 raw 可以拉高 batch_size 快速拉齊，不受 FinMind 300 req/hr 拖累。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `financial_month_twse_list.stk_code` |
 | `revenue` | JSONB | `/revenue/twse` endpoint 整包 JSON（結構與 raw_monthly_revenue 一致） | `custom.http_get_content(url)` |
-| `as_of` | DATE | 本筆對應的查詢基準日（即 `month_start_date`） | `financial_month_list.month_start_date` |
+| `as_of` | DATE | 本筆對應的查詢基準日（即 `month_start_date`） | `financial_month_twse_list.month_start_date` |
 
 ---
 
