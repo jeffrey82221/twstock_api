@@ -161,6 +161,16 @@ twstock_api/
 - Pipeline 零改動：`seed_tables` 自動掃所有 `_list.sql`，新 seed 自動被 pick up。
 - FinMind 版 `raw_yearly_financials` 不動，仍用 `financial_year_list`，保留 backward compatibility。
 
+#### v0.0.10 四次補丁：`chain_info` 升格為 `chain_info_list`（rule 21）
+
+**背景**：`chain_info` 原本是純正規化 view，對 `raw_chain_info.segments` JSONB 做 3 層 `CROSS JOIN LATERAL`（一列 47 鏈 → ~2200 列公司）。pg_ivm 將 view chain 展開時會把下游每個消費者的 lateral 各自重新推算，間接導致 `raw_chain_info` 背後的 `/api/chain/{ic_code}` 上游被反覆呼叫。
+
+**修法**：`chain_info.sql` → `chain_info_list.sql` rename（SQL 內容不變），讓 `pipeline.py` 把它當 seed 物化到 `pop.chain_info_list`。下游 `company_list` 改讀物化後的表，lateral 只在 seed 填充時算一次。
+
+**新規 rule 21**：展開型純 view 若下游多方消費，要物化成 `_list` 切斷 lateral 傳染。完整課體見 [`db/poc/README.md#rule-21`](db/poc/README.md)。
+
+**附帶**：`batch_size.json` 新增 `chain_info_list=1024`（純 JSON 展開，無 API cost，可大跨步）。
+
 ### v0.0.9 — 2026-06-29
 
 **Milestone：新增「證交所體系」作為「月營收 / YoY / TTM」的首選替代資料源（patch：加入 MOPS 歷史來源，TTM 完全可計算）**
