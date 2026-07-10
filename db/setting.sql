@@ -13,7 +13,7 @@ SELECT http_set_curlopt('CURLOPT_CONNECTTIMEOUT', '15000');
 
 SELECT http_set_curlopt('CURLOPT_TIMEOUT', '12000');
 
-SET work_mem = '1GB';
+SET work_mem = '256MB';
 
 CREATE SCHEMA IF NOT EXISTS poc;
 
