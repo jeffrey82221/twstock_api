@@ -69,6 +69,91 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
     - **與 rule 8 的差別**：rule 8 的 `_list` 是「事件母體 seed」（chain_list / dividend_event_list…）；rule 21 的 `_list` 是「展開結果 seed」（原本是純正規化 view，只是因為多方消費 + 高 fan-out 而被升格）。命名慣例一致（都以 `_list.sql` 結尾）。
     - **與 rule 18 的關係**：rule 18 要求 SQL 演進時盡量「新增另一張」而非就地改寫；但 rename 是 schema-level 的 identity 變化，pop 表本來就要重建，屬於 rule 18 允許的「規格完全變」情境（此時舊 pop 表可安全 drop 因為它不對應任何 API 抽取成本，僅是 JSON 展開）。
 
+## Seed 填滿時間 · 存放空間估算
+
+> 本章估算在現行 `batch_size.json` 下，各 `_list.sql` 對應的 `pop.<seed>` 空表完全填滿母體所需的時間，以及填滿後 pop schema 整體存放空間。與 v0.0.10 五次補丁（月營收分流）直接相關。
+
+### 估算前提
+
+- **排程**：pg_cron 每 **1 分鐘** tick 一次 (`Pipeline.setup_schedules(period_minutes=1)`)，每 tick 每張 seed insert `batch_size.json` 的 `row_cnt` 列。
+- **進度假設**：不考慮 `probe_seed_insert_limit` 後續 doubling（實際可能更快）、不考慮 API 限流或重試微延。
+- **公司母體**：上市約 1,030 + 上櫃 約 870 = 約 **1,900** 家（來自 `company_list` DISTINCT `chain_info_list`）。
+- **中位上市年數**：25 年（台股上市中位典型值；新公司拉低、老公司拉高）。
+- **提醒**：這些數字是 **PoC 估算**，不取代實際 `pg_relation_size` 監控。
+
+### 母體估算方法（多張 seed 共用）
+
+各 seed 的母體列數估算來自純 SQL 推斷（`generate_series`、JSONB fan-out `jsonb_array_elements`、`CROSS JOIN LATERAL`）或上游 raw JSON 的直接展開。欄位意義見下方表格「母體估算方法」列。
+
+### 存放空間估算方法（by 欄位型態）
+
+以 PostgreSQL 表 heap tuple 估算，不含 TOAST 壓縮優化（JSONB > 2 KB 時 PostgreSQL 實際會 zlib 壓縮到 約 40-60%，估算屬保守上限）：
+
+**Seed 本體** 約 60 B / 列：
+- Heap tuple header + null bitmap + alignment：24-32 B
+- `stk_code TEXT` 短字串（英數 4-6 char）：含 1 B length 共 約 8 B
+- `DATE`：4 B
+- BTree PK index（(stk_code, date)）：約 20 B / 列
+- 小計：約 60 B / 列（tuple header + 索引，取保守上限）
+
+**raw_* JSONB payload** by endpoint response 結構抽樣估均值：
+- 月營收 (`/revenue`, `/revenue/twse`)：`latest_month_label` `latest_month_value` `latest_month_yoy_pct` `ttm_value` `ttm_yoy_pct` + wrapping → **約 1.2 KB**
+- 年報 (`/financials`)：EPS 年度、revenue、net_income、margins、growth 共 15-20 數字欄位 → **約 4 KB**（yfinance 版略少 3.5 KB）
+- 季報 (`/financials/yfinance?as_of=quarter`)：**約 2.5 KB**
+- 除息單筆 (`/dividend`)：cash_dividend, stock_dividend, cash_ex_dividend_date, cash_capital_reduction 等 → **約 0.7-0.8 KB**
+- 除息全歷史 (`/dividend/history`)：約 15 events 陣列 → **約 12 KB / 家**
+- Product revenue (`/product-revenue`)：少於 10 行產品線 → **約 3 KB**
+- Product revenue filers (`/product-revenue/filers`)：`co_ids` 陣列 ~200 家 × 6 char + wrap → **約 6 KB**
+- Chain info (`/api/chain/{ic_code}`)：segments dict + 展開前公司清單 → **約 12 KB / 條**
+- Company info (`/api/company/{id}`)：基本資料 + 主要營業項目 → **約 5 KB**
+
+> pg_ivm 實作上仍會呼叫 PostgreSQL 的 TOAST 壓縮；本估算屬保守上限，實際磁碟需求可能為估算值的 40-60%。
+
+### 各 seed 填滿時間與空間估算總表
+
+填滿時間 = 母體列數 ÷ (batch_size × 1440 分鐘/天)。
+
+| seed | 母體列數 | 母體估算方法 | batch_size (row/min) | 填滿時間 | raw payload / 列 | 填滿後 raw 存放 | seed 本體存放 | 總計 |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `product_revenue_filer_scope_list` | 120 | 近 5 年 60 月 × 2 市場 (sii+otc) — 由 `product_revenue_filer_scope_list.sql` 的 `INTERVAL '5 years'` × `VALUES('sii'),('otc')` 卡氏積直接產生 | 4 | 0.5 小時 | ~6,000 B | 703.1 KB | 7.0 KB | 710.2 KB |
+| `product_revenue_filer_list` | 24,000 | 60 月 × 2 市場 × 平均 ~200 家申報 = 24,000 — 每列來自 `raw_product_revenue_filers.filers.co_ids` 攝平 | 2 | 8.3 天 | ~3,000 B | 68.7 MB | 1.4 MB | 70.0 MB |
+| `dividend_event_list` | 28,500 | 1,900 家 × 平均 15 event/家 (20 年 × 0.75 除息/年) — 由 `raw_dividend_history.events` 陣列 fan-out | 1 | **19.8 天** | ~800 B | 21.7 MB | 1.6 MB | 23.4 MB |
+| `dividend_event_yfinance_list` | 28,500 | 同上（yfinance 版），母體相同但資料源不同 | 12 | 1.6 天 | ~700 B | 19.0 MB | 1.6 MB | 20.7 MB |
+| `financial_year_list` | 47,500 | 1,900 家 × 25 年（中位上市年數）— 由 `generate_series(incorporation_date, CURRENT_DATE, '1 year')` 產生 | 22 | 1.5 天 | ~4,000 B | 181.2 MB | 2.7 MB | 183.9 MB |
+| `financial_year_yfinance_list` | 47,500 | 與 financial_year_list 內容完全一致（rule 20 分流），僅 seed 表獨立 | 16 | 2.1 天 | ~3,500 B | 158.5 MB | 2.7 MB | 161.3 MB |
+| `financial_quarter_yfinance_list` | 38,000 | 1,900 家 × 20 季（yfinance 提供近 5 年）— 由 `raw_quarterly_financials_yfinance` 已抓的 quarter list 反查 | 2 | **13.2 天** | ~2,500 B | 90.6 MB | 2.2 MB | 92.8 MB |
+| `chain_list` | 47 | 47 條產業鏈 — 由 `/api/chains` 一次抓完（服務內硬編碼 IC_CHAINS 常數） | 2 | 0.4 小時 | — | — | 2.8 KB | 2.8 KB |
+| `chain_info_list` | 2,200 | ~2,200 = 47 鏈 × 平均 47 家/鏈 — 由 `raw_chain_info.segments` 3 層 LATERAL 展開（rule 21） | 1024 | < 0.1 小時 | — | — | 128.9 KB | 128.9 KB |
+| `company_list` | 1,900 | 1,900 = 上市 ~1,030 + 上櫃 ~870 — 由 `chain_info_list` DISTINCT 而來 | 1 | 1.3 天 | — | — | 111.3 KB | 111.3 KB |
+| **`financial_month_list`** | **570,000** | 1,900 家 × 300 月（平均上市月數，中位 25 年）— 由 `generate_series(incorporation_date, CURRENT_DATE, '1 month')` | 1 | **395.8 天 (~13.2 月)** | ~1,200 B | 652.3 MB | 32.6 MB | **684.9 MB** |
+| **`financial_month_twse_list`** | **570,000** | 與 financial_month_list 內容完全一致（rule 20 分流），僅 seed 表獨立 | 4 | **99.0 天 (~3.3 月)** | ~1,200 B | 652.3 MB | 32.6 MB | **684.9 MB** |
+
+### 非-seed 型 raw view（直接從上層 seed 抽取，不單獨列入 batch_size）
+
+| raw view | 列數 | 母體來源 | payload / 列 | 存放空間 |
+| --- | ---: | --- | ---: | ---: |
+| `raw_company_info` | 1,900 | company_list | ~5,000 B | 9.1 MB |
+| `raw_chain_info` | 47 | chain_list | ~12,000 B | 550.8 KB |
+| `raw_dividend_history` | 1,900 | company_list | ~12,000 B | 21.7 MB |
+| `raw_dividend_history_yfinance` | 1,900 | company_list | ~12,000 B | 21.7 MB |
+
+### 總計
+
+- **全部 pop.raw_* JSONB** 約 **1.9 GB**（TOAST 壓縮後實際磁碟可能降至 40-60%）
+- **全部 pop.<seed> 本體** 約 **77.7 MB**
+- **合計估算** 約 **1.9-2.0 GB**
+
+### 對作業方針的意義
+
+1. **首要瓶頸 = `financial_month_list` (FinMind)**：現行 `batch_size=1` 下需約 396 天。FinMind 免費層 300 req/hr = 5 req/min，理論上 `batch_size` 可推到 4-5，但需留安全餘裕避免 burst 遭 limit。probe 後從 1 → 4 可壓至約 100 天。
+2. **次要瓶頸 = `financial_month_twse_list`**：拆分後初版 4/tick = 99 天。TWSE OpenAPI 無明顯 quota + MOPS 有 24h cache，probe 後可拉高 8-16/tick 壓至 25-50 天。
+3. **第二層 tuning 對象 = `dividend_event_list` (FinMind)** 與 **`financial_quarter_yfinance_list`**：兩邊都 10-20 天，可接受但仍可依需往上推。
+4. **存放面**：1.9 GB 對現代 SSD 不是問題。若未來拓展到全歷史（`INTERVAL '20 years'` 代替 `INTERVAL '5 years'`），`product_revenue_filer_*` 系列列數需 ×4，就需優先 tune batch_size。
+
+### 估算腳本從哪來？
+
+本章所有數字都來自 `db/poc/scripts/estimate_seed_fill_and_storage.py`（同 commit 一併新增），可重新執行以在母體假設或 `batch_size.json` 變更後重新產生。
+
 ## 章節索引
 
 1. [chain_list](#chain_list)
