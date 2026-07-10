@@ -258,31 +258,14 @@ twstock_api/
 - 櫃買中心產業價值鏈 47 鏈背景擷取與快取。
 - 前端（純 HTML/CSS/JS）查詢介面。
 
-# MEMO
 
-## LIMIT COUNT 選取
+# DB Contruct Flow 
 
-- seed table -> upstream to downstream 
-- limit -> 1, 2, 4, 8 until fail 
-- every round truncate the list table in pop schema 
+1. Create POC Views `Pipeline().create_view()`
 
-```sql
--- chain_list - 1 (this is min)
--- product_revenue_filer_scope_list - 64
--- product_revenue_filer_list - 8
--- company_list - 2
--- dividend_event_list - 4
--- dividend_event_yfinance_list - 16
--- financial_month_list - 8
--- financial_year_list - 8
--- financial_quarter_yfinance_list - 16
-TRUNCATE pop.financial_quarter_yfinance_list;
-REINDEX TABLE pop.financial_quarter_yfinance_list; 
-INSERT INTO pop.financial_quarter_yfinance_list
-SELECT * FROM hidden.financial_quarter_yfinance_list
-WHERE financial_quarter_yfinance_list IS NOT NULL
-EXCEPT SELECT * FROM pop.financial_quarter_yfinance_list
-LIMIT 16; 
-```
+2. Create Materialized Views `Pipeline().create_mat_view()`
 
-## financial_year_list 表 要切成 yfinance & non-yfinance 版本
+3. Probe Limit Count `Pipeline().probe_all()`
+
+4. Setup 1 minute Schedules `Pipeline().setup_schedules()`
+

@@ -1,12 +1,13 @@
 {
-    "chain_list": 15,
-    "company_list": 1,
     "product_revenue_filer_scope_list": 4,
     "product_revenue_filer_list": 2,
     "dividend_event_list": 1,
     "dividend_event_yfinance_list": 12,
-    "financial_month_list": 1,
     "financial_year_list": 22,
     "financial_year_yfinance_list": 16,
-    "financial_quarter_yfinance_list": 2
+    "financial_quarter_yfinance_list": 2,
+    "chain_list": 2,
+    "chain_info_list": 1024,
+    "company_list": 1,
+    "financial_month_list": 1
 }
