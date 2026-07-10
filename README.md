@@ -161,6 +161,16 @@ twstock_api/
 - Pipeline 零改動：`seed_tables` 自動掃所有 `_list.sql`，新 seed 自動被 pick up。
 - FinMind 版 `raw_yearly_financials` 不動，仍用 `financial_year_list`，保留 backward compatibility。
 
+#### v0.0.10 四次補丁：`chain_info` 升格為 `chain_info_list`（rule 21）
+
+**背景**：`chain_info` 原本是純正規化 view，對 `raw_chain_info.segments` JSONB 做 3 層 `CROSS JOIN LATERAL`（一列 47 鏈 → ~2200 列公司）。pg_ivm 將 view chain 展開時會把下游每個消費者的 lateral 各自重新推算，間接導致 `raw_chain_info` 背後的 `/api/chain/{ic_code}` 上游被反覆呼叫。
+
+**修法**：`chain_info.sql` → `chain_info_list.sql` rename（SQL 內容不變），讓 `pipeline.py` 把它當 seed 物化到 `pop.chain_info_list`。下游 `company_list` 改讀物化後的表，lateral 只在 seed 填充時算一次。
+
+**新規 rule 21**：展開型純 view 若下游多方消費，要物化成 `_list` 切斷 lateral 傳染。完整課體見 [`db/poc/README.md#rule-21`](db/poc/README.md)。
+
+**附帶**：`batch_size.json` 新增 `chain_info_list=1024`（純 JSON 展開，無 API cost，可大跨步）。
+
 ### v0.0.9 — 2026-06-29
 
 **Milestone：新增「證交所體系」作為「月營收 / YoY / TTM」的首選替代資料源（patch：加入 MOPS 歷史來源，TTM 完全可計算）**
@@ -258,31 +268,14 @@ twstock_api/
 - 櫃買中心產業價值鏈 47 鏈背景擷取與快取。
 - 前端（純 HTML/CSS/JS）查詢介面。
 
-# MEMO
 
-## LIMIT COUNT 選取
+# DB Contruct Flow 
 
-- seed table -> upstream to downstream 
-- limit -> 1, 2, 4, 8 until fail 
-- every round truncate the list table in pop schema 
+1. Create POC Views `Pipeline().create_view()`
 
-```sql
--- chain_list - 1 (this is min)
--- product_revenue_filer_scope_list - 64
--- product_revenue_filer_list - 8
--- company_list - 2
--- dividend_event_list - 4
--- dividend_event_yfinance_list - 16
--- financial_month_list - 8
--- financial_year_list - 8
--- financial_quarter_yfinance_list - 16
-TRUNCATE pop.financial_quarter_yfinance_list;
-REINDEX TABLE pop.financial_quarter_yfinance_list; 
-INSERT INTO pop.financial_quarter_yfinance_list
-SELECT * FROM hidden.financial_quarter_yfinance_list
-WHERE financial_quarter_yfinance_list IS NOT NULL
-EXCEPT SELECT * FROM pop.financial_quarter_yfinance_list
-LIMIT 16; 
-```
+2. Create Materialized Views `Pipeline().create_mat_view()`
 
-## financial_year_list 表 要切成 yfinance & non-yfinance 版本
+3. Probe Limit Count `Pipeline().probe_all()`
+
+4. Setup 1 minute Schedules `Pipeline().setup_schedules()`
+

@@ -21,7 +21,7 @@ incremental materialized view 建構,可以與 `_list` 表同步擴充資料,避
 7. `_list.sql` 的欄位即為下游 view 的 primary key。
 8. **`_list.sql` = seed table**。所有會被 pop schema 逐步 `LIMIT` 增量填充的表都以 `_list.sql` 結尾命名；判斷是否有上游只要檢查檔內是否引用 `{{ schema }}`：
     - **沒引用 `{{ schema }}`** → 純上游 seed，從 endpoint / 日期產生器看起（例：`chain_list` 直接打 `/chains`、`financial_quarter_yfinance_list` 只靠 date generator）。【例外】含 `{{ schema }}` 但檔名不含 `_list` 的 seed，必要時需改名（已發生：`product_revenue_filer_scope` → `product_revenue_filer_scope_list`）。
-    - **引用 `{{ schema }}`** → 上游來自其他 poc 表（例：`company_list` 上游是 `chain_info`、`dividend_event_list` 上游是 `raw_dividend_history`）；這種 `_list` 是「事件攤平母體」，仍屬 seed table 角色，仍必須以 `_list.sql` 命名。
+    - **引用 `{{ schema }}`** → 上游來自其他 poc 表（例：`company_list` 上游是 `chain_info_list`、`dividend_event_list` 上游是 `raw_dividend_history`）；這種 `_list` 是「事件攤平母體」，仍屬 seed table 角色，仍必須以 `_list.sql` 命名。
     - `pipeline.py` 的 `seed_tables` 掃描所有 `_list.sql` 對應到 `pop.<name>` 空表，供 PoC 驗證期逐步增量填充使用（填充節奏 SOP 見頂層 [`README.md#LIMIT COUNT 選取`](../../README.md#memo)）。
 9. `raw_` 開頭的SQL用途是抓取 app/main.py 的 endpoint API return 結果
 11. `raw_` 開頭的SQL,需搭配一個 `_list.sql`作為上游,`_list.sql` 的邏輯要能指定 endpoint 的 API calling 可以遍歷所有 endpoint function 可能的 input ,但請避免重複的結果抓取。(e.g., 雖然「月營收」可以以日為單位去 call,但沒有必要在時間軸上這麼密集的抓取資料,最好只針對公佈日去抓取資料)
@@ -61,12 +61,18 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
     - **命名**：以資料源名稱作尾綴（如 `_yfinance_list`），對應的 raw view 也沿用同尾綴。
     - **例子**：`financial_year_list` (FinMind、300 req/hr) vs `financial_year_yfinance_list` (yfinance、每小時數千次)。yfinance 可先拉高 LIMIT 快速拉齊，FinMind 保守進度，兩邊互不阻塞。
     - Rule 20 與 rule 14、rule 15 相輔：rule 14 讓不同時間維度分 `_list`（monthly / yearly / quarterly）；rule 15 讓事件性 vs 連續型資料分 `_list`；rule 20 讓不同上游實作分 `_list`。
+21. **展開型純 view 若下游多方消費，要物化成 `_list` 切斷 lateral 傳染**。當一張 view 用 `CROSS JOIN LATERAL jsonb_array_elements(...)` 把 `raw_*` 的 JSONB 攤成多列（一列變 N 列的 fan-out），且有**多張下游** view 直接讀它，pg_ivm 展開整條 SQL 時每個下游都會各自把 lateral 重新算一遍。若那條 lateral 鏈上游是 `raw_*`（背後掛 `http_get_content`），每次下游 refresh 都會**間接**觸發上游 endpoint 重複被呼叫（即使 `raw_*` 已經是 mat view，pg_ivm 對 view chain 的展開行為仍會把整條路徑作為單一表達式重新推算，導致效能崩塌）。
+    - **判斷方式**：非 `raw_`、非 `_list` 的展開 view 若被 ≥ 2 張下游引用，或該 view 本身的 fan-out 倍率高（一列 → 幾十/幾百列），就應該把它改造成 `_list`。
+    - **作法**：把該純 view rename 成 `<name>_list.sql`（內容不變），讓 `pipeline.py` 的 `seed_tables` 掃描時自動把它當 seed，物化成 `pop.<name>_list` 表。下游 view 從此讀 pop 表而非 lateral 展開的臨時結果。
+    - **例子**：`chain_info.sql` → `chain_info_list.sql`。`raw_chain_info` 每列（47 條鏈）經三層 `CROSS JOIN LATERAL` 攤成 ~2200 列公司清單。下游 `company_list` 對它 `SELECT DISTINCT`，若走純 view chain，等於每次 refresh 都把 47 鏈的 JSON 展開一次；改成 `_list` 後 `company_list` 直接讀 `pop.chain_info_list` 表，lateral 只在 seed 物化時算一次。
+    - **與 rule 8 的差別**：rule 8 的 `_list` 是「事件母體 seed」（chain_list / dividend_event_list…）；rule 21 的 `_list` 是「展開結果 seed」（原本是純正規化 view，只是因為多方消費 + 高 fan-out 而被升格）。命名慣例一致（都以 `_list.sql` 結尾）。
+    - **與 rule 18 的關係**：rule 18 要求 SQL 演進時盡量「新增另一張」而非就地改寫；但 rename 是 schema-level 的 identity 變化，pop 表本來就要重建，屬於 rule 18 允許的「規格完全變」情境（此時舊 pop 表可安全 drop 因為它不對應任何 API 抽取成本，僅是 JSON 展開）。
 
 ## 章節索引
 
 1. [chain_list](#chain_list)
 2. [raw_chain_info](#raw_chain_info)
-3. [chain_info](#chain_info)
+3. [chain_info_list](#chain_info_list)
 4. [company_list](#company_list)
 5. [product_revenue_filer_scope_list](#product_revenue_filer_scope_list)
 6. [raw_product_revenue_filers](#raw_product_revenue_filers)
@@ -131,10 +137,11 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 ---
 
-## chain_info
+## chain_info_list
 
 - **上游 SQL**：[raw_chain_info](#raw_chain_info)
 - **HTTP API endpoint**：無（純 JSONB 展開）
+- **角色**：seed（`_list`）。詳見 **rule 21**——因為此 view 對 `raw_chain_info.segments` 做 3 層 `CROSS JOIN LATERAL`（一列 47 鏈 → ~2200 列公司），且下游 `company_list` 是唯二消費者之一。若維持純 view chain，pg_ivm 展開時會把 lateral 重複計算並間接讓 `raw_chain_info` 的 `chain_list` 上游被反覆重掃，等於間接呼叫 47 次 `/api/chain/{ic_code}`。改造成 `_list` 後由 pipeline 物化到 `pop.chain_info_list`，下游只讀該物化表。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
@@ -152,13 +159,13 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 ## company_list
 
-- **上游 SQL**：[chain_info](#chain_info)
+- **上游 SQL**：[chain_info_list](#chain_info_list)
 - **HTTP API endpoint**：無（純 SQL `DISTINCT`）
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
-| `stk_code` | TEXT | 股票代號（例 `2330`） | `chain_info.stk_code` |
-| `company_name` | TEXT | 公司名稱（產業鏈樹中的顯示名稱） | `chain_info.company_name` |
+| `stk_code` | TEXT | 股票代號（例 `2330`） | `chain_info_list.stk_code` |
+| `company_name` | TEXT | 公司名稱（產業鏈樹中的顯示名稱） | `chain_info_list.company_name` |
 
 ---
 
