@@ -20,7 +20,6 @@ SELECT
         make_date(EXTRACT(YEAR FROM listing_date)::INT, EXTRACT(MONTH FROM listing_date)::INT, 1),
         CURRENT_DATE,
         INTERVAL '1 month'
-    )::DATE AS month_start_date
-FROM {{ schema }}.company_basic_info
-WHERE market = '上櫃'
-  AND listing_date IS NOT NULL;
+    )::DATE AS month_start_date,
+    listing_date
+FROM {{ schema }}.company_basic_info_list;

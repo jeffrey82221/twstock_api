@@ -13,7 +13,7 @@ SELECT http_set_curlopt('CURLOPT_CONNECTTIMEOUT', '15000');
 
 SELECT http_set_curlopt('CURLOPT_TIMEOUT', '12000');
 
-SET work_mem = '256MB';
+SET work_mem = '1GB';
 
 CREATE SCHEMA IF NOT EXISTS poc;
 
@@ -207,4 +207,14 @@ LANGUAGE sql
 IMMUTABLE
 AS $$
   SELECT custom.http_get_content_logged(p_url)
+$$;
+
+
+CREATE OR REPLACE FUNCTION custom.jsonb_array_elements(data jsonb)
+RETURNS SETOF jsonb 
+LANGUAGE sql 
+IMMUTABLE 
+PARALLEL SAFE AS 
+$$
+    SELECT jsonb_array_elements(data);
 $$;

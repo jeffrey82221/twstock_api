@@ -14,9 +14,8 @@
 --
 -- rows[*] 欄位：與 ohlcv_daily_twse 完全相同 schema，backend 已保證。
 SELECT
-    (item->>'trade_date')::DATE AS trade_date,
+    custom.parse_iso_date(item->>'trade_date') AS trade_date,
     item->>'stk_code' AS stk_code,
-    'otc'::TEXT AS market,
     (item->>'open')::NUMERIC AS open,
     (item->>'high')::NUMERIC AS high,
     (item->>'low')::NUMERIC AS low,
@@ -25,5 +24,5 @@ SELECT
     (item->>'trade_value')::NUMERIC AS trade_value,
     (item->>'transaction_count')::NUMERIC AS transaction_count,
     (item->>'change')::NUMERIC AS change
-FROM {{ schema }}.raw_ohlcv_daily_tpex
-CROSS JOIN LATERAL jsonb_array_elements(COALESCE(ohlcv->'rows', '[]'::jsonb)) AS item;
+FROM {{ schema }}.raw_ohlcv_monthly
+CROSS JOIN LATERAL custom.jsonb_array_elements(COALESCE(ohlcv->'rows', '[]'::jsonb)) AS item;

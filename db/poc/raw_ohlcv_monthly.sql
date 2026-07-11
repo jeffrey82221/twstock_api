@@ -39,5 +39,6 @@ SELECT
                 (month_start_date + INTERVAL '1 month' - INTERVAL '1 day')::DATE
             )
         )::TEXT
-    ) AS ohlcv
-FROM {{ schema }}.ohlcv_daily_tpex_list;
+    ) AS ohlcv,
+    listing_date
+FROM {{ schema }}.ohlcv_monthly_list;
