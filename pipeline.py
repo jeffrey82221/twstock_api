@@ -290,7 +290,7 @@ class Pipeline:
         result = self._db_tool.fetch_all(check_sql)
         return result[0][0] # Assuming the result is a list of tuples
 
-    def create_mat_views(self, recreate: bool = False):
+    def create_mat_views(self, recreate: bool = False, test_insert: bool=True):
         """
         從 seed tables 往後接 materialized view 
         (建立 materialized view ，如果已經存在就建立到 hidden schema)
@@ -318,7 +318,8 @@ class Pipeline:
                 print('Executing SQL:\n', sql)
                 self._db_tool.execute_query(sql)
                 print('==========SUCCESS==================')
-        self._insert_few_rows_to_seed_tables(row_cnt=1)
+        if test_insert:
+            self._insert_few_rows_to_seed_tables(row_cnt=1)
 
     @staticmethod
     def _period_minutes_to_cron(period_minutes: int) -> str:
