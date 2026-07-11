@@ -30,7 +30,7 @@ SELECT
     generate_series(
         GREATEST(
             make_date(EXTRACT(YEAR FROM listing_date)::INT, EXTRACT(MONTH FROM listing_date)::INT, 1),
-            DATE '2004-02-01'
+            DATE '2010-02-01'
         ),
         CURRENT_DATE,
         INTERVAL '1 month'
