@@ -46,6 +46,12 @@ CACHE_ROOT = Path("/tmp/ohlcv_cache")
 SMART_SWITCH_DAY_THRESHOLD = 7  # ≤7 天走 per-day 全市場，>7 天走 per-stock-per-month
 MAX_RANGE_DAYS = 366  # endpoint 對外契約：一次最多 366 天
 
+# TWSE STOCK_DAY (per-stock-per-month) 官方 hard block：查詢日期小於此值 → server 回
+#   {"stat": "查詢日期小於99年1月4日，請重新查詢!", "total": 0}
+# MI_INDEX (per-day-market) 下限較寬（民國 93/2/11 = 2004-02-11），
+# 因此上市個股任何 from < 此日期都必須強走 per_day_market 才能取得完整資料。
+TWSE_STOCK_DAY_MIN_DATE = date(2010, 1, 4)
+
 
 # =============================================================================
 # 內部：磁碟 cache（per-day 全市場 payload）
@@ -441,6 +447,12 @@ async def get_ohlcv(
 
     range_days = (to_date - from_date).days + 1
     strategy = "per_day_market" if range_days <= SMART_SWITCH_DAY_THRESHOLD else "per_stock_month"
+
+    # Override：TWSE 個股在 STOCK_DAY hard-block 下限（2010-01-04）以前 →
+    # 強制走 per_day_market（MI_INDEX），下限延伸到 2004-02-11。
+    # TPEx endpoint 無官方下限，不需 override。
+    if market == "上市" and from_date < TWSE_STOCK_DAY_MIN_DATE:
+        strategy = "per_day_market"
 
     if strategy == "per_day_market":
         rows = await _collect_per_day_market(stk_code, market, from_date, to_date)
