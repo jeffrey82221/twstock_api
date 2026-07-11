@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from datetime import date, datetime, timedelta
+
 from fastapi import FastAPI, HTTPException, Query
 
 logger = logging.getLogger("twstock_api.main")
@@ -18,7 +20,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from . import icchain
+from . import icchain, ohlcv_source
 from .schemas import (
     BusinessItemsResponse,
     ChainResponse,
@@ -30,6 +32,7 @@ from .schemas import (
     DividendResponse,
     FinancialsResponse,
     HealthResponse,
+    OhlcvResponse,
     ProductRevenueFilersResponse,
     ProductRevenueResponse,
     RevenueResponse,
@@ -87,6 +90,7 @@ app = FastAPI(
     openapi_tags=[
         {"name": "Company (aggregated)", "description": "聚合 endpoint：一次拿齊六項資訊"},
         {"name": "Company (per-source)", "description": "按資料源拆分的 6 個獨立 endpoint"},
+        {"name": "Market Data", "description": "日 OHLCV 行情（TWSE + TPEx 融合，智能切換 per-day / per-stock-per-month 策略）"},
         {"name": "Search", "description": "公司搜尋"},
         {"name": "Value Chain", "description": "產業價值鏈（櫃買中心 ic.tpex.org.tw）"},
         {"name": "System", "description": "健康檢查"},
@@ -693,6 +697,67 @@ async def api_company_product_revenue(
     ),
 ):
     return await query_product_revenue(stock_id, as_of)
+
+
+# =====================================================================
+# Market Data
+# =====================================================================
+@app.get(
+    "/api/ohlcv",
+    response_model=OhlcvResponse,
+    tags=["Market Data"],
+    summary="日 K 歷史行情（上市 + 上櫃整合，智能切換上游）",
+    description=(
+        "取得指定股票、指定日期範圍的日 K OHLCV。上市 / 上櫃自動別從 `company_basic_info` 判別，"
+        "已把成交股數、成交金額單位對齊到「股 / 元」。\n\n"
+        "**智能切換** (門檻 `range_days ≤ 7`)：\n"
+        "* ≤ 7 天 → `per_day_market`：逐日呼叫全市場 endpoint（MI_INDEX / dailyQuotes），"
+        "backend 磁碟 cache `/tmp/ohlcv_cache/{market}/{YYYYMMDD}.json.gz`，同一日多股查詢共享下載。\n"
+        "* > 7 天 → `per_stock_month`：逐月呼叫單股單月 endpoint（STOCK_DAY / tradingStock），"
+        "一次 payload 涵蓋約 20 個交易日、成本約 1/20。\n\n"
+        "**上游 endpoint**：\n"
+        "* 上市 per-day：<https://www.twse.com.tw/exchangeReport/MI_INDEX>（Big5 / ms950 CSV）\n"
+        "* 上市 per-month：<https://www.twse.com.tw/exchangeReport/STOCK_DAY> `?response=json&date=YYYYMMDD&stockNo=XXXX`\n"
+        "* 上櫃 per-day：<https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes> `?date=YYYY/MM/DD&type=EW&response=json`\n"
+        "* 上櫃 per-month：<https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock> `?code=XXXX&date=YYYY/MM/DD&response=json`\n\n"
+        "**單位正規化**：TPEx 上游回「張 / 仟元」，backend 自動 ×1000 對齊到「股 / 元」。\n"
+        "**範圍限制**：1 天 ≤ `to_date - from_date` ≤ 366 天，超過回 400。"
+    ),
+)
+async def ohlcv(
+    stk_code: str = Query(
+        ...,
+        min_length=1,
+        max_length=10,
+        description="股票代號（例 `2330`）。必須能在 `company_basic_info` 中找到，否則 `found=false`。",
+    ),
+    from_date: str = Query(
+        ...,
+        alias="from",
+        description="起始日（含，`YYYY-MM-DD` 西元）。",
+    ),
+    to_date: str = Query(
+        ...,
+        alias="to",
+        description="結束日（含，`YYYY-MM-DD` 西元）。",
+    ),
+):
+    try:
+        d_from = datetime.strptime(from_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="`from` must be YYYY-MM-DD")
+    try:
+        d_to = datetime.strptime(to_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="`to` must be YYYY-MM-DD")
+    if d_to < d_from:
+        raise HTTPException(status_code=400, detail="`to` must be ≥ `from`")
+    if (d_to - d_from).days + 1 > ohlcv_source.MAX_RANGE_DAYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"date range too large (max {ohlcv_source.MAX_RANGE_DAYS} days)",
+        )
+    return await ohlcv_source.get_ohlcv(stk_code.strip(), d_from, d_to)
 
 
 # =====================================================================

@@ -648,3 +648,62 @@ class ProductRevenueResponse(BaseModel):
     )
     error: Optional[str] = Field(None, description="MOPS 連線或解析錯誤訊息。")
     source: Optional[str] = Field(None, description="本筆資料來源註記。")
+
+
+class OhlcvBar(BaseModel):
+    """單一交易日的日 K bar（單位統一：金額 = 新台幣元，成交量 = 股）。"""
+    model_config = ConfigDict(extra="allow")
+
+    trade_date: str = Field(..., description="交易日（`YYYY-MM-DD`，西元年）。")
+    stk_code: str = Field(..., description="股票代號。")
+    open: Optional[float] = Field(None, description="開盤價。無成交時為 null。")
+    high: Optional[float] = Field(None, description="盤中最高價。")
+    low: Optional[float] = Field(None, description="盤中最低價。")
+    close: Optional[float] = Field(None, description="收盤價。")
+    volume: Optional[float] = Field(
+        None,
+        description="成交股數（單位：股）。TPEx 上游為「張」已 ×1000 對齊 TWSE。",
+    )
+    trade_value: Optional[float] = Field(
+        None,
+        description="成交金額（單位：新台幣元）。TPEx 上游為「仟元」已 ×1000 對齊 TWSE。",
+    )
+    transaction_count: Optional[float] = Field(None, description="成交筆數。")
+    change: Optional[float] = Field(
+        None,
+        description="漲跌價差（相對前一交易日收盤，signed；上漲為正、下跌為負）。",
+    )
+
+
+class OhlcvResponse(BaseModel):
+    """`GET /api/ohlcv` 回應。
+
+    依 (股票, 日期範圍) 智能切換上游來源以最小化呼叫次數：
+
+    * `range_days ≤ 7` → `per_day_market`：逐日拉全市場 payload，
+      同一日多支股票查詢共享下載（backend cache 命中率高）。
+    * `range_days > 7`  → `per_stock_month`：逐月拉單股整月日 K，
+      一次 payload 涵蓋約 20 交易日、成本 ~1/20。
+
+    上游 endpoint：
+      * 上市 per-day：`https://www.twse.com.tw/exchangeReport/MI_INDEX`（Big5 CSV, ms950）
+      * 上市 per-month：`https://www.twse.com.tw/exchangeReport/STOCK_DAY`
+      * 上櫃 per-day：`https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes`
+      * 上櫃 per-month：`https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock`
+    """
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否有查到該股票的市場歸屬。false 表示 stk_code 不在基本資料表中。")
+    stk_code: str = Field(..., description="查詢股票代號。")
+    market: Optional[str] = Field(None, description="市場別：`上市` / `上櫃`；查無為 null。")
+    from_date: str = Field(..., description="查詢起始日（`YYYY-MM-DD`，含）。")
+    to_date: str = Field(..., description="查詢結束日（`YYYY-MM-DD`，含）。")
+    strategy: str = Field(
+        ...,
+        description="採用的取樣策略：`per_day_market`（≤7 天）或 `per_stock_month`（>7 天）；查無市場時為空字串。",
+    )
+    rows: list[OhlcvBar] = Field(
+        default_factory=list,
+        description="日 K bar 陣列，依 `trade_date` 遞增。範圍內若無交易日，回傳空 array。",
+    )
+    source: Optional[str] = Field(None, description="本筆資料來源註記。")

@@ -17,4 +17,4 @@ SELECT
         CURRENT_DATE,
         INTERVAL '1 month'
     )::DATE AS month_start_date
-FROM {{ schema }}.company_basic_info;
+FROM {{ schema }}.company_basic_info_list;
