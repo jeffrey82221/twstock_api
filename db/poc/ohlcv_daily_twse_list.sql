@@ -1,12 +1,14 @@
 -- ohlcv_daily_twse_list
 -- 上游：company_basic_info（過濾 market='上市'）
--- 用途：TWSE 上市每檔個股 × 每月一列的「日 K 事件母體」。搭配 TWSE STOCK_DAY endpoint
+-- 用途：TWSE 上市每檔個股 × 每月一列的「日 K 事件母體」。搭配 twstock_api `/api/ohlcv` endpoint
 --       (per-stock-per-month payload，一次拉整月日 K) 使用；下游 raw_ohlcv_daily_twse 對每
---       (stk_code, month_start_date) 打一次 HTTP，一次拿回該股該月 20 上下個交易日 OHLCV。
+--       (stk_code, month_start_date) 打一次 HTTP 到 /api/ohlcv?from=月初&to=月底，
+--       backend range_days > 7 走 per_stock_month 策略、一次拿回該股該月約 20 個交易日 OHLCV。
 --
--- 設計理念（rule 20 · 資料源分流）：TWSE `exchangeReport/STOCK_DAY` 與 TPEx
---   `tradingStock` 為不同資料源，故 seed 分成 twse_list / tpex_list 兩張，各自對應獨立
---   pop.<seed>，可設不同 batch_size 增量填滿。
+-- 設計理念（rule 20 · 資料源分流）：雖然 backend endpoint 統一（/api/ohlcv 對上市 / 上櫃同 URL），
+--   seed 仍分流：上市 → twse_list → raw_ohlcv_daily_twse，上櫃 → tpex_list → raw_ohlcv_daily_tpex，
+--   因為上櫃股數量 / 交易日分佈不同於上市，分成兩張 pop.<seed> 可設不同 batch_size 增量填滿、
+--   並保留 rule 20 資料源分流的層次性（backend 內部仍依 market 分发到不同 TWSE / TPEx 上游）。
 --
 -- 設計理念（rule 15 · 母體大小）：seed 從 listing_date 起 generate_series 到 CURRENT_DATE，
 --   月粒度。以 ~1300 檔上市 × 平均 15 年 × 12 月 ≈ 234k 列 seed 上限。個股上市前月份不會產生

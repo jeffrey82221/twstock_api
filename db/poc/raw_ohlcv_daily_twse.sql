@@ -1,32 +1,49 @@
 -- raw_ohlcv_daily_twse
 -- 上游：ohlcv_daily_twse_list（每 (stk_code, month_start_date) 一列）
--- 對應 endpoint：GET https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={YYYYMMDD}&stockNo={stk_code}
--- 上游資料源：TWSE 證交所 · 個股日成交資訊（per-stock-per-month）
+-- 對應 endpoint：GET http://host.docker.internal:5002/api/ohlcv?stk_code=XXXX&from=YYYY-MM-DD&to=YYYY-MM-DD
+--                 （twstock_api 統一 `/api/ohlcv` endpoint；backend 依股票 market 自動選 TWSE STOCK_DAY 上游）
+-- 上游資料源鏈路：raw → twstock_api /api/ohlcv → TWSE 證交所 exchangeReport/STOCK_DAY（per-stock-per-month）
 --
--- 設計理念（rule 9 · one payload per event）：一個 (stk_code, month_start_date) 事件對應一列
---   payload。TWSE STOCK_DAY 一次回傳指定股票、指定月份的整月日 K（~20 個交易日 rows）。
---   相對「per-stock-per-day」設計，把 API request 數壓縮到 1/20；也支援歷史回填任意月份。
+-- 設計理念（rule 9 · one payload per event）：一個 (stk_code, month_start_date) 事件對應一列 payload。
+--   打的 /api/ohlcv 範圍為「該月 1 號 → 該月月底」，backend 判定 range_days > 7 走 per_stock_month 策略、
+--   單次呼叫 TWSE STOCK_DAY 拿整月日 K（~20 個交易日）。相對「per-stock-per-day」節省 20× 上游流量。
 --
--- URL 設計：`date` 參數必須是「該月第一天」YYYYMMDD 字串；`stockNo` 為 4 碼股票代號。
---   TWSE 對 date 參數只看年月、忽略日；本 view 直接用 month_start_date 保證月初。
+-- 為何走 /api/ohlcv 而非直接打 TWSE：
+--   1. Backend 已把 TPEx 上游「張 / 仟元」單位對齊「股 / 元」，raw 層不再需要 * 1000 換算魔數
+--   2. Backend 已把民國年 'YYY/MM/DD' 轉西元 ISO 'YYYY-MM-DD'，normalized 層不再需要 make_date + SUBSTRING
+--   3. Backend 已把「漲跌方向 + 漲跌價差」合成 signed change，normalized 層不再需要 TRIM/LEADING '+'
+--   4. TWSE / TPEx 兩條 pipeline 共享同一 backend endpoint，未來若上游 URL 變動只需改 backend
+--   5. Backend 有磁碟 cache（per-day 全市場 payload）與智能切換，可跨 pipeline 重用下載
 --
--- 設計理念（rule 3）：URL 組合僅使用 IMMUTABLE building blocks（custom.date_to_iso、REPLACE、
---   字串串接），http 呼叫走既有 IMMUTABLE wrapper custom.http_get_content。
+-- URL 設計：/api/ohlcv 用 `from`/`to`（`YYYY-MM-DD` 西元）；本 view 用 month_start_date 為 from、
+--   當月月底日期為 to（+ interval '1 month' - 1 day）。
+--
+-- 設計理念（rule 3）：URL 組合僅使用 IMMUTABLE building blocks（custom.date_to_iso、字串串接、算術），
+--   http 呼叫走既有 IMMUTABLE wrapper custom.http_get_content。
 --
 -- payload 結構（供下游正規化參考）：
---   { stat: 'OK', title: '115年06月 2330 台積電...', fields: [...],
---     data: [['115/06/01', '60,942,792', '144,105,259,583', ...], ...],
---     total: N, notes: [...] }
---   stat != 'OK' 或個股該月未上市：data 為空陣列，正規化層 CROSS JOIN LATERAL 自然產出 0 列。
+--   { found: true, stk_code: '2330', market: '上市',
+--     from_date: '2024-01-01', to_date: '2024-01-31',
+--     strategy: 'per_stock_month',
+--     rows: [{ trade_date: '2024-01-02', stk_code: '2330',
+--              open: 590.0, high: 593.0, low: 589.0, close: 593.0,
+--              volume: 27997826.0, trade_value: 16549619798.0,
+--              transaction_count: 20667.0, change: 0.0 }, ...],
+--     source: 'TWSE STOCK_DAY (per-stock-per-month)' }
+--   found=false（stk_code 不在 basic table）或該月無交易日：rows=[]，正規化層 LATERAL 自然攤平 0 列。
 SELECT
     stk_code,
     month_start_date,
     custom.http_get_content(
         (
-            'https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date='
-            || REPLACE(custom.date_to_iso(month_start_date), '-', '')
-            || '&stockNo='
+            'http://host.docker.internal:5002/api/ohlcv?stk_code='
             || stk_code
+            || '&from='
+            || custom.date_to_iso(month_start_date)
+            || '&to='
+            || custom.date_to_iso(
+                (month_start_date + INTERVAL '1 month' - INTERVAL '1 day')::DATE
+            )
         )::TEXT
     ) AS ohlcv
 FROM {{ schema }}.ohlcv_daily_twse_list;

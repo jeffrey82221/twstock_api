@@ -53,6 +53,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 5000
 - `GET /api/company/{stock_id}/dividend/yfinance?as_of=YYYY-MM-DD` 股利（yfinance）
 - `GET /api/company/{stock_id}/value-chain` 公司在產業鏈的定位與鄰居
 - `GET /api/company/{stock_id}/product-revenue?as_of=YYYY-MM-DD` 主要產品比重（MOPS）
+- `GET /api/ohlcv?stk_code=XXXX&from=YYYY-MM-DD&to=YYYY-MM-DD` 日 K OHLCV 行情（上市 + 上櫃整合，智能切換）：≤ 7 天範圍逐日拉全市場 payload（MI_INDEX / dailyQuotes）+ 磁碟 cache；> 7 天逐月拉單股整月 payload（STOCK_DAY / tradingStock）。TPEx 上游「張 / 仟元」已對齊到「股 / 元」。
 - `GET /api/chains` 列出全部 47 條產業鏈（IC 代碼 + 名稱）
 - `GET /api/chain/{ic_code}` 取得單一產業鏈完整結構（上/中/下游/子鏈 → 公司清單）
 
