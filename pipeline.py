@@ -322,68 +322,170 @@ class Pipeline:
             self._insert_few_rows_to_seed_tables(row_cnt=1)
 
     @staticmethod
-    def _period_minutes_to_cron(period_minutes: int) -> str:
-        """Translate a minute-period into a 5-field cron expression.
+    def _period_seconds_to_schedule(period_seconds: int) -> str:
+        """Translate a second-period into a pg_cron schedule string.
 
-        Supported:
-          - 1..59 minutes   -> '*/N * * * *'
-          - >=60 minutes, evenly dividing 60*24 (hour-aligned periods
-            of 60, 120, 180, ..., 720, 1440) -> '0 */H * * *' or daily
-          - Exactly 1440    -> '0 0 * * *' (daily at midnight)
+        pg_cron >= 1.5 accepts three schedule forms; this helper picks
+        the most natural one for the given period:
+
+          * 1..59 seconds  -> ``'N seconds'`` interval syntax (native
+            sub-minute support introduced in pg_cron 1.5).
+          * 60..3599 seconds, when the period divides 3600 evenly and
+            maps cleanly to a minute count -> ``'*/M * * * *'``
+            5-field cron.
+          * >= 3600 seconds -> hour-aligned 5-field cron
+            (``'0 */H * * *'``) when it evenly divides a day, or the
+            daily midnight form for 86400s.
 
         Anything else raises ValueError instead of silently producing a
-        cron that drifts (e.g. period=90 has no clean 5-field form).
+        schedule that drifts (e.g. period=90s has no clean 5-field form).
         """
-        if not isinstance(period_minutes, int) or period_minutes <= 0:
+        if not isinstance(period_seconds, int) or period_seconds <= 0:
             raise ValueError(
-                f'period_minutes must be a positive int, got {period_minutes!r}'
+                f'period_seconds must be a positive int, got {period_seconds!r}'
             )
+        # Sub-minute: pg_cron 1.5 native 'N seconds' syntax.
+        if period_seconds < 60:
+            return f'{period_seconds} seconds'
+        # Convert to minutes for the >= 60s branch; must land on an
+        # exact minute boundary or the 5-field cron would drift.
+        if period_seconds % 60 != 0:
+            raise ValueError(
+                f'period_seconds={period_seconds} is >=60 but not a whole minute; '
+                'use 1..59 for sub-minute or a multiple of 60.'
+            )
+        period_minutes = period_seconds // 60
         if period_minutes < 60:
-            if 60 % period_minutes != 0 and period_minutes not in range(1, 60):
+            if 60 % period_minutes != 0:
                 raise ValueError(
-                    f'period_minutes={period_minutes} cannot be expressed cleanly; '
-                    'use a divisor of 60 (1,2,3,4,5,6,10,12,15,20,30) or any 1..59 '
-                    'value via */N semantics.'
+                    f'period_seconds={period_seconds} ({period_minutes}m) cannot be '
+                    'expressed cleanly; use a divisor of 60 minutes (1,2,3,4,5,6,'
+                    '10,12,15,20,30) or any 1..59 minute value.'
                 )
             return f'*/{period_minutes} * * * *'
         if period_minutes == 1440:
             return '0 0 * * *'
         if period_minutes % 60 != 0:
             raise ValueError(
-                f'period_minutes={period_minutes} must be <60 or a multiple of 60'
+                f'period_seconds={period_seconds} ({period_minutes}m) must be <60m '
+                'or a multiple of 60m.'
             )
         hours = period_minutes // 60
         if 24 % hours != 0:
             raise ValueError(
-                f'period_minutes={period_minutes} ({hours}h) does not evenly divide a day; '
-                'use 60, 120, 180, 240, 360, 480, 720, or 1440.'
+                f'period_seconds={period_seconds} ({hours}h) does not evenly divide '
+                'a day; use 60, 120, 180, 240, 360, 480, 720, or 1440 minutes.'
             )
         return f'0 */{hours} * * *'
+
+    @classmethod
+    def _period_minutes_to_cron(cls, period_minutes: int) -> str:
+        """Deprecated alias -- forwards to :meth:`_period_seconds_to_schedule`.
+
+        Kept so any external callers or older tests that still pass
+        ``period_minutes=`` continue to work during the transition.
+        Delete after downstream callers migrate.
+        """
+        return cls._period_seconds_to_schedule(period_minutes * 60)
     
-    def setup_schedules(self, period_minutes: int = 1, row_cnt: int = 1):
+    def setup_schedules(
+        self,
+        period_seconds: Optional[int] = None,
+        row_cnt: int = 1,
+        config_path: str = 'throughput_config.json',
+        profile: str = 'max_throughput',
+        period_minutes: Optional[int] = None,
+    ):
         """Set up pg_cron jobs for all seed tables.
 
-        Each job will insert `row_cnt` new rows from hidden.<table> into
-        pop.<table> every `period_minutes` minutes.
+        Each job inserts new rows from ``hidden.<table>`` into
+        ``pop.<table>`` every ``period_seconds`` seconds. If a
+        ``throughput_config.json`` produced by
+        :meth:`probe_all_throughput` exists, its per-table
+        ``(period_seconds, row_cnt)`` are used instead of the fixed
+        arguments -- the ``profile`` argument selects which optimisation
+        target to apply (``max_throughput`` / ``min_period`` /
+        ``max_batch``).
+
+        Fallback order for the (period, row_cnt) of each seed table:
+
+          1. ``throughput_config.json`` (produced by
+             :meth:`probe_all_throughput`) -- per-table
+             (period_seconds, row_cnt) under ``profile``.
+          2. ``batch_size.json`` (legacy, produced by
+             :meth:`probe_all`) -- per-table row_cnt only, combined
+             with the caller-supplied ``period_seconds``.
+          3. The caller-supplied defaults ``period_seconds`` and
+             ``row_cnt``.
+
+        The deprecated ``period_minutes`` kwarg is still accepted for
+        one release to keep older call sites working; it is converted
+        to ``period_seconds`` transparently.
         """
-        if os.path.exists("batch_size.json"):
-            with open("batch_size.json", "r") as file:
-                limit_cnts = json.load(file)
-        else:
-            limit_cnts = None
+        # --- Back-compat: period_minutes -> period_seconds ---
+        if period_minutes is not None and period_seconds is not None:
+            raise ValueError(
+                'Pass either period_seconds or period_minutes, not both.'
+            )
+        if period_minutes is not None:
+            period_seconds = period_minutes * 60
+        if period_seconds is None:
+            period_seconds = 60  # default: once per minute
+
+        # --- Load throughput config produced by probe_all_throughput ---
+        throughput_cfg: Dict[str, Dict[str, int]] = {}
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as file:
+                raw = json.load(file)
+            # Expected shape:
+            # {'<table>': {'max_throughput': {'period_seconds': N, 'row_cnt': M}, ...}}
+            throughput_cfg = raw
+
+        # --- Load legacy batch_size.json (row_cnt only) ---
+        legacy_batch: Optional[Dict[str, int]] = None
+        if os.path.exists('batch_size.json'):
+            with open('batch_size.json', 'r') as file:
+                legacy_batch = json.load(file)
+
         for table in self.seed_tables:
+            resolved_period = period_seconds
+            resolved_row_cnt = row_cnt
+
+            if table in throughput_cfg and profile in throughput_cfg[table]:
+                entry = throughput_cfg[table][profile]
+                resolved_period = entry['period_seconds']
+                resolved_row_cnt = entry['row_cnt']
+                print(
+                    f'[setup_schedules] {table}: using throughput_config '
+                    f'profile={profile!r} -> period={resolved_period}s, '
+                    f'row_cnt={resolved_row_cnt}'
+                )
+            elif legacy_batch is not None and table in legacy_batch:
+                resolved_row_cnt = legacy_batch[table]
+                print(
+                    f'[setup_schedules] {table}: using batch_size.json '
+                    f'-> period={resolved_period}s (caller default), '
+                    f'row_cnt={resolved_row_cnt}'
+                )
+            else:
+                print(
+                    f'[setup_schedules] {table}: no config; using caller defaults '
+                    f'period={resolved_period}s, row_cnt={resolved_row_cnt}'
+                )
+
             self.schedule_seed_table_refresh(
                 table=table,
-                period_minutes=period_minutes,
-                row_cnt=limit_cnts[table] if limit_cnts is not None else row_cnt,
+                period_seconds=resolved_period,
+                row_cnt=resolved_row_cnt,
             )
 
     def schedule_seed_table_refresh(
         self,
         table: str,
-        period_minutes: int,
+        period_seconds: Optional[int] = None,
         row_cnt: int = 1,
         job_name: Optional[str] = None,
+        period_minutes: Optional[int] = None,
     ) -> str:
         """Schedule (or update) a pg_cron job that periodically inserts new
         rows from hidden.<table> into pop.<table>.
@@ -396,9 +498,11 @@ class Pipeline:
         ----------
         table:
             Seed table name (must be present in self.seed_tables).
-        period_minutes:
-            Refresh cadence in minutes. See _period_minutes_to_cron for
-            allowed values.
+        period_seconds:
+            Refresh cadence in seconds. See
+            :meth:`_period_seconds_to_schedule` for allowed values.
+            Sub-minute periods (1..59s) use pg_cron 1.5's native
+            'N seconds' interval syntax.
         row_cnt:
             How many new rows to insert per tick. Maps to SQL LIMIT.
         job_name:
@@ -406,12 +510,26 @@ class Pipeline:
             'seed_refresh_<table>' so subsequent calls with the same
             table act as an update (alter_job) instead of creating a
             duplicate schedule.
+        period_minutes:
+            Deprecated alias -- if provided, is converted to
+            period_seconds. Passing both raises ValueError.
 
         Returns the resolved job_name.
 
         Requires pg_cron to be installed and bound to the current DB
         via cron.database_name (see db/enable_pg_cron.sh).
         """
+        if period_minutes is not None and period_seconds is not None:
+            raise ValueError(
+                'Pass either period_seconds or period_minutes, not both.'
+            )
+        if period_minutes is not None:
+            period_seconds = period_minutes * 60
+        if period_seconds is None:
+            raise ValueError(
+                'period_seconds is required (or use deprecated period_minutes).'
+            )
+
         if table not in self.seed_tables:
             raise ValueError(
                 f'{table!r} is not a known seed table. '
@@ -420,7 +538,7 @@ class Pipeline:
         if not isinstance(row_cnt, int) or row_cnt <= 0:
             raise ValueError(f'row_cnt must be a positive int, got {row_cnt!r}')
 
-        schedule = self._period_minutes_to_cron(period_minutes)
+        schedule = self._period_seconds_to_schedule(period_seconds)
         if job_name is None:
             job_name = f'seed_refresh_{table}'
 
@@ -734,3 +852,275 @@ class Pipeline:
             i += 1
             with open("batch_size.json", "w") as file:
                 json.dump(results, file, indent=4)
+    # ------------------------------------------------------------------
+    # Throughput probing: sweep (period_seconds x row_cnt) grid to find
+    # optimal (row_cnt, period_seconds) combinations per seed table.
+    # ------------------------------------------------------------------
+
+    # pg_cron 1.5 accepts 'N seconds' schedules for 1..59; anything >=60
+    # must be a whole-minute divisor of 60m (or an hour multiple that
+    # divides 24h). This grid is the union of "sub-minute native" and
+    # "clean minute buckets"; see _period_seconds_to_schedule for the
+    # exact validation logic.
+    THROUGHPUT_PERIOD_GRID_SECONDS: List[int] = [
+        1, 2, 3, 5, 10, 15, 20, 30, 60, 120, 300, 600, 1800,
+    ]
+
+    def probe_seed_insert_throughput(
+        self,
+        table: str,
+        period_grid: Optional[List[int]] = None,
+        trials: int = 3,
+        sleep_between_sec: int = 1,
+        max_row_cnt: Optional[int] = None,
+    ) -> Dict[str, Dict[str, int]]:
+        """Sweep the (period_seconds x row_cnt) grid to find the maximum
+        stable insert rate for ``pop.<table>``.
+
+        For each candidate ``period_seconds`` in ``period_grid`` this
+        method uses :meth:`_run_seed_insert_trial` to binary-search the
+        largest ``row_cnt`` whose ``trials`` consecutive inserts each
+        finish under a ``statement_timeout`` equal to ``period_seconds``
+        minus a 1-second safety margin (or the full period when it is
+        <=1s). That timeout is the natural throttle -- any run slower
+        than the requested cadence is treated as a failure, so the probe
+        never blocks longer than the cadence itself.
+
+        The full sweep records ``(period_seconds, row_cnt)`` and the
+        derived ``rows_per_second`` for every period where at least
+        row_cnt=1 is stable. From that record three profiles are
+        derived so ``setup_schedules`` can choose a policy without
+        rerunning the probe:
+
+          * ``max_throughput`` -- highest rows_per_second overall.
+          * ``min_period``     -- smallest period_seconds that is
+            stable at row_cnt>=1.
+          * ``max_batch``      -- largest row_cnt (regardless of
+            period), useful for off-peak bulk loads.
+
+        Returns a dict of the shape::
+
+            {
+              'max_throughput': {'period_seconds': N, 'row_cnt': M,
+                                 'rows_per_second': float},
+              'min_period':     {'period_seconds': N, 'row_cnt': M,
+                                 'rows_per_second': float},
+              'max_batch':      {'period_seconds': N, 'row_cnt': M,
+                                 'rows_per_second': float},
+              'sweep': [{'period_seconds': N, 'row_cnt': M,
+                         'rows_per_second': float}, ...],
+            }
+
+        Every period whose SQL schedule string is rejected by
+        :meth:`_period_seconds_to_schedule` is skipped (so callers can
+        pass any grid without pre-filtering).
+
+        Notes
+        -----
+        * ``max_row_cnt`` caps the binary search on very cheap seeds
+          (e.g. small dimension lists) so the probe does not chase
+          runaway 2^N growth on a period where LIMIT 1e6 might still
+          "pass" in the timeout budget.
+        * The seed table is repeatedly appended to during the sweep;
+          call :meth:`_insert_few_rows_to_seed_tables` afterward if
+          you need a clean state before scheduling cron jobs.
+        """
+        if table not in self.seed_tables:
+            raise ValueError(
+                f'{table!r} is not a seed table. Known: {self.seed_tables}'
+            )
+        if period_grid is None:
+            period_grid = list(self.THROUGHPUT_PERIOD_GRID_SECONDS)
+
+        sweep: List[Dict[str, float]] = []
+
+        for period_seconds in period_grid:
+            # Skip periods that pg_cron cannot schedule cleanly.
+            try:
+                schedule_str = self._period_seconds_to_schedule(period_seconds)
+            except ValueError as e:
+                print(
+                    f'[throughput] {table} period={period_seconds}s: SKIP '
+                    f'({e})'
+                )
+                continue
+
+            # Timeout budget: at sub-minute periods we lop 1 second off
+            # so pg_cron never sees a run overlap; at 1s we cannot
+            # subtract anything, so we accept a "borderline" bound and
+            # rely on trials>1 to catch consistent overruns.
+            timeout_sec = period_seconds - 1 if period_seconds > 1 else 1
+
+            print(
+                f'\n[throughput] === {table} period={period_seconds}s '
+                f'(schedule={schedule_str!r}, timeout={timeout_sec}s) ==='
+            )
+
+            # Binary-probe row_cnt at this period.
+            # Reuses _run_seed_insert_trial's contract: ``trials``
+            # consecutive successful runs within the timeout.
+            best_row_cnt = 0
+            # Exponential upper bound.
+            candidate = 1
+            upper_fail: Optional[int] = None
+            while True:
+                if max_row_cnt is not None and candidate > max_row_cnt:
+                    candidate = max_row_cnt
+                ok = self._run_seed_insert_trial(
+                    table,
+                    limit_count=candidate,
+                    per_insert_timeout_sec=timeout_sec,
+                    sleep_between_sec=sleep_between_sec,
+                    trials=trials,
+                )
+                if ok:
+                    best_row_cnt = candidate
+                    print(
+                        f'[throughput]   {table} p={period_seconds}s '
+                        f'row_cnt={candidate} PASS'
+                    )
+                    if max_row_cnt is not None and candidate >= max_row_cnt:
+                        break
+                    candidate *= 2
+                else:
+                    upper_fail = candidate
+                    print(
+                        f'[throughput]   {table} p={period_seconds}s '
+                        f'row_cnt={candidate} FAIL'
+                    )
+                    break
+
+            # If even row_cnt=1 failed, this period is not usable.
+            if best_row_cnt == 0:
+                print(
+                    f'[throughput] {table} p={period_seconds}s not viable '
+                    '(row_cnt=1 fails within timeout budget); skipping'
+                )
+                continue
+
+            # Binary refine between best_row_cnt and upper_fail.
+            if upper_fail is not None:
+                low, high = best_row_cnt, upper_fail
+                while high - low > 1:
+                    mid = (low + high) // 2
+                    ok = self._run_seed_insert_trial(
+                        table,
+                        limit_count=mid,
+                        per_insert_timeout_sec=timeout_sec,
+                        sleep_between_sec=sleep_between_sec,
+                        trials=trials,
+                    )
+                    if ok:
+                        low = mid
+                        print(
+                            f'[throughput]   {table} p={period_seconds}s '
+                            f'bsearch row_cnt={mid} PASS'
+                        )
+                    else:
+                        high = mid
+                        print(
+                            f'[throughput]   {table} p={period_seconds}s '
+                            f'bsearch row_cnt={mid} FAIL'
+                        )
+                best_row_cnt = low
+
+            rows_per_second = best_row_cnt / float(period_seconds)
+            sweep.append({
+                'period_seconds': period_seconds,
+                'row_cnt': best_row_cnt,
+                'rows_per_second': rows_per_second,
+            })
+            print(
+                f'[throughput] {table} p={period_seconds}s -> row_cnt='
+                f'{best_row_cnt}, rows_per_second={rows_per_second:.2f}'
+            )
+
+        if not sweep:
+            print(
+                f'[throughput] {table}: NO viable (period, row_cnt) '
+                'combination found across the grid'
+            )
+            return {'sweep': []}
+
+        # Derive the three profiles from the sweep record.
+        max_throughput = max(sweep, key=lambda r: r['rows_per_second'])
+        # min_period: smallest period_seconds that is viable at all.
+        min_period = min(sweep, key=lambda r: r['period_seconds'])
+        max_batch = max(sweep, key=lambda r: r['row_cnt'])
+
+        result = {
+            'max_throughput': max_throughput,
+            'min_period': min_period,
+            'max_batch': max_batch,
+            'sweep': sweep,
+        }
+        print(
+            f'\n[throughput] === {table} summary ===\n'
+            f'  max_throughput: {max_throughput}\n'
+            f'  min_period:     {min_period}\n'
+            f'  max_batch:      {max_batch}'
+        )
+        return result
+
+    def probe_all_throughput(
+        self,
+        period_grid: Optional[List[int]] = None,
+        trials: int = 3,
+        sleep_between_sec: int = 1,
+        max_row_cnt: Optional[int] = None,
+        config_path: str = 'throughput_config.json',
+    ) -> Dict[str, Dict[str, Dict[str, int]]]:
+        """Probe every seed table and persist per-table
+        (period_seconds, row_cnt) profiles to ``config_path``.
+
+        The output file has the shape consumed by
+        :meth:`setup_schedules` when ``profile='max_throughput'`` (or
+        another of the three profiles) is requested:
+
+            {
+              '<seed_table>': {
+                'max_throughput': {'period_seconds': N, 'row_cnt': M,
+                                   'rows_per_second': float},
+                'min_period':     {...},
+                'max_batch':      {...},
+                'sweep':          [ ... ],
+              },
+              ...
+            }
+
+        Existing entries in the config file are preserved so this
+        method is safe to resume (progress is written to disk after
+        every table completes).
+        """
+        results: Dict[str, Dict[str, Dict[str, int]]] = {}
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as file:
+                results = json.load(file)
+
+        for table in self.seed_tables:
+            if table in results and 'max_throughput' in results[table]:
+                print(f'[probe_all_throughput] skipping {table} (already probed)')
+                continue
+            try:
+                results[table] = self.probe_seed_insert_throughput(
+                    table=table,
+                    period_grid=period_grid,
+                    trials=trials,
+                    sleep_between_sec=sleep_between_sec,
+                    max_row_cnt=max_row_cnt,
+                )
+            except OperationalError as e:
+                print(
+                    f'[probe_all_throughput] {table} OperationalError: {e}; '
+                    'sleeping 60s and skipping'
+                )
+                time.sleep(60)
+                continue
+            # Persist after every completed table so long sweeps are
+            # resumable without recomputing finished seeds.
+            with open(config_path, 'w') as file:
+                json.dump(results, file, indent=4)
+            print(f'[probe_all_throughput] persisted {config_path} '
+                  f'after finishing {table}')
+
+        return results
