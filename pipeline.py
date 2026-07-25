@@ -2,7 +2,7 @@
 import os
 from jinja2 import Template
 from sql_metadata import Parser
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set, Callable
 from paradag import DAG, dag_run, SequentialProcessor
 from pg_tool import PostgreSQLTool
 from psycopg import OperationalError
@@ -595,6 +595,7 @@ class Pipeline:
         per_insert_timeout_sec: int = 50,
         sleep_between_sec: int = 5,
         trials: int = 3,
+        backfill_upstream: bool = False,
     ) -> bool:
         """Run one capacity trial at a given ``limit_count``.
 
@@ -615,6 +616,23 @@ class Pipeline:
 
         Returns True only if every one of the ``trials`` runs completes
         under the timeout AND actually inserts ``limit_count`` new rows.
+
+        Parameters
+        ----------
+        backfill_upstream:
+            When True and a run inserts fewer rows than requested
+            (``increase < expected``, i.e. the anti-join found
+            fewer new upstream rows than ``limit_count``), recursively
+            insert into every upstream seed table returned by
+            :meth:`get_upstream_seed_tables` to make more upstream
+            rows available, then retry the current run once. If the
+            retry still under-fills, the trial fails.
+
+            This exists so throughput probing does not misclassify a
+            period as "unviable" when the real bottleneck is an
+            empty/near-empty upstream seed. Off by default because
+            capacity probing (:meth:`probe_seed_insert_limit`) treats
+            under-fill as a hard failure signal.
         """
         print(
             f'[probe {limit_count}] trial limit={limit_count} table={table} '
@@ -657,15 +675,135 @@ class Pipeline:
             increase = actual - start_cnt
             if increase < expected:
                 print(
-                    f'[probe {limit_count}]   run {i}/{trials} FAILED: expected {expected} '
-                    f'new rows, but only {increase} were inserted (total rows={actual})'
+                    f'[probe {limit_count}]   run {i}/{trials} UNDER-FILLED: '
+                    f'expected {expected} new rows, but only {increase} were '
+                    f'inserted (total rows={actual})'
                 )
+                if backfill_upstream:
+                    # Missing rows here mean the upstream anti-join
+                    # ran out of new rows to hand us. Push more rows
+                    # into every upstream seed and retry this run
+                    # once. Only one backfill attempt per run to
+                    # avoid unbounded recursion when upstream is
+                    # itself empty.
+                    filled = self._backfill_upstream_seeds(
+                        table,
+                        rows_needed=expected - increase,
+                        per_insert_timeout_sec=per_insert_timeout_sec,
+                    )
+                    if not filled:
+                        print(
+                            f'[probe {limit_count}]   run {i}/{trials} FAILED: '
+                            'upstream backfill produced no new rows either'
+                        )
+                        return False
+                    # Retry this same run once (statement_timeout still
+                    # applies -- upstream backfill does not extend the
+                    # budget for this trial run).
+                    t0 = time.monotonic()
+                    try:
+                        self._db_tool.execute_query(wrapped)
+                    except BaseException as e:
+                        elapsed = time.monotonic() - t0
+                        print(
+                            f'[probe {limit_count}]   run {i}/{trials} retry '
+                            f'FAILED after {elapsed:.1f}s: {e}'
+                        )
+                        return False
+                    elapsed = time.monotonic() - t0
+                    actual = self._db_tool.fetch_all(
+                        f'SELECT count(*) FROM pop.{table};'
+                    )[0][0]
+                    increase = actual - start_cnt
+                    if increase < expected:
+                        print(
+                            f'[probe {limit_count}]   run {i}/{trials} STILL '
+                            f'under-filled after backfill: expected '
+                            f'{expected}, got {increase} (total rows={actual})'
+                        )
+                        return False
+                    print(
+                        f'[probe {limit_count}]   run {i}/{trials} ok after '
+                        f'upstream backfill in {elapsed:.1f}s '
+                        f'(total rows={actual})'
+                    )
+                    continue
                 return False
             print(
                 f'[probe {limit_count}]   run {i}/{trials} ok in {elapsed:.1f}s '
                 f'(total rows={actual})'
             )
         return True
+
+    def _backfill_upstream_seeds(
+        self,
+        table: str,
+        rows_needed: int,
+        per_insert_timeout_sec: int = 50,
+    ) -> bool:
+        """Push rows into every upstream seed of ``table`` so that a
+        subsequent insert into ``pop.<table>`` has enough source rows.
+
+        Walks :meth:`get_upstream_seed_tables` (which recurses through
+        the DAG and returns every ancestor seed) and inserts up to
+        ``rows_needed`` rows into each, honouring
+        ``per_insert_timeout_sec`` per insert.
+
+        Returns True if at least one upstream table actually grew,
+        False if everything under-filled (i.e. upstream is genuinely
+        exhausted). Failures on individual upstreams are logged but do
+        not abort -- one upstream may be exhausted while another still
+        has rows.
+        """
+        upstream_tables = list(self.get_upstream_seed_tables(table))
+        if not upstream_tables:
+            print(
+                f'[backfill] {table} has no upstream seed tables; '
+                'nothing to backfill'
+            )
+            return False
+
+        # Deduplicate while preserving order (upstream lists can have
+        # duplicates when multiple downstream views share a source).
+        seen: Set[str] = set()
+        ordered_upstreams: List[str] = []
+        for u in upstream_tables:
+            if u not in seen:
+                seen.add(u)
+                ordered_upstreams.append(u)
+
+        any_grew = False
+        row_cnt = max(1, rows_needed)
+        for upstream in ordered_upstreams:
+            before = self._db_tool.fetch_all(
+                f'SELECT count(*) FROM pop.{upstream};'
+            )[0][0]
+            insert_sql = self._build_seed_insert_sql(upstream, row_cnt=row_cnt)
+            wrapped = (
+                f"SET statement_timeout = '{per_insert_timeout_sec}s'; "
+                f'{insert_sql} '
+                f'RESET statement_timeout;'
+            )
+            try:
+                self._db_tool.execute_query(wrapped)
+            except BaseException as e:
+                print(
+                    f'[backfill]   {upstream} insert FAILED: {e}; '
+                    'continuing with remaining upstreams'
+                )
+                continue
+            after = self._db_tool.fetch_all(
+                f'SELECT count(*) FROM pop.{upstream};'
+            )[0][0]
+            grew = after - before
+            if grew > 0:
+                any_grew = True
+            print(
+                f'[backfill]   {upstream}: +{grew} rows '
+                f'(now {after}, requested {row_cnt})'
+            )
+
+        return any_grew
 
     def probe_seed_insert_limit(
         self,
@@ -862,8 +1000,17 @@ class Pipeline:
     # divides 24h). This grid is the union of "sub-minute native" and
     # "clean minute buckets"; see _period_seconds_to_schedule for the
     # exact validation logic.
+    # Grid ordering: descending -- start from the *loosest* cadence
+    # (30 min) and tighten toward 1 s. Higher-frequency periods have
+    # tighter statement_timeout budgets and fail first, so scanning
+    # from-easy-to-hard means we always capture at least a few viable
+    # (period, row_cnt) points before we hit the failure edge. This
+    # matters when the sweep is interrupted (upstream exhaustion,
+    # OperationalError, ctrl-C): partial sweeps saved to
+    # ``throughput_config.json`` will still cover the lower-frequency
+    # end and setup_schedules(profile='max_batch') will still work.
     THROUGHPUT_PERIOD_GRID_SECONDS: List[int] = [
-        1, 2, 3, 5, 10, 15, 20, 30, 60, 120, 300, 600, 1800,
+        1800, 600, 300, 120, 60, 30, 20, 15, 10, 5, 3, 2, 1,
     ]
 
     def probe_seed_insert_throughput(
@@ -873,6 +1020,7 @@ class Pipeline:
         trials: int = 3,
         sleep_between_sec: int = 1,
         max_row_cnt: Optional[int] = None,
+        on_period_complete: Optional[Callable[[Dict[str, float]], None]] = None,
     ) -> Dict[str, Dict[str, int]]:
         """Sweep the (period_seconds x row_cnt) grid to find the maximum
         stable insert rate for ``pop.<table>``.
@@ -924,6 +1072,21 @@ class Pipeline:
         * The seed table is repeatedly appended to during the sweep;
           call :meth:`_insert_few_rows_to_seed_tables` afterward if
           you need a clean state before scheduling cron jobs.
+        * The default grid is descending -- 1800s down to 1s -- so
+          the easy end of the schedule space runs first. If the sweep
+          crashes partway through, everything we have already learned
+          about the low-frequency end is preserved (see the
+          ``on_period_complete`` hook and
+          :meth:`probe_all_throughput`'s partial-save logic).
+        * ``on_period_complete(sweep_entry)`` fires exactly once per
+          period that produced a viable ``(period_seconds, row_cnt)``
+          entry, immediately after that entry is appended to the
+          in-memory sweep. Use it to persist partial progress.
+        * Upstream backfill: :meth:`_run_seed_insert_trial` is called
+          with ``backfill_upstream=True`` here, so a run that finds
+          fewer new upstream rows than requested will attempt to fill
+          the upstream seeds and retry once instead of misclassifying
+          the period as "unviable".
         """
         if table not in self.seed_tables:
             raise ValueError(
@@ -972,6 +1135,7 @@ class Pipeline:
                     per_insert_timeout_sec=timeout_sec,
                     sleep_between_sec=sleep_between_sec,
                     trials=trials,
+                    backfill_upstream=True,
                 )
                 if ok:
                     best_row_cnt = candidate
@@ -1009,6 +1173,7 @@ class Pipeline:
                         per_insert_timeout_sec=timeout_sec,
                         sleep_between_sec=sleep_between_sec,
                         trials=trials,
+                        backfill_upstream=True,
                     )
                     if ok:
                         low = mid
@@ -1025,15 +1190,29 @@ class Pipeline:
                 best_row_cnt = low
 
             rows_per_second = best_row_cnt / float(period_seconds)
-            sweep.append({
+            entry = {
                 'period_seconds': period_seconds,
                 'row_cnt': best_row_cnt,
                 'rows_per_second': rows_per_second,
-            })
+            }
+            sweep.append(entry)
             print(
                 f'[throughput] {table} p={period_seconds}s -> row_cnt='
                 f'{best_row_cnt}, rows_per_second={rows_per_second:.2f}'
             )
+            # Fire the per-period hook so callers (e.g.
+            # probe_all_throughput) can persist partial progress
+            # before we tighten the cadence for the next iteration.
+            if on_period_complete is not None:
+                try:
+                    on_period_complete(entry)
+                except Exception as e:
+                    # A callback that raises must not lose the sweep
+                    # entry we just recorded -- log and continue.
+                    print(
+                        f'[throughput]   on_period_complete callback '
+                        f'raised {type(e).__name__}: {e}'
+                    )
 
         if not sweep:
             print(
@@ -1042,23 +1221,12 @@ class Pipeline:
             )
             return {'sweep': []}
 
-        # Derive the three profiles from the sweep record.
-        max_throughput = max(sweep, key=lambda r: r['rows_per_second'])
-        # min_period: smallest period_seconds that is viable at all.
-        min_period = min(sweep, key=lambda r: r['period_seconds'])
-        max_batch = max(sweep, key=lambda r: r['row_cnt'])
-
-        result = {
-            'max_throughput': max_throughput,
-            'min_period': min_period,
-            'max_batch': max_batch,
-            'sweep': sweep,
-        }
+        result = self._derive_throughput_profiles(sweep)
         print(
             f'\n[throughput] === {table} summary ===\n'
-            f'  max_throughput: {max_throughput}\n'
-            f'  min_period:     {min_period}\n'
-            f'  max_batch:      {max_batch}'
+            f'  max_throughput: {result["max_throughput"]}\n'
+            f'  min_period:     {result["min_period"]}\n'
+            f'  max_batch:      {result["max_batch"]}'
         )
         return result
 
@@ -1088,39 +1256,175 @@ class Pipeline:
               ...
             }
 
-        Existing entries in the config file are preserved so this
-        method is safe to resume (progress is written to disk after
-        every table completes).
+        Resumability
+        ------------
+        * Existing entries in the config file are preserved.
+        * Partial per-table progress is persisted **after every
+          successful period** via the ``on_period_complete`` hook, so
+          if the probe crashes mid-table (OperationalError, ctrl-C,
+          an infra-side kill), the periods that already completed for
+          that table are still on disk and are not re-run.
+        * Grid resume: when a table has partial ``sweep`` entries
+          from a previous run, only the periods **not** already in
+          that sweep are attempted. This is why the default grid is
+          descending -- an earlier run typically covers the easy
+          (long) end, and the resume only has to try the harder
+          (short) end.
+        * A table is considered "fully probed" once its stored sweep
+          covers every period in the current ``period_grid`` that is
+          not rejected by :meth:`_period_seconds_to_schedule`. Those
+          tables are skipped entirely.
         """
         results: Dict[str, Dict[str, Dict[str, int]]] = {}
         if os.path.exists(config_path):
             with open(config_path, 'r') as file:
                 results = json.load(file)
 
-        for table in self.seed_tables:
-            if table in results and 'max_throughput' in results[table]:
-                print(f'[probe_all_throughput] skipping {table} (already probed)')
-                continue
+        effective_grid: List[int] = (
+            list(period_grid)
+            if period_grid is not None
+            else list(self.THROUGHPUT_PERIOD_GRID_SECONDS)
+        )
+        # Grid entries pg_cron cannot express cleanly are dropped once
+        # so "fully probed" comparisons match what the single-table
+        # probe would actually try.
+        schedulable_grid: List[int] = []
+        for p in effective_grid:
             try:
-                results[table] = self.probe_seed_insert_throughput(
+                self._period_seconds_to_schedule(p)
+                schedulable_grid.append(p)
+            except ValueError:
+                continue
+        schedulable_set = set(schedulable_grid)
+
+        def _persist() -> None:
+            with open(config_path, 'w') as file:
+                json.dump(results, file, indent=4)
+
+        for table in self.seed_tables:
+            existing = results.get(table)
+            existing_sweep: List[Dict[str, float]] = (
+                list(existing.get('sweep', []))
+                if isinstance(existing, dict)
+                else []
+            )
+            covered_periods = {
+                int(entry['period_seconds']) for entry in existing_sweep
+                if 'period_seconds' in entry
+            }
+
+            # Fully probed under the current grid -- nothing more to do.
+            if covered_periods >= schedulable_set:
+                print(
+                    f'[probe_all_throughput] skipping {table} '
+                    f'(already covers all {len(schedulable_set)} grid '
+                    'periods)'
+                )
+                continue
+
+            # Otherwise: probe only the periods this table has not yet
+            # covered. Grid stays in descending order so easy runs
+            # first (see class-level grid comment).
+            remaining_grid = [
+                p for p in effective_grid if p not in covered_periods
+            ]
+            if not remaining_grid:
+                # Every remaining grid point was rejected by
+                # _period_seconds_to_schedule -- nothing feasible left.
+                continue
+
+            print(
+                f'[probe_all_throughput] starting {table}: '
+                f'{len(remaining_grid)} of {len(effective_grid)} '
+                f'periods to probe (already covered: '
+                f'{sorted(covered_periods, reverse=True)})'
+            )
+
+            # Live sweep buffer -- callback appends to this and
+            # persists after every period so a crash keeps progress.
+            live_sweep: List[Dict[str, float]] = list(existing_sweep)
+
+            def _flush_partial(entry: Dict[str, float]) -> None:
+                live_sweep.append(entry)
+                results[table] = self._derive_throughput_profiles(
+                    live_sweep
+                )
+                _persist()
+                print(
+                    f'[probe_all_throughput]   persisted partial '
+                    f'progress for {table} after '
+                    f'period_seconds={entry["period_seconds"]}'
+                )
+
+            try:
+                final = self.probe_seed_insert_throughput(
                     table=table,
-                    period_grid=period_grid,
+                    period_grid=remaining_grid,
                     trials=trials,
                     sleep_between_sec=sleep_between_sec,
                     max_row_cnt=max_row_cnt,
+                    on_period_complete=_flush_partial,
                 )
             except OperationalError as e:
                 print(
-                    f'[probe_all_throughput] {table} OperationalError: {e}; '
-                    'sleeping 60s and skipping'
+                    f'[probe_all_throughput] {table} OperationalError: '
+                    f'{e}; partial results preserved from callback. '
+                    'Sleeping 60s and moving on.'
                 )
                 time.sleep(60)
                 continue
-            # Persist after every completed table so long sweeps are
-            # resumable without recomputing finished seeds.
-            with open(config_path, 'w') as file:
-                json.dump(results, file, indent=4)
-            print(f'[probe_all_throughput] persisted {config_path} '
-                  f'after finishing {table}')
+            except BaseException as e:
+                # Any other exception (KeyboardInterrupt included) --
+                # partial progress is already on disk via the
+                # callback, so re-raise so the operator sees it but
+                # do not lose what we have.
+                print(
+                    f'[probe_all_throughput] {table} interrupted by '
+                    f'{type(e).__name__}: {e}; partial results preserved '
+                    'on disk'
+                )
+                raise
+
+            # Successful full sweep for this table -- merge whatever
+            # the callback recorded with the final derived profiles
+            # and persist one more time.
+            if final and final.get('sweep'):
+                results[table] = final
+            elif live_sweep:
+                # Sweep produced nothing new this run but we still
+                # have earlier callback state -- keep it.
+                results[table] = self._derive_throughput_profiles(
+                    live_sweep
+                )
+            _persist()
+            print(
+                f'[probe_all_throughput] persisted {config_path} '
+                f'after finishing {table}'
+            )
 
         return results
+
+    @staticmethod
+    def _derive_throughput_profiles(
+        sweep: List[Dict[str, float]],
+    ) -> Dict[str, object]:
+        """Turn a raw ``sweep`` list into the three-profile dict
+        (``max_throughput`` / ``min_period`` / ``max_batch``) plus the
+        original sweep. Kept as a static helper so partial-save
+        callbacks in :meth:`probe_all_throughput` can shape in-progress
+        results the same way the full sweep does.
+
+        Returns ``{'sweep': []}`` when ``sweep`` is empty so callers
+        can still write the shape to disk without special-casing.
+        """
+        if not sweep:
+            return {'sweep': []}
+        max_throughput = max(sweep, key=lambda r: r['rows_per_second'])
+        min_period = min(sweep, key=lambda r: r['period_seconds'])
+        max_batch = max(sweep, key=lambda r: r['row_cnt'])
+        return {
+            'max_throughput': max_throughput,
+            'min_period': min_period,
+            'max_batch': max_batch,
+            'sweep': list(sweep),
+        }
