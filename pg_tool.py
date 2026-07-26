@@ -6,11 +6,17 @@ class PostgreSQLTool:
     def __init__(self):
         """Initialize the tool with a Data Source Name (DSN) connection string."""
         self._dsn = "postgresql://postgres:postgres@localhost:5432/app_db"
+        self._conn = None
 
     def get_conn(self):
         """Property to create or retrieve an active database connection."""
         # Check if connection doesn't exist, is closed, or has broken status
-        return psycopg.connect(self._dsn)
+        try:
+            self._conn = psycopg.connect(self._dsn)
+            return self._conn
+        except BaseException as e:
+            print(f"Failed to connect to the database: {e}")
+            raise e
 
     def execute_query(self, query: str, params: tuple = None):
         """Execute a query (INSERT, UPDATE, DELETE) and commit changes."""
@@ -23,7 +29,9 @@ class PostgreSQLTool:
             print(f"Database operation failed: {e}")
             raise e
         finally:
-            conn.close()
+            if self._conn:
+                self._conn.close()
+                self._conn = None
 
     def fetch_all(self, query: str, params: tuple = None) -> list:
         """Execute a query and fetch all resulting records."""
@@ -36,8 +44,10 @@ class PostgreSQLTool:
             print(f"Database fetch operation failed: {e}")
             raise e
         finally:
-            conn.close()
-
+            if self._conn:
+                self._conn.close()
+                self._conn = None
+            
     def setup(self):
         """Set up the database with necessary extensions and schemas."""
         try:
@@ -51,4 +61,6 @@ class PostgreSQLTool:
             print(f"Database setup failed: {e}")
             raise e
         finally:
-            conn.close()
+            if self._conn:
+                self._conn.close()
+                self._conn = None
