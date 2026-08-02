@@ -34,6 +34,7 @@ from .schemas import (
     HealthResponse,
     InstitutionalNetBuySellResponse,
     MarketValuationSummaryResponse,
+    CompanyValuationResponse,
     OhlcvResponse,
     ProductRevenueFilersResponse,
     ProductRevenueResponse,
@@ -865,6 +866,68 @@ async def market_valuation_summary(
             detail=(
                 f"no market valuation data for {d.isoformat()} "
                 "(非交易日、當日尚未收盤、或上游暫時無回應)"
+            ),
+        )
+    return result
+
+
+@app.get(
+    "/api/company-valuation",
+    response_model=CompanyValuationResponse,
+    tags=["Market Data"],
+    summary="單一上市公司於指定交易日的估值展開（反推 EPS / BVPS / DPS + 估股數 / 市值）",
+    description=(
+        "取得單一上市公司於指定交易日的單股層級估值明細。\n\n"
+        "**上游 endpoint**：與 `/api/market-valuation-summary` 共用 TWSE `BWIBBU_d`，"
+        "同一天 by-company + by-market 只會打上游一次（磁碟 cache 共用）。\n\n"
+        "**回傳欄位**：close / PER / PBR / yield%（上游原始）、"
+        "反推後的 EPS / BVPS / DPS、估股數（`paid_in_capital / 10`）、估市值（`close × shares`）。\n\n"
+        "**反推公式**（與 `/api/market-valuation-summary` 完全一致）：\n"
+        "* `每股淨值 BVPS = close / PBR`\n"
+        "* `每股純益 EPS  = close / PER`\n"
+        "* `每股股利 DPS  = close × yield% / 100`\n\n"
+        "**錯誤 / 空值對應**：\n"
+        "* 非交易日 / 當日尚未收盤 → HTTP 404，`reason=\"no_market_data\"`\n"
+        "* `stock_id` 不在當日 payload → HTTP 404，`reason=\"stock_id_not_listed\"`\n"
+        "* 缺 close / paid_in_capital → HTTP 404，`reason ∈ {\"no_price\", \"no_shares\"}`\n\n"
+        "**資料起始日**：2005-09-02。早於此日期回 400。"
+    ),
+)
+async def company_valuation(
+    stock_id: str = Query(
+        ...,
+        min_length=1,
+        max_length=10,
+        description="股票代號，例：`2330`。",
+    ),
+    date_str: str = Query(
+        ...,
+        alias="date",
+        description="查詢日（`YYYY-MM-DD` 西元）。資料起始日 2005-09-02。",
+    ),
+):
+    try:
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="`date` must be YYYY-MM-DD")
+    if d < valuation_source.VALUATION_MIN_DATE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"`date` must be >= {valuation_source.VALUATION_MIN_DATE.isoformat()} "
+                "(TWSE BWIBBU_d 資料起始日 民國 94/9/2)"
+            ),
+        )
+    if d > date.today():
+        raise HTTPException(status_code=400, detail="`date` must be <= today")
+    result = await valuation_source.get_company_valuation(stock_id, d)
+    if not result.get("found"):
+        reason = result.get("reason") or "not_found"
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"no valuation data for stock_id={stock_id!r} on {d.isoformat()} "
+                f"(reason={reason})"
             ),
         )
     return result

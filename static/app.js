@@ -1123,3 +1123,116 @@ resultEl.addEventListener('click', (e) => {
     runMV();
   });
 })();
+
+
+// =============================================================================
+// 單一公司估值展開 (/api/company-valuation)
+// =============================================================================
+(function initCompanyValuation() {
+  const cvForm = document.getElementById("cvForm");
+  const cvStk = document.getElementById("cvStk");
+  const cvDate = document.getElementById("cvDate");
+  const cvResult = document.getElementById("cvResult");
+  if (!cvForm || !cvStk || !cvDate || !cvResult) return;
+
+  const today = new Date();
+  const iso = today.toISOString().slice(0, 10);
+  cvDate.value = iso;
+
+  const _fmtInt = (n) => {
+    if (n == null || Number.isNaN(n)) return "—";
+    return Math.round(n).toLocaleString();
+  };
+  const _fmtRatio = (n, digits) => {
+    if (n == null || Number.isNaN(n)) return "—";
+    return Number(n).toFixed(digits == null ? 2 : digits);
+  };
+  const _fmtBn = (n) => {
+    if (n == null || Number.isNaN(n)) return "—";
+    const abs = Math.abs(n);
+    if (abs >= 1e12) return (n / 1e12).toFixed(2) + " 兆";
+    if (abs >= 1e8) return (n / 1e8).toFixed(2) + " 億";
+    return Math.round(n).toLocaleString();
+  };
+  const _yesno = (b) => (b ? "✓ 已納入" : "— 未納入");
+
+  function render(d) {
+    if (!d.found || !d.constituent) {
+      cvResult.innerHTML = `<div class="mv-card"><div class="mv-empty">no data (reason=${d.reason || "unknown"})</div></div>`;
+      return;
+    }
+    const c = d.constituent;
+    cvResult.innerHTML = `
+      <div class="mv-card">
+        <div class="mv-header">
+          <div class="mv-title">${c.stk_code} ${c.stock_name || ""}</div>
+          <div class="mv-date">${d.date}</div>
+        </div>
+        <div class="mv-metrics">
+          <div class="mv-metric">
+            <div class="mv-label">收盤價</div>
+            <div class="mv-value">${_fmtRatio(c.close_price)}</div>
+          </div>
+          <div class="mv-metric">
+            <div class="mv-label">估市值</div>
+            <div class="mv-value">${_fmtBn(c.market_cap)}</div>
+          </div>
+          <div class="mv-metric">
+            <div class="mv-label">估流通股數</div>
+            <div class="mv-value">${_fmtInt(c.estimated_shares)}</div>
+          </div>
+        </div>
+        <div class="mv-totals">
+          <div><span>本益比 P/E</span><b>${_fmtRatio(c.per)}</b></div>
+          <div><span>股價淨值比 P/B</span><b>${_fmtRatio(c.pbr)}</b></div>
+          <div><span>殖利率</span><b>${_fmtRatio(c.dividend_yield_pct)}%</b></div>
+          <div><span>反推 EPS</span><b>${_fmtRatio(c.eps_ttm)}</b></div>
+        </div>
+        <div class="mv-totals">
+          <div><span>反推 BVPS</span><b>${_fmtRatio(c.bvps)}</b></div>
+          <div><span>反推 DPS</span><b>${_fmtRatio(c.dps)}</b></div>
+          <div><span>是否納入全市場 P/E</span><b>${_yesno(c.included_in_per)}</b></div>
+          <div><span>是否納入全市場 P/B</span><b>${_yesno(c.included_in_pbr)}</b></div>
+        </div>
+        <div class="mv-method">
+          <b>計算方法</b>${d.calculation_method}
+        </div>
+        <div class="mv-source">資料來源：${d.source}</div>
+      </div>
+    `;
+  }
+
+  async function runCV() {
+    const stk = (cvStk.value || "").trim();
+    const date = cvDate.value;
+    if (!stk || !date) return;
+    const btn = cvForm.querySelector("button");
+    btn.disabled = true;
+    cvResult.innerHTML = `<div class="mv-card"><div class="mv-empty">查詢中…</div></div>`;
+    try {
+      const url = api(`/api/company-valuation?stock_id=${encodeURIComponent(stk)}&date=${encodeURIComponent(date)}`);
+      const res = await fetch(url);
+      if (res.status === 404) {
+        const j = await res.json().catch(() => ({}));
+        cvResult.innerHTML = `<div class="mv-card"><div class="mv-empty">${j.detail || "no data"}</div></div>`;
+        return;
+      }
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        cvResult.innerHTML = `<div class="mv-card"><div class="mv-empty">錯誤：${j.detail || res.status}</div></div>`;
+        return;
+      }
+      const data = await res.json();
+      render(data);
+    } catch (err) {
+      cvResult.innerHTML = `<div class="mv-card"><div class="mv-empty">錯誤：${err.message}</div></div>`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  cvForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    runCV();
+  });
+})();

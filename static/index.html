@@ -6,7 +6,7 @@
 <title>台股公司查詢 · TWStock</title>
 <link rel="preconnect" href="https://api.fontshare.com" />
 <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&f[]=jetbrains-mono@400,500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="./style.css" />
+<link rel="stylesheet" href="./style.css?v=cv1" />
 </head>
 <body>
 <header class="topbar">
@@ -57,6 +57,17 @@
     </form>
     <div id="mvResult" class="mv-result"></div>
   </section>
+
+  <section class="panel">
+    <h2>單一公司估值展開（反推 EPS / BVPS / DPS → 估市值）</h2>
+    <p class="sub">同一天上游與全市場 endpoint 共用 cache，反推公式完全一致：EPS=close/PER、BVPS=close/PBR、DPS=close×yield%/100；股數 = paid_in_capital / 10。</p>
+    <form id="cvForm" class="search">
+      <input id="cvStk" type="text" placeholder="股票代號 例如 2330" autocomplete="off" value="2330" />
+      <input id="cvDate" type="date" required />
+      <button type="submit">查詢</button>
+    </form>
+    <div id="cvResult" class="mv-result"></div>
+  </section>
 </main>
 
 <footer>
@@ -70,6 +81,6 @@
   <a href="https://mops.twse.com.tw/mops/web/t05st08" target="_blank" rel="noopener">公開資訊觀測站 (MOPS)</a>
 </footer>
 
-<script src="./app.js"></script>
+<script src="./app.js?v=cv1"></script>
 </body>
 </html>

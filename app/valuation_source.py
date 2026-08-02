@@ -228,6 +228,68 @@ def derive_per_share(
 
 
 # =============================================================================
+# 單股層級：反推每股資料 + 估市值 → constituent row
+# =============================================================================
+
+def build_constituent_row(
+    code: str,
+    row: dict,
+    basic_entry: Optional[dict],
+) -> tuple[Optional[dict], Optional[str]]:
+    """由 (BWIBBU_d row + company_basic_info entry) 建構一筆 constituent。
+
+    共用給 market aggregator（loop 用）與 by-company endpoint（單筆用）。
+
+    * 股數 = paid_in_capital / PAR_VALUE(10)（台股面額慣例；估算值）
+    * 三個指標 (PER / PBR / yield) 分別判斷是否可反推，缺哪個就 flag 該指標為 False
+
+    回傳 `(row_dict, None)` 表示成功；
+    回傳 `(None, reason)` 表示整筆排除，`reason ∈ {"no_price", "no_shares"}`。
+    """
+    close = row.get("close_price")
+    per = row.get("per")
+    pbr = row.get("pbr")
+    yld = row.get("dividend_yield")
+
+    b = basic_entry or {}
+    pic = b.get("paid_in_capital")
+    name = (b.get("short_name") or "").strip() or row.get("stock_name")
+
+    if close is None or close <= 0:
+        return None, "no_price"
+    if not pic or pic <= 0:
+        return None, "no_shares"
+
+    shares = pic / PAR_VALUE
+    mv = close * shares
+
+    derived = derive_per_share(close, per, pbr, yld)
+    eps = derived["eps"]
+    bvps = derived["bvps"]
+    dps = derived["dps"]
+
+    return (
+        {
+            "stk_code": code,
+            "stock_name": name,
+            "close_price": close,
+            "per": per,
+            "pbr": pbr,
+            "dividend_yield_pct": yld,
+            "estimated_shares": shares,
+            "market_cap": mv,
+            "eps_ttm": eps,
+            "bvps": bvps,
+            "dps": dps,
+            "included_in_per": eps is not None,
+            "included_in_pbr": bvps is not None,
+            "included_in_yield": dps is not None,
+        },
+        None,
+    )
+
+
+# =============================================================================
 # 全市場加總 / 指標計算
 # =============================================================================
 
@@ -262,66 +324,38 @@ def aggregate_market_summary(
     constituents: list[dict] = []
 
     for code, row in payload.items():
-        close = row.get("close_price")
-        per = row.get("per")
-        pbr = row.get("pbr")
-        yld = row.get("dividend_yield")
-
-        b = basic.get(code) or {}
-        pic = b.get("paid_in_capital")
-        name = (b.get("short_name") or "").strip() or row.get("stock_name")
-
-        if close is None or close <= 0:
-            excluded_no_price += 1
-            continue
-        if not pic or pic <= 0:
-            excluded_no_shares += 1
+        c, reason = build_constituent_row(code, row, basic.get(code))
+        if c is None:
+            if reason == "no_price":
+                excluded_no_price += 1
+            elif reason == "no_shares":
+                excluded_no_shares += 1
             continue
 
-        shares = pic / PAR_VALUE
-        mv = close * shares
+        mv = c["market_cap"]
+        shares = c["estimated_shares"]
+        eps = c["eps_ttm"]
+        bvps = c["bvps"]
+        dps = c["dps"]
+
         total_market_cap_all += mv
         included_any += 1
 
-        derived = derive_per_share(close, per, pbr, yld)
-        eps = derived["eps"]
-        bvps = derived["bvps"]
-        dps = derived["dps"]
-
-        included_in_per = eps is not None
-        included_in_pbr = bvps is not None
-        included_in_yield = dps is not None
-
-        if included_in_per:
+        if c["included_in_per"]:
             total_market_cap_per += mv
             total_net_income += eps * shares
             per_included += 1
-        if included_in_pbr:
+        if c["included_in_pbr"]:
             total_market_cap_pbr += mv
             total_book_value += bvps * shares
             pbr_included += 1
-        if included_in_yield:
+        if c["included_in_yield"]:
             total_market_cap_yield += mv
             total_cash_dividend += dps * shares
             yield_included += 1
 
         if len(constituents) < sample_size:
-            constituents.append({
-                "stk_code": code,
-                "stock_name": name,
-                "close_price": close,
-                "per": per,
-                "pbr": pbr,
-                "dividend_yield_pct": yld,
-                "estimated_shares": shares,
-                "market_cap": mv,
-                "eps_ttm": eps,
-                "bvps": bvps,
-                "dps": dps,
-                "included_in_per": included_in_per,
-                "included_in_pbr": included_in_pbr,
-                "included_in_yield": included_in_yield,
-            })
+            constituents.append(c)
 
     market_per = (
         total_market_cap_per / total_net_income
@@ -398,6 +432,95 @@ async def get_market_valuation_summary(d: date, sample_size: int = 5) -> dict:
         ),
         "source": "TWSE BWIBBU_d (per-day)",
         "summary": agg,
+    }
+
+
+# =============================================================================
+# By-company 對外主函式
+# =============================================================================
+
+async def get_company_valuation(stock_id: str, d: date) -> dict:
+    """取得單一上市公司於指定交易日的估值單股明細。
+
+    * 上游 payload 為空（非交易日 / 當日尚未收盤 / 上游失敗）
+      → `found=False`，`reason="no_market_data"`（endpoint 回 404）
+    * 股票代號不在當日 payload 中
+      → `found=False`，`reason="stock_id_not_listed"`（endpoint 回 404）
+    * 上游有資料但缺 close / shares → `found=False`，reason 對應雷同 market aggregator
+    * 上游有完整資料 → `found=True`，`constituent` 欄位包含反推後的每股資料 + 估算股數 / 市值
+    """
+    code = (stock_id or "").strip()
+    if not code:
+        return {
+            "found": False,
+            "date": d.isoformat(),
+            "stock_id": code,
+            "reason": "stock_id_not_listed",
+            "calculation_method": (
+                "estimated_market_cap_weighted "
+                "(shares = paid_in_capital / 10; par-value convention)"
+            ),
+            "source": "TWSE BWIBBU_d (per-day)",
+            "constituent": None,
+        }
+
+    payload = await _fetch_twse_bwibbu_day(d)
+    if not payload:
+        return {
+            "found": False,
+            "date": d.isoformat(),
+            "stock_id": code,
+            "reason": "no_market_data",
+            "calculation_method": (
+                "estimated_market_cap_weighted "
+                "(shares = paid_in_capital / 10; par-value convention)"
+            ),
+            "source": "TWSE BWIBBU_d (per-day)",
+            "constituent": None,
+        }
+
+    row = payload.get(code)
+    if row is None:
+        return {
+            "found": False,
+            "date": d.isoformat(),
+            "stock_id": code,
+            "reason": "stock_id_not_listed",
+            "calculation_method": (
+                "estimated_market_cap_weighted "
+                "(shares = paid_in_capital / 10; par-value convention)"
+            ),
+            "source": "TWSE BWIBBU_d (per-day)",
+            "constituent": None,
+        }
+
+    basic = await load_basic_table()
+    c, reason = build_constituent_row(code, row, basic.get(code))
+    if c is None:
+        return {
+            "found": False,
+            "date": d.isoformat(),
+            "stock_id": code,
+            "reason": reason,
+            "calculation_method": (
+                "estimated_market_cap_weighted "
+                "(shares = paid_in_capital / 10; par-value convention)"
+            ),
+            "source": "TWSE BWIBBU_d (per-day)",
+            "constituent": None,
+        }
+
+    return {
+        "found": True,
+        "date": d.isoformat(),
+        "stock_id": code,
+        "reason": None,
+        "calculation_method": (
+            "estimated_market_cap_weighted "
+            "(shares = paid_in_capital / 10; par-value convention)"
+        ),
+        "source": "TWSE BWIBBU_d (per-day)",
+        "constituent": c,
     }
 
 
