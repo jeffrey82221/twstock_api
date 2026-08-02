@@ -47,6 +47,16 @@
     </form>
     <div id="instResult" class="inst-result"></div>
   </section>
+
+  <section class="panel">
+    <h2>全市場估值（本益比 / 殖利率 / 股價淨值比）</h2>
+    <p class="sub">TWSE 上市股票單一交易日的市值加權估值。分子 / 分母皆由 BWIBBU_d 個股資料反推：EPS=close/PER、BVPS=close/PBR、DPS=close×yield%/100；股數 ≈ paid_in_capital / 10（台股面額慣例，非嚴格流通股本）。</p>
+    <form id="mvForm" class="search">
+      <input id="mvDate" type="date" required />
+      <button type="submit">查詢</button>
+    </form>
+    <div id="mvResult" class="mv-result"></div>
+  </section>
 </main>
 
 <footer>

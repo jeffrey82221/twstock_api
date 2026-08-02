@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from . import icchain, institutional_source, ohlcv_source
+from . import icchain, institutional_source, ohlcv_source, valuation_source
 from .schemas import (
     BusinessItemsResponse,
     ChainResponse,
@@ -33,6 +33,7 @@ from .schemas import (
     FinancialsResponse,
     HealthResponse,
     InstitutionalNetBuySellResponse,
+    MarketValuationSummaryResponse,
     OhlcvResponse,
     ProductRevenueFilersResponse,
     ProductRevenueResponse,
@@ -806,6 +807,67 @@ async def institutional_net_buy_sell(
     if d > date.today():
         raise HTTPException(status_code=400, detail="`date` must be <= today")
     return await institutional_source.get_institutional_net_buy_sell(stk_code.strip(), d)
+
+
+@app.get(
+    "/api/market-valuation-summary",
+    response_model=MarketValuationSummaryResponse,
+    tags=["Market Data"],
+    summary="全市場本益比 / 殖利率 / 股價淨值比彙總（單日；市值加權估算）",
+    description=(
+        "取得指定交易日 TWSE 上市股票全市場的 **市值加權** PER / PBR / 殖利率。\n\n"
+        "**上游 endpoint**：<https://www.twse.com.tw/exchangeReport/BWIBBU_d> "
+        "`?date=YYYYMMDD&selectType=ALL&response=json`\n"
+        "對應頁面：<https://www.twse.com.tw/zh/trading/historical/bwibbu-day.html>\n\n"
+        "**計算方法**：payload 只提供比率型欄位 + 收盤價，本 endpoint 依下列方式反推每股層級指標並在市值加權後加總：\n"
+        "* `每股淨值 BVPS = close / PBR`（PBR > 0 才成立）\n"
+        "* `每股純益 EPS  = close / PER`（PER > 0 才成立）\n"
+        "* `每股股利 DPS  = close × yield% / 100`\n"
+        "* `估流通股數 = paid_in_capital / 10`（來自 `company_basic_info`；台股面額 10 元慣例，未扣庫藏股）\n"
+        "* `估市值 = close × estimated_shares`\n\n"
+        "**排除規則**：收盤價或 `paid_in_capital` 缺 → 完全排除；PER / PBR / yield 個別缺值時只影響對應指標的加總。\n\n"
+        "**資料起始日**：2005-09-02（民國 94/9/2）。早於此日期回 400。\n"
+        "**非交易日 / 當日尚未收盤**：回 HTTP 404（`found=false`）。\n"
+        "**磁碟 cache**：`/tmp/valuation_cache/twse/{YYYYMMDD}.json.gz`（gzip JSON）。"
+    ),
+)
+async def market_valuation_summary(
+    date_str: str = Query(
+        ...,
+        alias="date",
+        description="查詢日（`YYYY-MM-DD` 西元）。資料起始日 2005-09-02。",
+    ),
+    sample_size: int = Query(
+        5,
+        ge=0,
+        le=50,
+        description="回傳成分股樣本筆數（供交叉驗證計算）。0 表示不回樣本。",
+    ),
+):
+    try:
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="`date` must be YYYY-MM-DD")
+    if d < valuation_source.VALUATION_MIN_DATE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"`date` must be >= {valuation_source.VALUATION_MIN_DATE.isoformat()} "
+                "(TWSE BWIBBU_d 資料起始日 民國 94/9/2)"
+            ),
+        )
+    if d > date.today():
+        raise HTTPException(status_code=400, detail="`date` must be <= today")
+    result = await valuation_source.get_market_valuation_summary(d, sample_size=sample_size)
+    if not result.get("found"):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"no market valuation data for {d.isoformat()} "
+                "(非交易日、當日尚未收盤、或上游暫時無回應)"
+            ),
+        )
+    return result
 
 
 # =====================================================================

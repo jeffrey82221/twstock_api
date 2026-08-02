@@ -775,3 +775,84 @@ class InstitutionalNetBuySellResponse(BaseModel):
         description="三大法人買賣超明細；當日全市場 payload 為空（非交易日、當日尚未收盤、或上游失敗）時為 null。",
     )
     source: Optional[str] = Field(None, description="本筆資料來源註記。")
+
+
+class MarketValuationConstituent(BaseModel):
+    """單一成分股樣本（供交叉驗證加總邏輯）。"""
+    model_config = ConfigDict(extra="allow")
+
+    stk_code: str = Field(..., description="股票代號。")
+    stock_name: Optional[str] = Field(None, description="股票名稱（以 `company_basic_info.short_name` 為主，退回 payload 名稱）。")
+    close_price: Optional[float] = Field(None, description="TWSE payload 收盤價（新台幣元）。")
+    per: Optional[float] = Field(None, description="TWSE payload 本益比（近四季 EPS 為分母）；<=0 或缺值不納入 PER 加總。")
+    pbr: Optional[float] = Field(None, description="TWSE payload 股價淨值比；<=0 或缺值不納入 PBR 加總。")
+    dividend_yield_pct: Optional[float] = Field(None, description="TWSE payload 殖利率（%），近四季現金股利 / 收盤價；0 亦計入。")
+    estimated_shares: Optional[float] = Field(None, description="估流通股數 = paid_in_capital / 10（面額慣例）。")
+    market_cap: Optional[float] = Field(None, description="估市值 = close × estimated_shares（新台幣元）。")
+    eps_ttm: Optional[float] = Field(None, description="反推每股純益（近四季）= close / PER。PER <=0 或缺值為 null。")
+    bvps: Optional[float] = Field(None, description="反推每股淨值 = close / PBR。PBR <=0 或缺值為 null。")
+    dps: Optional[float] = Field(None, description="反推每股股利 = close × dividend_yield / 100。yield 缺值為 null。")
+    included_in_per: bool = Field(..., description="此股是否有納入市場 PER 加總。")
+    included_in_pbr: bool = Field(..., description="此股是否有納入市場 PBR 加總。")
+    included_in_yield: bool = Field(..., description="此股是否有納入市場殖利率加總。")
+
+
+class MarketValuationSummary(BaseModel):
+    """全市場加總與指標。所有金額單位為新台幣元；市值 / 純益 / 淨值 / 股利加總均為估算值。"""
+    model_config = ConfigDict(extra="allow")
+
+    total_market_cap: float = Field(..., description="所有納入計算個股（close + shares 皆有效）的估市值加總（元）。")
+    total_market_cap_per_basis: float = Field(..., description="納入 PER 計算個股的市值加總（元），即 market_per 的分子。")
+    total_market_cap_pbr_basis: float = Field(..., description="納入 PBR 計算個股的市值加總（元），即 market_pbr 的分子。")
+    total_market_cap_yield_basis: float = Field(..., description="納入殖利率計算個股的市值加總（元），即 market_dividend_yield 的分母。")
+    total_net_income: float = Field(..., description="所有納入 PER 計算個股的估純益加總（元）= Σ(EPS × shares)。")
+    total_book_value: float = Field(..., description="所有納入 PBR 計算個股的估淨值加總（元）= Σ(BVPS × shares)。")
+    total_cash_dividend: float = Field(..., description="所有納入殖利率計算個股的估現金股利加總（元）= Σ(DPS × shares)。")
+
+    market_per: Optional[float] = Field(None, description="全市場 P/E = Σ市值 / Σ純益。分母為 0 或無納入股票時為 null。")
+    market_pbr: Optional[float] = Field(None, description="全市場 P/B = Σ市值 / Σ淨值。分母為 0 或無納入股票時為 null。")
+    market_dividend_yield_pct: Optional[float] = Field(None, description="全市場殖利率 (%) = Σ現金股利 / Σ市值 × 100。")
+
+    total_rows: int = Field(..., description="TWSE payload 原始筆數（該日全上市股票筆數，含後續被排除者）。")
+    constituent_count: int = Field(..., description="至少 close + shares 有效、被納入任一指標分母的股票數。")
+    per_included: int = Field(..., description="納入 PER 加總的股票數。")
+    pbr_included: int = Field(..., description="納入 PBR 加總的股票數。")
+    yield_included: int = Field(..., description="納入殖利率加總的股票數。")
+    excluded_count: int = Field(..., description="被排除的股票數 = total_rows - constituent_count。原因為缺收盤價或缺 paid_in_capital。")
+    excluded_no_price: int = Field(..., description="因缺收盤價被排除的股票數。")
+    excluded_no_shares: int = Field(..., description="因缺 paid_in_capital 被排除的股票數。")
+    sample_constituents: list[MarketValuationConstituent] = Field(
+        default_factory=list,
+        description="少量成分股明細（預設 5 筆，前綴 payload 順序），供交叉驗證計算。",
+    )
+
+
+class MarketValuationSummaryResponse(BaseModel):
+    """`GET /api/market-valuation-summary` 回應。
+
+    * 上游：<https://www.twse.com.tw/exchangeReport/BWIBBU_d> `?date=YYYYMMDD&selectType=ALL&response=json`
+    * 對應頁面：<https://www.twse.com.tw/zh/trading/historical/bwibbu-day.html>
+    * 資料起始日：2005-09-02（民國 94/9/2）。早於此日期回 400。
+    * 每日收盤後更新；非交易日 / 當日尚未收盤 → payload 為空，本 endpoint 回 404 (`found=false`)。
+    * 磁碟 cache：`/tmp/valuation_cache/twse/{YYYYMMDD}.json.gz`。
+    * 全市場指標為 **市值加權**：市值 = 收盤價 × (paid_in_capital / 10)。這是**估算**，
+      因台股面額慣例為 10 元、未扣除庫藏股，量級對得上實際值但存在誤差。
+
+    **反推公式**（TWSE payload 只提供比率 + 收盤價）：
+      * `每股淨值 BVPS = close / PBR`（PBR > 0 才成立）
+      * `每股純益 EPS  = close / PER`（PER > 0 才成立）
+      * `每股股利 DPS  = close × yield% / 100`
+
+    **排除規則**：
+      * 收盤價缺 / <=0 → 完全排除（無法算市值與任何指標）
+      * `paid_in_capital` 缺 → 完全排除
+      * PER / PBR / yield 個別缺值時只影響對應指標的加總，個股仍計入其他指標
+    """
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否有可用資料；false 表示非交易日 / 當日尚未收盤 / 上游失敗。")
+    date: str = Field(..., description="查詢日（`YYYY-MM-DD`）。")
+    market_scope: str = Field(..., description="市場範圍描述（本 endpoint 僅上市；上櫃須另接資料源）。")
+    calculation_method: str = Field(..., description="計算方法標記。目前固定為 `estimated_market_cap_weighted`。")
+    source: str = Field(..., description="資料來源註記。")
+    summary: Optional[MarketValuationSummary] = Field(None, description="全市場彙總結果；查無資料時為 null（配合 HTTP 404）。")
