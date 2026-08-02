@@ -36,6 +36,17 @@
   <section id="empty" class="empty">
     <p>常用範例：<a href="#" data-q="2330">2330 台積電</a> · <a href="#" data-q="2454">2454 聯發科</a> · <a href="#" data-q="2317">2317 鴻海</a> · <a href="#" data-q="2412">2412 中華電</a> · <a href="#" data-q="6488">6488 環球晶</a></p>
   </section>
+
+  <section class="panel">
+    <h2>三大法人買賣超（單日）</h2>
+    <p class="sub">單一交易日 x 單一股票的三大法人買賣明細（單位：股）。上市取 TWSE T86、上櫃取 TPEx dailyTrade；資料起始日 2012-05-02。</p>
+    <form id="instForm" class="search">
+      <input id="instStk" type="text" placeholder="股票代號 例如 2330" autocomplete="off" value="2330" />
+      <input id="instDate" type="date" />
+      <button type="submit">查詢</button>
+    </form>
+    <div id="instResult" class="inst-result"></div>
+  </section>
 </main>
 
 <footer>

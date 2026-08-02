@@ -385,3 +385,40 @@ footer {
   }
   .pr-legend { width: 100%; }
 }
+
+/* 三大法人買賣超（單日）查詢面板 */
+.panel { margin-top: 48px; }
+.panel h2 {
+  font-size: 20px; line-height: 1.2; letter-spacing: -0.01em; margin: 0 0 6px;
+}
+.panel .sub { color: var(--text-soft); margin: 0 0 16px; max-width: 720px; }
+.inst-result { margin-top: 18px; }
+.inst-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 20px 22px;
+}
+.inst-card .head {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px;
+  border-bottom: 1px solid var(--border); padding-bottom: 14px; margin-bottom: 16px;
+}
+.inst-card .head .name { font-size: 18px; font-weight: 700; }
+.inst-card .head .code { font-family: var(--mono); color: var(--text-muted); }
+.inst-card .head .meta { color: var(--text-soft); font-size: 13px; margin-left: auto; }
+.inst-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px 24px;
+}
+.inst-row {
+  display: flex; justify-content: space-between; gap: 10px;
+  border-bottom: 1px dashed var(--border); padding: 6px 0;
+}
+.inst-row .k { color: var(--text-soft); }
+.inst-row .v { font-family: var(--mono); font-weight: 600; }
+.inst-row .v.pos { color: var(--good); }
+.inst-row .v.neg { color: var(--bad); }
+.inst-row.total { border-bottom: 0; margin-top: 6px; padding-top: 12px; border-top: 1px solid var(--border-strong); }
+.inst-row.total .k { color: var(--text); font-weight: 600; }
+.inst-empty { color: var(--text-muted); padding: 18px 0; }
+.inst-source { color: var(--text-muted); font-size: 12px; margin-top: 12px; }
+@media (max-width: 640px) {
+  .inst-grid { grid-template-columns: 1fr; }
+}

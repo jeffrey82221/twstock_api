@@ -707,3 +707,71 @@ class OhlcvResponse(BaseModel):
         description="日 K bar 陣列，依 `trade_date` 遞增。範圍內若無交易日，回傳空 array。",
     )
     source: Optional[str] = Field(None, description="本筆資料來源註記。")
+
+
+class InstitutionalNetBuySellRow(BaseModel):
+    """單一交易日、單一股票的三大法人買賣超明細（單位：股）。
+
+    * 上市來源：TWSE 「三大法人買賣超日報」T86（欄位順序 19 欄，直接對映）
+    * 上櫃來源：TPEx 「三大法人買賣明細資訊」dailyTrade（欄位順序 24 欄，投信 / 自營商合計欄位位置與 TWSE 不同）
+
+    * 「外資」以「不含外資自營商」為主口徑（跟 TWSE T86 主要對外揭露一致）。
+    * `total_institutional_net_buy_sell` 為上游 payload 直接提供的合計欄位，**非本 backend 自行加總**。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    trade_date: str = Field(..., description="交易日（`YYYY-MM-DD`，西元年）。")
+    stk_code: str = Field(..., description="股票代號。")
+    stock_name: Optional[str] = Field(None, description="股票簡稱；以 `company_basic_info.short_name` 為主，退回 payload 上的名稱。")
+    foreign_investors_net_buy_sell: Optional[int] = Field(
+        None,
+        description="外陸資買賣超股數（不含外資自營商）。上市取 T86 payload 第 5 欄；上櫃取 dailyTrade table[0] 第 5 欄。",
+    )
+    foreign_dealers_net_buy_sell: Optional[int] = Field(
+        None,
+        description="外資自營商買賣超股數。上市取 T86 payload 第 8 欄；上櫃取 dailyTrade table[0] 第 8 欄。",
+    )
+    investment_trust_net_buy_sell: Optional[int] = Field(
+        None,
+        description="投信買賣超股數。上市取 T86 payload 第 11 欄；上櫃取 dailyTrade table[0] 第 14 欄。",
+    )
+    dealers_net_buy_sell: Optional[int] = Field(
+        None,
+        description="自營商買賣超股數合計（自行買賣 + 避險）。上市取 T86 payload 第 12 欄；上櫃取 dailyTrade table[0] 第 23 欄。",
+    )
+    dealers_proprietary_net_buy_sell: Optional[int] = Field(
+        None,
+        description="自營商自行買賣買賣超股數。上市取 T86 第 15 欄；上櫃取 dailyTrade 第 17 欄。",
+    )
+    dealers_hedge_net_buy_sell: Optional[int] = Field(
+        None,
+        description="自營商避險買賣超股數。上市取 T86 第 18 欄；上櫃取 dailyTrade 第 20 欄。",
+    )
+    total_institutional_net_buy_sell: Optional[int] = Field(
+        None,
+        description="三大法人買賣超股數合計。**上游 payload 直接提供**，非本 backend 自行加總。上市取 T86 第 19 欄；上櫃取 dailyTrade 第 24 欄。",
+    )
+
+
+class InstitutionalNetBuySellResponse(BaseModel):
+    """`GET /api/institutional-net-buy-sell` 回應。
+
+    * 上游：
+      * 上市：<https://www.twse.com.tw/rwd/zh/fund/T86> `?date=YYYYMMDD&selectType=ALL&response=json`
+      * 上櫃：<https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade> `?date=YYYY/MM/DD&type=Daily&sect=EW&response=json`
+    * 資料起始日：民國 101/5/2 = 2012-05-02。早於此日期不受理（回 400）。
+    * 每日約收盤後 (T+0 傍晚) 更新。
+    * 單位皆為「股」，本 endpoint 無單位轉換（上游本身即為股）。
+    * 同一日多支股票查詢共享 backend 磁碟 cache `/tmp/institutional_cache/{market}/{YYYYMMDD}.json.gz`。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="stk_code 是否在 `company_basic_info` 中；false 表示未知股票。")
+    stk_code: str = Field(..., description="查詢股票代號。")
+    market: Optional[str] = Field(None, description="市場別：`上市` / `上櫃`；查無為 null。")
+    trade_date: str = Field(..., description="查詢交易日（`YYYY-MM-DD`）。")
+    row: Optional[InstitutionalNetBuySellRow] = Field(
+        None,
+        description="三大法人買賣超明細；當日全市場 payload 為空（非交易日、當日尚未收盤、或上游失敗）時為 null。",
+    )
+    source: Optional[str] = Field(None, description="本筆資料來源註記。")

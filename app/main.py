@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from . import icchain, ohlcv_source
+from . import icchain, institutional_source, ohlcv_source
 from .schemas import (
     BusinessItemsResponse,
     ChainResponse,
@@ -32,6 +32,7 @@ from .schemas import (
     DividendResponse,
     FinancialsResponse,
     HealthResponse,
+    InstitutionalNetBuySellResponse,
     OhlcvResponse,
     ProductRevenueFilersResponse,
     ProductRevenueResponse,
@@ -758,6 +759,53 @@ async def ohlcv(
             detail=f"date range too large (max {ohlcv_source.MAX_RANGE_DAYS} days)",
         )
     return await ohlcv_source.get_ohlcv(stk_code.strip(), d_from, d_to)
+
+
+@app.get(
+    "/api/institutional-net-buy-sell",
+    response_model=InstitutionalNetBuySellResponse,
+    tags=["Market Data"],
+    summary="三大法人買賣超日報（單股 x 單日；上市 + 上櫃整合）",
+    description=(
+        "取得指定股票、指定交易日的『三大法人買賣超』明細。上市 / 上櫃自動別從 `company_basic_info` 判別，"
+        "欄位單位皆為「股」，`total_institutional_net_buy_sell` 為上游 payload 直接提供的合計欄位（非本 backend 自行加總）。\n\n"
+            "**上游 endpoint**：\n"
+        "* 上市：<https://www.twse.com.tw/rwd/zh/fund/T86> `?date=YYYYMMDD&selectType=ALL&response=json`\n"
+        "  （對應頁面 <https://www.twse.com.tw/zh/trading/foreign/t86.html>）\n"
+        "* 上櫃：<https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade> `?date=YYYY/MM/DD&type=Daily&sect=EW&response=json`\n\n"
+        "**同一日多支股票查詢** 共享 backend 磁碟 cache `/tmp/institutional_cache/{market}/{YYYYMMDD}.json.gz`。\n"
+        "**資料起始日**：民國 101/5/2 = 2012-05-02，早於此日期回 400。\n"
+        "**未來收盤前查詢當日**：上游會回空 payload，本 endpoint 會回 `row=null`（found=true，只是當日尚未有資料）。"
+    ),
+)
+async def institutional_net_buy_sell(
+    stk_code: str = Query(
+        ...,
+        min_length=1,
+        max_length=10,
+        description="股票代號（例 `2330`）。必須能在 `company_basic_info` 中找到，否則 `found=false`。",
+    ),
+    date_str: str = Query(
+        ...,
+        alias="date",
+        description="交易日（`YYYY-MM-DD` 西元）。資料起始日為 2012-05-02。",
+    ),
+):
+    try:
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="`date` must be YYYY-MM-DD")
+    if d < institutional_source.INSTITUTIONAL_MIN_DATE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"`date` must be >= {institutional_source.INSTITUTIONAL_MIN_DATE.isoformat()} "
+                "(TWSE T86 資料起始日 民國 101/5/2)"
+            ),
+        )
+    if d > date.today():
+        raise HTTPException(status_code=400, detail="`date` must be <= today")
+    return await institutional_source.get_institutional_net_buy_sell(stk_code.strip(), d)
 
 
 # =====================================================================
