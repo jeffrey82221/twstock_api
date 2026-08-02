@@ -968,3 +968,158 @@ resultEl.addEventListener('click', (e) => {
     runInst();
   });
 })();
+
+// ============================================================================
+// 全市場估值查詢面板（GET /api/market-valuation-summary）
+// ============================================================================
+(function initMarketValuation() {
+  const mvForm = document.getElementById("mvForm");
+  const mvDate = document.getElementById("mvDate");
+  const mvResult = document.getElementById("mvResult");
+  if (!mvForm || !mvDate || !mvResult) return;
+
+  // 預設值：昨天（今天的 payload 通常要收盤後才有）
+  const y = new Date(Date.now() - 86400000);
+  mvDate.value = y.toISOString().slice(0, 10);
+
+  const fmtInt = (n) => {
+    if (n === null || n === undefined) return "—";
+    try { return Math.round(Number(n)).toLocaleString(); } catch (_) { return String(n); }
+  };
+  const fmtRatio = (n, digits) => {
+    if (n === null || n === undefined) return "—";
+    try { return Number(n).toFixed(digits == null ? 2 : digits); } catch (_) { return String(n); }
+  };
+  const fmtBn = (n) => {
+    // 顯示成「兆」／「億」，讓量級一眼看得懂
+    if (n === null || n === undefined) return "—";
+    const v = Number(n);
+    if (Math.abs(v) >= 1e12) return `${(v / 1e12).toFixed(2)} 兆`;
+    if (Math.abs(v) >= 1e8)  return `${(v / 1e8).toFixed(2)} 億`;
+    return v.toLocaleString();
+  };
+
+  function renderMV(data) {
+    const s = data.summary || {};
+    const samples = s.sample_constituents || [];
+    const rows = samples.map((c, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(c.stk_code || "")}</td>
+        <td>${escapeHtml(c.stock_name || "")}</td>
+        <td class="num">${fmtRatio(c.close_price)}</td>
+        <td class="num">${fmtRatio(c.per)}</td>
+        <td class="num">${fmtRatio(c.pbr)}</td>
+        <td class="num">${fmtRatio(c.dividend_yield_pct)}</td>
+        <td class="num">${fmtInt(c.estimated_shares)}</td>
+        <td class="num">${fmtInt(c.market_cap)}</td>
+        <td class="num">${fmtRatio(c.eps_ttm)}</td>
+        <td class="num">${fmtRatio(c.bvps)}</td>
+        <td class="num">${fmtRatio(c.dps)}</td>
+      </tr>
+    `).join("");
+
+    mvResult.innerHTML = `
+      <div class="mv-card">
+        <div class="mv-header">
+          <div class="mv-title">${escapeHtml(data.market_scope || "")}</div>
+          <div class="mv-date">${escapeHtml(data.date || "")}</div>
+        </div>
+        <div class="mv-metrics">
+          <div class="mv-metric">
+            <div class="mv-label">市場本益比 (P/E)</div>
+            <div class="mv-value">${fmtRatio(s.market_per)}</div>
+          </div>
+          <div class="mv-metric">
+            <div class="mv-label">市場股價淨值比 (P/B)</div>
+            <div class="mv-value">${fmtRatio(s.market_pbr)}</div>
+          </div>
+          <div class="mv-metric">
+            <div class="mv-label">市場殖利率</div>
+            <div class="mv-value">${fmtRatio(s.market_dividend_yield_pct)}%</div>
+          </div>
+        </div>
+        <div class="mv-totals">
+          <div><span>估總市值</span><b>${fmtBn(s.total_market_cap)}</b></div>
+          <div><span>估總淨利</span><b>${fmtBn(s.total_net_income)}</b></div>
+          <div><span>估總淨值</span><b>${fmtBn(s.total_book_value)}</b></div>
+          <div><span>估總現金股利</span><b>${fmtBn(s.total_cash_dividend)}</b></div>
+        </div>
+        <div class="mv-counts">
+          <span>原始筆數：<b>${s.total_rows ?? "—"}</b></span>
+          <span>納入計算：<b>${s.constituent_count ?? "—"}</b></span>
+          <span>排除：<b>${s.excluded_count ?? "—"}</b> <small>(缺價 ${s.excluded_no_price ?? 0} / 缺股數 ${s.excluded_no_shares ?? 0})</small></span>
+        </div>
+        <div class="mv-counts">
+          <span>PER 納入：<b>${s.per_included ?? "—"}</b></span>
+          <span>PBR 納入：<b>${s.pbr_included ?? "—"}</b></span>
+          <span>殖利率納入：<b>${s.yield_included ?? "—"}</b></span>
+        </div>
+        <div class="mv-method">
+          <b>計算方法</b>：${escapeHtml(data.calculation_method || "")}
+        </div>
+        ${samples.length > 0 ? `
+          <details class="mv-details">
+            <summary>成分股明細（前 ${samples.length} 筆，供交叉驗證）</summary>
+            <div class="mv-table-wrap">
+              <table class="mv-table">
+                <thead>
+                  <tr>
+                    <th>#</th><th>代號</th><th>名稱</th>
+                    <th class="num">收盤價</th>
+                    <th class="num">PER</th><th class="num">PBR</th>
+                    <th class="num">殖利率%</th>
+                    <th class="num">估股數</th>
+                    <th class="num">估市值</th>
+                    <th class="num">EPS</th><th class="num">BVPS</th><th class="num">DPS</th>
+                  </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>
+          </details>
+        ` : ""}
+        <div class="mv-source">資料來源：${escapeHtml(data.source || "")}</div>
+      </div>
+    `;
+  }
+
+  async function runMV() {
+    const d = (mvDate.value || "").trim();
+    if (!d) return;
+    const btn = mvForm.querySelector("button");
+    btn.disabled = true;
+    mvResult.innerHTML = `<div class="mv-card"><div class="mv-empty">查詢中…</div></div>`;
+    try {
+      const url = api(`/api/market-valuation-summary?date=${encodeURIComponent(d)}&sample_size=10`);
+      const r = await fetch(url);
+      if (r.status === 404) {
+        const detail = await r.text();
+        let msg = detail;
+        try { msg = JSON.parse(detail).detail || detail; } catch (_) {}
+        mvResult.innerHTML =
+          `<div class="mv-card"><div class="mv-empty">${escapeHtml(String(msg))}</div></div>`;
+        return;
+      }
+      if (!r.ok) {
+        const detail = await r.text();
+        let msg = detail;
+        try { msg = JSON.parse(detail).detail || detail; } catch (_) {}
+        mvResult.innerHTML =
+          `<div class="mv-card"><div class="mv-empty">錯誤：${escapeHtml(String(msg))}</div></div>`;
+        return;
+      }
+      renderMV(await r.json());
+    } catch (e) {
+      mvResult.innerHTML =
+        `<div class="mv-card"><div class="mv-empty">請求失敗：${escapeHtml(String(e))}</div></div>`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  mvForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    runMV();
+  });
+})();
