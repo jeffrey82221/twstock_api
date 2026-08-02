@@ -849,3 +849,122 @@ resultEl.addEventListener('click', (e) => {
   suggestEl.innerHTML = '';
   form.requestSubmit();
 });
+
+// =====================================================================
+// 三大法人買賣超（單日）查詢面板
+// =====================================================================
+(function initInstitutional() {
+  const instForm = document.getElementById("instForm");
+  const instStk = document.getElementById("instStk");
+  const instDate = document.getElementById("instDate");
+  const instResult = document.getElementById("instResult");
+  if (!instForm || !instStk || !instDate || !instResult) return;
+
+  // 預設日期：今天（同 asof）
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = String(today.getMonth() + 1).padStart(2, "0");
+  const d = String(today.getDate()).padStart(2, "0");
+  instDate.value = `${y}-${m}-${d}`;
+
+  function fmtShares(n) {
+    if (n === null || n === undefined) return "—";
+    const num = Number(n);
+    if (!Number.isFinite(num)) return "—";
+    const s = Math.abs(num).toLocaleString("en-US");
+    return num < 0 ? `-${s}` : num > 0 ? `+${s}` : s;
+  }
+  function signClass(n) {
+    if (n === null || n === undefined) return "";
+    const num = Number(n);
+    if (!Number.isFinite(num) || num === 0) return "";
+    return num > 0 ? "pos" : "neg";
+  }
+  function row(k, v) {
+    const cls = signClass(v);
+    return `<div class="inst-row"><span class="k">${escapeHtml(k)}</span>` +
+      `<span class="v ${cls}">${escapeHtml(fmtShares(v))}</span></div>`;
+  }
+  function totalRow(k, v) {
+    const cls = signClass(v);
+    return `<div class="inst-row total"><span class="k">${escapeHtml(k)}</span>` +
+      `<span class="v ${cls}">${escapeHtml(fmtShares(v))}</span></div>`;
+  }
+
+  function renderInst(data) {
+    if (!data) {
+      instResult.innerHTML = `<div class="inst-empty">查無資料。</div>`;
+      return;
+    }
+    if (!data.found) {
+      instResult.innerHTML =
+        `<div class="inst-card"><div class="inst-empty">` +
+        `找不到股票代號 <b>${escapeHtml(data.stk_code)}</b>。` +
+        `請確認代號是否正確（僅支援 TWSE / TPEx 已上市/上櫃公司）。</div></div>`;
+      return;
+    }
+    const r = data.row;
+    if (!r) {
+      instResult.innerHTML =
+        `<div class="inst-card"><div class="head">` +
+        `<span class="code">${escapeHtml(data.stk_code)}</span>` +
+        `<span class="meta">${escapeHtml(data.market || "")} · ${escapeHtml(data.trade_date)}</span>` +
+        `</div><div class="inst-empty">當日無三大法人資料（非交易日、當日尚未收盤、或上游暫時無回應）。</div>` +
+        (data.source ? `<div class="inst-source">資料來源：${escapeHtml(data.source)}</div>` : "") +
+        `</div>`;
+      return;
+    }
+    instResult.innerHTML =
+      `<div class="inst-card">
+        <div class="head">
+          <span class="name">${escapeHtml(r.stock_name || "")}</span>
+          <span class="code">${escapeHtml(r.stk_code)}</span>
+          <span class="meta">${escapeHtml(data.market || "")} · ${escapeHtml(r.trade_date)}</span>
+        </div>
+        <div class="inst-grid">
+          ${row("外陸資買賣超（不含外資自營商）", r.foreign_investors_net_buy_sell)}
+          ${row("外資自營商買賣超", r.foreign_dealers_net_buy_sell)}
+          ${row("投信買賣超", r.investment_trust_net_buy_sell)}
+          ${row("自營商合計", r.dealers_net_buy_sell)}
+          ${row("自營商 · 自行買賣", r.dealers_proprietary_net_buy_sell)}
+          ${row("自營商 · 避險", r.dealers_hedge_net_buy_sell)}
+        </div>
+        ${totalRow("三大法人買賣超合計（上游 payload 提供）", r.total_institutional_net_buy_sell)}
+        ${data.source ? `<div class="inst-source">資料來源：${escapeHtml(data.source)}</div>` : ""}
+      </div>`;
+  }
+
+  async function runInst() {
+    const stk = instStk.value.trim();
+    const date = instDate.value.trim();
+    if (!stk || !date) return;
+    const btn = instForm.querySelector("button");
+    btn.disabled = true;
+    instResult.innerHTML = `<div class="inst-empty">查詢中 ...</div>`;
+    try {
+      const r = await fetch(api(
+        `/api/institutional-net-buy-sell?stk_code=${encodeURIComponent(stk)}` +
+        `&date=${encodeURIComponent(date)}`
+      ));
+      if (!r.ok) {
+        const detail = await r.text();
+        let msg = detail;
+        try { msg = JSON.parse(detail).detail || detail; } catch (_) {}
+        instResult.innerHTML =
+          `<div class="inst-card"><div class="inst-empty">錯誤：${escapeHtml(String(msg))}</div></div>`;
+        return;
+      }
+      renderInst(await r.json());
+    } catch (e) {
+      instResult.innerHTML =
+        `<div class="inst-card"><div class="inst-empty">請求失敗：${escapeHtml(String(e))}</div></div>`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  instForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    runInst();
+  });
+})();
