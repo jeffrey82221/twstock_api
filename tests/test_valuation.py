@@ -17,11 +17,13 @@ from datetime import date
 
 import pytest
 
+import app.valuation_source as vs
 from app.valuation_source import (
     PAR_VALUE,
     _parse_bwibbu_payload,
     _parse_float,
     aggregate_market_summary,
+    build_constituent_row,
     derive_per_share,
     iter_month_dates,
 )
@@ -270,3 +272,251 @@ class TestIterMonthDates:
     def test_invalid_year(self):
         with pytest.raises(ValueError):
             list(iter_month_dates(1999, 1))
+
+
+# =============================================================================
+# build_constituent_row（單股共用建構）
+# =============================================================================
+
+class TestBuildConstituentRow:
+    def _basic(self, pic=10_000_000_000, name="台積電"):
+        return {"paid_in_capital": pic, "short_name": name}
+
+    def _row(self, close=1180.0, per=27.5, pbr=6.8, yld=1.4, name=None):
+        return {
+            "close_price": close, "per": per, "pbr": pbr,
+            "dividend_yield": yld,
+            **({"stock_name": name} if name else {}),
+        }
+
+    def test_full_valid(self):
+        c, r = build_constituent_row("2330", self._row(), self._basic())
+        assert r is None
+        assert c is not None
+        assert c["stk_code"] == "2330"
+        assert c["stock_name"] == "台積電"
+        assert c["close_price"] == 1180.0
+        assert c["estimated_shares"] == 10_000_000_000 / PAR_VALUE
+        assert c["market_cap"] == pytest.approx(1180.0 * 10_000_000_000 / PAR_VALUE)
+        assert c["eps_ttm"] == pytest.approx(1180.0 / 27.5)
+        assert c["bvps"] == pytest.approx(1180.0 / 6.8)
+        assert c["dps"] == pytest.approx(1180.0 * 1.4 / 100.0)
+        assert c["included_in_per"] is True
+        assert c["included_in_pbr"] is True
+        assert c["included_in_yield"] is True
+
+    def test_missing_price(self):
+        c, r = build_constituent_row("2330", self._row(close=None), self._basic())
+        assert c is None
+        assert r == "no_price"
+
+    def test_zero_price(self):
+        c, r = build_constituent_row("2330", self._row(close=0), self._basic())
+        assert c is None
+        assert r == "no_price"
+
+    def test_missing_shares(self):
+        c, r = build_constituent_row("2330", self._row(), {"paid_in_capital": None})
+        assert c is None
+        assert r == "no_shares"
+
+    def test_missing_basic_entry_entirely(self):
+        c, r = build_constituent_row("2330", self._row(), None)
+        assert c is None
+        assert r == "no_shares"
+
+    def test_partial_ratios_flags(self):
+        # PER 缺（虧損公司）→ EPS None、included_in_per False，PBR/yield 仍 True
+        c, r = build_constituent_row("9999", self._row(per=None), self._basic(name="虧損股"))
+        assert r is None
+        assert c["eps_ttm"] is None
+        assert c["included_in_per"] is False
+        assert c["included_in_pbr"] is True
+        assert c["included_in_yield"] is True
+
+    def test_name_fallback_to_payload(self):
+        c, r = build_constituent_row(
+            "2330",
+            self._row(name="TSMC-payload"),
+            {"paid_in_capital": 10_000_000_000, "short_name": ""},
+        )
+        assert r is None
+        assert c["stock_name"] == "TSMC-payload"
+
+    def test_zero_yield_still_included(self):
+        c, r = build_constituent_row("1234", self._row(yld=0.0), self._basic(name="無配息"))
+        assert r is None
+        assert c["dps"] == 0.0
+        assert c["included_in_yield"] is True
+
+
+# =============================================================================
+# get_company_valuation（by-company 對外主函式）
+# =============================================================================
+
+class TestGetCompanyValuation:
+    """用 monkeypatch stub 上游 fetcher 與 basic loader，測所有 branch。"""
+
+    D = date(2025, 8, 1)
+
+    _fake_payload = {
+        "2330": {
+            "stk_code": "2330",
+            "stock_name": "台積電",
+            "close_price": 1180.0,
+            "per": 27.5, "pbr": 6.8,
+            "dividend_yield": 1.4,
+        },
+        "1101": {
+            "stk_code": "1101",
+            "stock_name": "台泥",
+            "close_price": 24.15,
+            "per": 19.02, "pbr": 0.73,
+            "dividend_yield": 4.14,
+        },
+        "9999": {
+            "stk_code": "9999",
+            "stock_name": "虧損股",
+            "close_price": 12.0,
+            "per": None,        # 虧損
+            "pbr": 1.2,
+            "dividend_yield": 0.0,
+        },
+        "1234": {
+            "stk_code": "1234",
+            "stock_name": "缺價股",
+            "close_price": None,
+            "per": 10.0, "pbr": 1.0, "dividend_yield": 3.0,
+        },
+    }
+
+    _fake_basic = {
+        "2330": {"paid_in_capital": 259_303_804_580, "short_name": "台積電"},
+        "1101": {"paid_in_capital": 77_231_817_420, "short_name": "台泥"},
+        "9999": {"paid_in_capital": 5_000_000_000, "short_name": "虧損股"},
+        "1234": {"paid_in_capital": 1_000_000_000, "short_name": "缺價股"},
+        "5555": {"paid_in_capital": None, "short_name": "缺股數股"},
+    }
+
+    @pytest.fixture(autouse=True)
+    def _patch(self, monkeypatch):
+        async def _fake_fetch(d):
+            return dict(self._fake_payload)
+
+        async def _fake_basic_loader():
+            return dict(self._fake_basic)
+
+        monkeypatch.setattr(vs, "_fetch_twse_bwibbu_day", _fake_fetch)
+        monkeypatch.setattr(vs, "load_basic_table", _fake_basic_loader)
+
+    @pytest.mark.asyncio
+    async def test_found_full(self):
+        r = await vs.get_company_valuation("2330", self.D)
+        assert r["found"] is True
+        assert r["stock_id"] == "2330"
+        assert r["reason"] is None
+        assert r["date"] == "2025-08-01"
+        assert r["calculation_method"].startswith("estimated_market_cap_weighted")
+        c = r["constituent"]
+        assert c["stk_code"] == "2330"
+        assert c["stock_name"] == "台積電"
+        assert c["close_price"] == 1180.0
+        assert c["eps_ttm"] == pytest.approx(1180.0 / 27.5)
+        assert c["included_in_per"] is True
+
+    @pytest.mark.asyncio
+    async def test_stock_id_trimmed(self):
+        r = await vs.get_company_valuation("  2330  ", self.D)
+        assert r["found"] is True
+        assert r["stock_id"] == "2330"
+
+    @pytest.mark.asyncio
+    async def test_empty_stock_id(self):
+        r = await vs.get_company_valuation("   ", self.D)
+        assert r["found"] is False
+        assert r["reason"] == "stock_id_not_listed"
+        assert r["constituent"] is None
+
+    @pytest.mark.asyncio
+    async def test_stock_id_not_listed(self):
+        r = await vs.get_company_valuation("0000", self.D)
+        assert r["found"] is False
+        assert r["reason"] == "stock_id_not_listed"
+        assert r["constituent"] is None
+
+    @pytest.mark.asyncio
+    async def test_no_market_data(self, monkeypatch):
+        async def _empty(d):
+            return {}
+        monkeypatch.setattr(vs, "_fetch_twse_bwibbu_day", _empty)
+        r = await vs.get_company_valuation("2330", self.D)
+        assert r["found"] is False
+        assert r["reason"] == "no_market_data"
+        assert r["constituent"] is None
+
+    @pytest.mark.asyncio
+    async def test_no_price_reason(self):
+        r = await vs.get_company_valuation("1234", self.D)
+        assert r["found"] is False
+        assert r["reason"] == "no_price"
+        assert r["constituent"] is None
+
+    @pytest.mark.asyncio
+    async def test_no_shares_reason(self):
+        # 5555 在 basic 有但 paid_in_capital=None，且不在 payload → 先 not_listed
+        # 這裡改用 9999 但把它的 basic 拿掉來測 no_shares
+        r = await vs.get_company_valuation("5555", self.D)
+        # 5555 不在 payload
+        assert r["found"] is False
+        assert r["reason"] == "stock_id_not_listed"
+
+    @pytest.mark.asyncio
+    async def test_no_shares_when_basic_missing_pic(self, monkeypatch):
+        # 讓 payload 有這檔但 basic pic=None
+        payload = dict(self._fake_payload)
+        payload["8888"] = {
+            "stk_code": "8888", "stock_name": "PIC 缺股",
+            "close_price": 50.0, "per": 10.0, "pbr": 1.5, "dividend_yield": 2.0,
+        }
+        basic = dict(self._fake_basic)
+        basic["8888"] = {"paid_in_capital": None, "short_name": "PIC 缺股"}
+
+        async def _fake_fetch(d):
+            return payload
+
+        async def _fake_basic_loader():
+            return basic
+
+        monkeypatch.setattr(vs, "_fetch_twse_bwibbu_day", _fake_fetch)
+        monkeypatch.setattr(vs, "load_basic_table", _fake_basic_loader)
+
+        r = await vs.get_company_valuation("8888", self.D)
+        assert r["found"] is False
+        assert r["reason"] == "no_shares"
+
+    @pytest.mark.asyncio
+    async def test_partial_ratios_still_found(self):
+        # 9999 虧損但 close/shares 齊 → found=True，included_in_per=False
+        r = await vs.get_company_valuation("9999", self.D)
+        assert r["found"] is True
+        c = r["constituent"]
+        assert c["eps_ttm"] is None
+        assert c["included_in_per"] is False
+        assert c["included_in_pbr"] is True
+        assert c["included_in_yield"] is True  # yield=0 也計入
+
+    @pytest.mark.asyncio
+    async def test_constituent_matches_market_sample(self):
+        """同一天同一檔：by-company 的 constituent 與 by-market sample 對應 row 完全一致。"""
+        by_company = await vs.get_company_valuation("2330", self.D)
+        # aggregate 用同一份 payload / basic
+        agg = aggregate_market_summary(self._fake_payload, self._fake_basic, sample_size=50)
+        matched = [c for c in agg["sample_constituents"] if c["stk_code"] == "2330"]
+        assert len(matched) == 1
+        m = matched[0]
+        c = by_company["constituent"]
+        # 檢查關鍵欄位一致
+        for k in ("close_price", "per", "pbr", "dividend_yield_pct",
+                  "estimated_shares", "market_cap", "eps_ttm", "bvps", "dps",
+                  "included_in_per", "included_in_pbr", "included_in_yield"):
+            assert c[k] == m[k], f"mismatch on {k}"

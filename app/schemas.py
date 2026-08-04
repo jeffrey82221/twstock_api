@@ -856,3 +856,38 @@ class MarketValuationSummaryResponse(BaseModel):
     calculation_method: str = Field(..., description="計算方法標記。目前固定為 `estimated_market_cap_weighted`。")
     source: str = Field(..., description="資料來源註記。")
     summary: Optional[MarketValuationSummary] = Field(None, description="全市場彙總結果；查無資料時為 null（配合 HTTP 404）。")
+
+
+class CompanyValuationResponse(BaseModel):
+    """`GET /api/company-valuation` 回應（單一上市公司於指定交易日的估值明細）。
+
+    * 上游：同 `/api/market-valuation-summary` （TWSE `BWIBBU_d`）
+    * 資料起始日：2005-09-02（民國 94/9/2）。早於此日期回 400。
+    * 每日收盤後更新；非交易日 / 當日尚未收盤 → payload 為空 → 404 (`found=false`, `reason="no_market_data"`)。
+    * 股票代號不在當日 payload → 404 (`found=false`, `reason="stock_id_not_listed"`)。
+    * 缺 close / paid_in_capital → 404 (`found=false`, `reason ∈ {"no_price", "no_shares"}`)。
+    * 磁碟 cache 與 `/api/market-valuation-summary` 共用（`/tmp/valuation_cache/twse/{YYYYMMDD}.json.gz`）；同日 by-company + by-market 只會打上游一次。
+    * 每股資料來源與反推公式與 `/api/market-valuation-summary` 完全相同，
+      因此 `constituent` 內的 EPS / BVPS / DPS / market_cap 與全市場 endpoint 的
+      `sample_constituents` 對應項目一致（不會出現「同一天同一檔的兩個 endpoint 數字不對」的情況）。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否找到該股於指定日的完整資料。false 表示非交易日 / 未上市 / 缺 close / 缺 shares。")
+    date: str = Field(..., description="查詢日（`YYYY-MM-DD`）。")
+    stock_id: str = Field(..., description="查詢的股票代號（trim 後）。")
+    reason: Optional[str] = Field(
+        None,
+        description=(
+            "當 `found=false` 時的原因："
+            "`no_market_data`（該日整體無資料）/ "
+            "`stock_id_not_listed`（代號不在當日 payload 中）/ "
+            "`no_price` / `no_shares`（該股當日缺對應欄位）。"
+        ),
+    )
+    calculation_method: str = Field(..., description="計算方法標記，與 `/api/market-valuation-summary` 一致。")
+    source: str = Field(..., description="資料來源註記。")
+    constituent: Optional[MarketValuationConstituent] = Field(
+        None,
+        description="單一公司單股明細（與 `/api/market-valuation-summary` 內的 `sample_constituents` 結構一致）；查無資料時為 null。",
+    )
