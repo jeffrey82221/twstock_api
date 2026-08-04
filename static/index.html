@@ -6,7 +6,7 @@
 <title>台股公司查詢 · TWStock</title>
 <link rel="preconnect" href="https://api.fontshare.com" />
 <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&f[]=jetbrains-mono@400,500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="./style.css?v=cv1" />
+<link rel="stylesheet" href="./style.css?v=fa1" />
 </head>
 <body>
 <header class="topbar">
@@ -68,6 +68,17 @@
     </form>
     <div id="cvResult" class="mv-result"></div>
   </section>
+
+  <section class="panel">
+    <h2>年報財務分析（MOPS 官方申報 ROE / ROA / EPS + 償債與效率比率）</h2>
+    <p class="sub">從 MOPS 公開資訊觀測站「財務分析彙整表 t51sb02」抓取年報官方申報值。上游 payload 以整批市場為粒度，同一年重複查不同股只打上游一次；市場先試上市找不到再試上櫃。</p>
+    <form id="faForm" class="search">
+      <input id="faStk" type="text" placeholder="股票代號 例如 2330" autocomplete="off" value="2330" />
+      <input id="faYear" type="number" min="2012" placeholder="西元年 例如 2023" value="2023" />
+      <button type="submit">查詢</button>
+    </form>
+    <div id="faResult" class="mv-result"></div>
+  </section>
 </main>
 
 <footer>
@@ -81,6 +92,6 @@
   <a href="https://mops.twse.com.tw/mops/web/t05st08" target="_blank" rel="noopener">公開資訊觀測站 (MOPS)</a>
 </footer>
 
-<script src="./app.js?v=cv1"></script>
+<script src="./app.js?v=fa1"></script>
 </body>
 </html>

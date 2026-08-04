@@ -498,3 +498,64 @@ footer {
   .mv-metric { padding: 0.5rem; }
   .mv-value { font-size: 1.25rem; }
 }
+
+/* Financial analysis (t51sb02) panel */
+.mv-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  margin: 0.75rem 0 1rem;
+}
+.mv-metric-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+}
+.mv-metric-label {
+  font-size: 0.85rem;
+  color: #64748b;
+  margin-bottom: 0.35rem;
+}
+.mv-metric-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+.mv-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+.mv-detail-block {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+.mv-detail-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px dashed #e2e8f0;
+}
+.mv-detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.25rem 0;
+  font-size: 0.9rem;
+}
+.mv-detail-row > span:last-child {
+  font-variant-numeric: tabular-nums;
+  color: #0f172a;
+  font-weight: 500;
+}
+.mv-na { color: #94a3b8; font-style: italic; }
+@media (max-width: 720px) {
+  .mv-metric-grid { grid-template-columns: 1fr; }
+  .mv-detail-grid { grid-template-columns: 1fr; }
+}
