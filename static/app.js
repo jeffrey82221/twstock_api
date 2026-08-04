@@ -1236,3 +1236,127 @@ resultEl.addEventListener('click', (e) => {
     runCV();
   });
 })();
+
+
+// —————————————————————————————————————————————————
+// 年報財務分析（MOPS t51sb02）
+// —————————————————————————————————————————————————
+(function initFinancialAnalysis() {
+  const faForm = document.getElementById("faForm");
+  const faResult = document.getElementById("faResult");
+  const faStk = document.getElementById("faStk");
+  const faYear = document.getElementById("faYear");
+  if (!faForm || !faResult) return;
+
+  function _fmt(v, unit = "", digits = 2) {
+    if (v === null || v === undefined) return `<span class="mv-na">N/A</span>`;
+    if (typeof v !== "number" || !isFinite(v)) return `<span class="mv-na">N/A</span>`;
+    return `${v.toFixed(digits)}${unit}`;
+  }
+
+  function render(payload) {
+    const d = payload.data || {};
+    const marketLabel = d.market === "sii" ? "上市" : d.market === "otc" ? "上櫃" : d.market || "-";
+
+    // 三大指標（獲利能力：ROE / ROA / EPS）
+    const heroHtml = `
+      <div class="mv-metric-grid">
+        <div class="mv-metric-card">
+          <div class="mv-metric-label">權益報酬率 ROE</div>
+          <div class="mv-metric-value">${_fmt(d.roe, " %")}</div>
+        </div>
+        <div class="mv-metric-card">
+          <div class="mv-metric-label">總資產報酬率 ROA</div>
+          <div class="mv-metric-value">${_fmt(d.roa, " %")}</div>
+        </div>
+        <div class="mv-metric-card">
+          <div class="mv-metric-label">每股盈餘 EPS</div>
+          <div class="mv-metric-value">${_fmt(d.eps, " 元")}</div>
+        </div>
+      </div>
+    `;
+
+    // 明細分四欄：獲利、償債、效率、現金流量
+    const detailHtml = `
+      <div class="mv-detail-grid">
+        <div class="mv-detail-block">
+          <div class="mv-detail-title">獲利能力</div>
+          <div class="mv-detail-row"><span>純益率</span><span>${_fmt(d.net_profit_margin, " %")}</span></div>
+          <div class="mv-detail-row"><span>稅前純益 / 實收資本</span><span>${_fmt(d.pretax_profit_to_capital_ratio, " %")}</span></div>
+        </div>
+        <div class="mv-detail-block">
+          <div class="mv-detail-title">財務結構 / 償債</div>
+          <div class="mv-detail-row"><span>負債佔資產比率</span><span>${_fmt(d.debt_ratio, " %")}</span></div>
+          <div class="mv-detail-row"><span>長期資金 / 不動產廠房設備</span><span>${_fmt(d.lt_fund_to_ppe_ratio, " %")}</span></div>
+          <div class="mv-detail-row"><span>流動比率</span><span>${_fmt(d.current_ratio, " %")}</span></div>
+          <div class="mv-detail-row"><span>速動比率</span><span>${_fmt(d.quick_ratio, " %")}</span></div>
+          <div class="mv-detail-row"><span>利息保障倍數</span><span>${_fmt(d.interest_coverage, " 倍")}</span></div>
+        </div>
+        <div class="mv-detail-block">
+          <div class="mv-detail-title">經營效率</div>
+          <div class="mv-detail-row"><span>應收帳款週轉率</span><span>${_fmt(d.ar_turnover, " 次")}</span></div>
+          <div class="mv-detail-row"><span>平均收現日數</span><span>${_fmt(d.avg_collection_days, " 天")}</span></div>
+          <div class="mv-detail-row"><span>存貨週轉率</span><span>${_fmt(d.inventory_turnover, " 次")}</span></div>
+          <div class="mv-detail-row"><span>平均售貨日數</span><span>${_fmt(d.avg_sales_days, " 天")}</span></div>
+          <div class="mv-detail-row"><span>固定資產週轉率</span><span>${_fmt(d.fixed_asset_turnover, " 次")}</span></div>
+          <div class="mv-detail-row"><span>總資產週轉率</span><span>${_fmt(d.total_asset_turnover, " 次")}</span></div>
+        </div>
+        <div class="mv-detail-block">
+          <div class="mv-detail-title">現金流量</div>
+          <div class="mv-detail-row"><span>現金流量比率</span><span>${_fmt(d.cash_flow_ratio, " %")}</span></div>
+          <div class="mv-detail-row"><span>現金流量允當比率</span><span>${_fmt(d.cash_flow_adequacy_ratio, " %")}</span></div>
+          <div class="mv-detail-row"><span>現金再投資比率</span><span>${_fmt(d.cash_reinvestment_ratio, " %")}</span></div>
+        </div>
+      </div>
+    `;
+
+    faResult.innerHTML = `
+      <div class="mv-card">
+        <div class="mv-title">
+          <span>${d.stock_id || "-"} ${d.company_name || ""}</span>
+          <span class="mv-sub">${d.year} 年報 · ${marketLabel}</span>
+        </div>
+        ${heroHtml}
+        ${detailHtml}
+        <div class="mv-footer">來源：${payload.source || "-"}</div>
+      </div>
+    `;
+  }
+
+  async function runFA() {
+    const stk = (faStk.value || "").trim();
+    const year = parseInt(faYear.value, 10);
+    if (!stk || !year) {
+      faResult.innerHTML = `<div class="mv-card"><div class="mv-empty">請輸入股票代號與西元年</div></div>`;
+      return;
+    }
+    const btn = faForm.querySelector("button");
+    btn.disabled = true;
+    faResult.innerHTML = `<div class="mv-card"><div class="mv-empty">查詢中…</div></div>`;
+    try {
+      const url = api(`/api/v1/fundamentals/financial-analysis?stock_id=${encodeURIComponent(stk)}&year=${year}`);
+      const res = await fetch(url);
+      if (res.status === 404) {
+        const j = await res.json().catch(() => ({}));
+        faResult.innerHTML = `<div class="mv-card"><div class="mv-empty">${j.detail || "no data"}</div></div>`;
+        return;
+      }
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        faResult.innerHTML = `<div class="mv-card"><div class="mv-empty">錯誤：${j.detail || res.status}</div></div>`;
+        return;
+      }
+      const data = await res.json();
+      render(data);
+    } catch (err) {
+      faResult.innerHTML = `<div class="mv-card"><div class="mv-empty">錯誤：${err.message}</div></div>`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  faForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    runFA();
+  });
+})();

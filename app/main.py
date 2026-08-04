@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from . import icchain, institutional_source, ohlcv_source, valuation_source
+from . import icchain, institutional_source, mops_financial_analysis, ohlcv_source, valuation_source
 from .schemas import (
     BusinessItemsResponse,
     ChainResponse,
@@ -35,6 +35,7 @@ from .schemas import (
     InstitutionalNetBuySellResponse,
     MarketValuationSummaryResponse,
     CompanyValuationResponse,
+    FinancialAnalysisResponse,
     OhlcvResponse,
     ProductRevenueFilersResponse,
     ProductRevenueResponse,
@@ -928,6 +929,72 @@ async def company_valuation(
             detail=(
                 f"no valuation data for stock_id={stock_id!r} on {d.isoformat()} "
                 f"(reason={reason})"
+            ),
+        )
+    return result
+
+
+@app.get(
+    "/api/v1/fundamentals/financial-analysis",
+    response_model=FinancialAnalysisResponse,
+    tags=["Fundamentals"],
+    summary="個股年報財務分析（MOPS 財務分析彙整表 t51sb02）",
+    description=(
+        "從公開資訊觀測站「財務分析資料」彙整表（`t51sb02`）抓取單一上市 / 上櫃公司"
+        "的年度財務比率。\n\n"
+        "**上游 endpoint**：`POST https://mopsov.twse.com.tw/mops/web/t51sb02`"
+        " （2025-02-23 後舊 MOPS REST endpoint 保留於 `mopsov` 網域）"
+        " (application/x-www-form-urlencoded, `year=民國年`, `TYPEK ∈ {sii, otc}`)。\n\n"
+        "**回傳欄位**：debt_ratio / current_ratio / quick_ratio / interest_coverage /"
+        " ar_turnover / avg_collection_days / inventory_turnover / avg_sales_days /"
+        " fixed_asset_turnover / total_asset_turnover / roa / roe / net_profit_margin /"
+        " eps / cash_flow_ratio / ... 共 19 個財務比率欄位（欄位順序依 `t51sb02` HTML table）。\n\n"
+        "**市場自動判別**：先試 `sii`（上市），找不到再試 `otc`（上櫃）；"
+        "客戶端不需區分上市 / 上櫃。\n\n"
+        "**磁碟 cache**：`/tmp/valuation_cache/mops_t51sb02/{market}_{year_tw}.json.gz`；"
+        "以整批市場為 cache 粒度，同一年重複查不同 `stock_id` 只會打上游一次。\n\n"
+        "**錯誤 / 空值對應**：\n"
+        "* `year < 2012` → HTTP 400（IFRSs 導入首年）\n"
+        "* `year > 當年度` → HTTP 400\n"
+        "* 整批 payload 為空（上游未更新 / 網路失敗）→ HTTP 404，`reason=\"no_market_data\"`\n"
+        "* sii + otc 都找不到該代號 → HTTP 404，`reason=\"stock_id_not_listed\"`\n\n"
+        "**與其他 endpoint 差異**：本 endpoint 的 EPS / ROA / ROE 為 MOPS 官方申報年度值，"
+        "不是 `/api/company-valuation` 的即時反推值（那個是從收盤價 / PER / PBR 反推）。\n\n"
+        "**資料更新頻率**：年報申報後（約隔年 4 月）更新一次。\n\n"
+        "**限制**：t51sb02 僅提供年報彙整；季報 EPS / ROE / ROA 需另外從"
+        " `ajax_t164sb04` / `t163sb06` 推導（本 PR 不含）。"
+    ),
+)
+async def financial_analysis(
+    stock_id: str = Query(
+        ...,
+        min_length=1,
+        max_length=10,
+        description="股票代號，例：`2330`。",
+    ),
+    year: int = Query(
+        ...,
+        description="西元年（例 `2023`）。內部會轉為民國年送 MOPS。",
+    ),
+):
+    if year < mops_financial_analysis.FA_MIN_YEAR:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"`year` must be >= {mops_financial_analysis.FA_MIN_YEAR} "
+                "(MOPS 財務分析彙整表 IFRSs 導入首年 = 民國 101 / 西元 2012)"
+            ),
+        )
+    if year > date.today().year:
+        raise HTTPException(status_code=400, detail="`year` must be <= current year")
+    result = await mops_financial_analysis.get_annual_financial_analysis(stock_id, year)
+    if not result.get("found"):
+        reason = result.get("reason") or "not_found"
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"no financial analysis data for stock_id={stock_id!r} "
+                f"year={year} (reason={reason})"
             ),
         )
     return result

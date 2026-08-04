@@ -891,3 +891,90 @@ class CompanyValuationResponse(BaseModel):
         None,
         description="單一公司單股明細（與 `/api/market-valuation-summary` 內的 `sample_constituents` 結構一致）；查無資料時為 null。",
     )
+
+
+class FinancialAnalysisData(BaseModel):
+    """MOPS 財務分析彙整表 (`t51sb02`) 單一公司單一年度資料列。
+
+    上游：`POST https://mops.twse.com.tw/mops/web/t51sb02`
+    (application/x-www-form-urlencoded, `year=民國年`, `TYPEK ∈ {sii, otc}`)
+
+    回傳 HTML `<table class="hasBorder">`，本模型逐欄對應該 table 由左至右
+    21 個欄位（stock_id / company_name 為字串，其餘為數值，可能為 None）。
+
+    金融 / 保險 / 金控業：流動比率 / 速動比率 / 存貨週轉率 / 平均售貨日數
+    等指標不適用，對應欄位為 None。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    stock_id: str = Field(..., description="公司代號（`t51sb02` 欄位 0）。")
+    company_name: Optional[str] = Field(None, description="公司名稱（`t51sb02` 欄位 1）。")
+    year: int = Field(..., description="財報年度（西元年，例 `2023`）。內部轉民國年送 MOPS。")
+    market: str = Field(..., description="市場別（`sii`=上市 / `otc`=上櫃）。由 endpoint 自動判別，客戶端不需指定。")
+
+    # 財務結構
+    debt_ratio: Optional[float] = Field(None, description="負債佔資產比率 %（`t51sb02` 欄位 2）。")
+    lt_fund_to_ppe_ratio: Optional[float] = Field(
+        None,
+        description="長期資金佔不動產廠房設備比率 %（`t51sb02` 欄位 3）。",
+    )
+
+    # 償債能力
+    current_ratio: Optional[float] = Field(None, description="流動比率 %（`t51sb02` 欄位 4；金融 / 保險 / 金控業不適用）。")
+    quick_ratio: Optional[float] = Field(None, description="速動比率 %（`t51sb02` 欄位 5；金融 / 保險 / 金控業不適用）。")
+    interest_coverage: Optional[float] = Field(None, description="利息保障倍數（`t51sb02` 欄位 6）。")
+
+    # 經營效率
+    ar_turnover: Optional[float] = Field(None, description="應收帳款週轉率（次；`t51sb02` 欄位 7）。")
+    avg_collection_days: Optional[float] = Field(None, description="平均收現日數（天；`t51sb02` 欄位 8）。")
+    inventory_turnover: Optional[float] = Field(None, description="存貨週轉率（次；`t51sb02` 欄位 9；金融 / 保險 / 金控業不適用）。")
+    avg_sales_days: Optional[float] = Field(None, description="平均售貨日數（天；`t51sb02` 欄位 10；金融 / 保險 / 金控業不適用）。")
+    fixed_asset_turnover: Optional[float] = Field(None, description="固定資產週轉率（次；`t51sb02` 欄位 11；亦稱不動產、廠房及設備週轉率）。")
+    total_asset_turnover: Optional[float] = Field(None, description="總資產週轉率（次；`t51sb02` 欄位 12）。")
+
+    # 獲利能力
+    roa: Optional[float] = Field(None, description="總資產報酬率 ROA %（`t51sb02` 欄位 13；官方申報值，非季報公式計算）。")
+    roe: Optional[float] = Field(None, description="權益報酬率 ROE %（`t51sb02` 欄位 14；官方申報值，非季報公式計算）。")
+    pretax_profit_to_capital_ratio: Optional[float] = Field(
+        None,
+        description="稅前純益佔實收資本比率 %（`t51sb02` 欄位 15）。",
+    )
+    net_profit_margin: Optional[float] = Field(None, description="純益率（稅後）%（`t51sb02` 欄位 16）。")
+    eps: Optional[float] = Field(None, description="每股盈餘（元；`t51sb02` 欄位 17；官方申報年度累計 EPS）。")
+
+    # 現金流量
+    cash_flow_ratio: Optional[float] = Field(None, description="現金流量比率 %（`t51sb02` 欄位 18）。")
+    cash_flow_adequacy_ratio: Optional[float] = Field(None, description="現金流量允當比率 %（`t51sb02` 欄位 19）。")
+    cash_reinvestment_ratio: Optional[float] = Field(None, description="現金再投資比率 %（`t51sb02` 欄位 20）。")
+
+
+class FinancialAnalysisResponse(BaseModel):
+    """`GET /api/v1/fundamentals/financial-analysis` 回應。
+
+    * 上游：MOPS 財務分析彙整表 `t51sb02`（每次 POST 回全市場當年度資料）
+    * 資料起始年：民國 101 / 西元 2012（IFRSs 導入首年）。早於此回 400。
+    * 磁碟 cache：`/tmp/valuation_cache/mops_t51sb02/{market}_{year_tw}.json.gz`
+      （key = (market, 民國年)；一年抓一次全上市 / 上櫃 payload，後續同一年
+      不同 stock_id 只會打 dict lookup）。
+    * 市場自動判別：先試 `sii`（上市），找不到再試 `otc`（上櫃）；客戶端不需
+      區分上市 / 上櫃。
+    * 官方頁面：https://mops.twse.com.tw/mops/web/t05st22
+    """
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否找到該股於指定年度的財務分析資料。false 代表整批 payload 空或該代號不在 sii/otc 兩市場。")
+    year: int = Field(..., description="查詢的西元年。")
+    stock_id: str = Field(..., description="查詢的股票代號（trim 後）。")
+    reason: Optional[str] = Field(
+        None,
+        description=(
+            "當 `found=false` 時的原因：\n"
+            "- `no_market_data`：整批市場 payload 為空（上游未申報 / 網路失敗 / 資料未更新）\n"
+            "- `stock_id_not_listed`：sii + otc 都找不到該代號"
+        ),
+    )
+    data: Optional[FinancialAnalysisData] = Field(
+        None,
+        description="單一公司年度財務分析資料（欄位對照 `t51sb02` 21 欄）；查無資料時為 null。",
+    )
+    source: str = Field(..., description="資料來源註記。")
