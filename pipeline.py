@@ -1134,3 +1134,165 @@ class Pipeline:
                   f'after finishing {table}')
 
         return results
+
+    def prune_and_report_seed_cron_jobs(self, lookback_minutes: int = 60) -> Dict[str, Dict[str, object]]:
+        """Scan pg_cron run history for every ``pop.<seed_table>`` refresh
+        job and take action based on the last ``lookback_minutes`` window.
+
+        The per-seed query aggregates ``insert_size`` (parsed out of
+        ``return_message`` for successful ``INSERT ...`` runs) into a
+        single SUM, restricted to ``status='succeeded'``. Three cases:
+
+        * ``SUM > 0``  -- job is actively producing inserts; kept, and the
+          last N-minute insert count plus a linear 24h projection
+          (``sum * (24 * 60 / lookback_minutes)``) is logged.
+        * ``SUM = 0``  -- every succeeded run in the window inserted zero
+          rows; the corresponding ``cron.job`` entry is unscheduled and
+          a removal line is logged.
+        * ``SUM IS NULL`` -- no succeeded rows (or no rows at all) in the
+          window. A warning is emitted; **no** action is taken.
+
+        Parameters
+        ----------
+        lookback_minutes:
+            Time window (minutes) applied to ``cron.job_run_details`` via
+            ``start_time > NOW() - make_interval(mins => <lookback_minutes>)``.
+            Defaults to 60 to match the original probe SQL.
+
+        Returns
+        -------
+        Dict keyed by seed table name with per-seed stats::
+
+            {
+                '<seed_table>': {
+                    'insert_sum': int | None,   # None when SUM is NULL
+                    'projected_24h': int | None,
+                    'removed': bool,
+                    'action': 'kept' | 'removed' | 'no_data' | 'no_job'
+                              | 'fetch_error' | 'unschedule_error',
+                },
+                ...
+            }
+        """
+        # Aggregate query: single row, single column SUM(insert_size).
+        # Parametrised on the command LIKE pattern and the lookback window.
+        # (`%%` is required because psycopg treats a single `%` as a
+        # parameter placeholder marker.)
+        query = """
+            SELECT SUM(insert_size)
+            FROM (
+                SELECT
+                    CASE WHEN return_message LIKE 'INSERT%%'
+                         THEN split_part(return_message, ' ', -1)::integer
+                         ELSE NULL::integer END AS insert_size,
+                    status,
+                    EXTRACT(SECOND FROM end_time - start_time) AS run_seconds
+                FROM cron.job_run_details
+                WHERE command LIKE %s
+                  AND start_time > NOW() - make_interval(mins => %s)
+                ORDER BY start_time DESC
+            ) t
+            WHERE status = 'succeeded'
+        """
+
+        stats: Dict[str, Dict[str, object]] = {}
+        projection_factor = (24 * 60) / float(lookback_minutes)
+
+        for table in self.seed_tables:
+            like_pattern = f'%pop.{table}%'
+            try:
+                rows = self._db_tool.fetch_all(query, (like_pattern, lookback_minutes))
+            except Exception as e:
+                print(
+                    f'[prune_and_report_seed_cron_jobs] {table!r} '
+                    f'fetch failed: {e}; skipping'
+                )
+                stats[table] = {
+                    'insert_sum': None,
+                    'projected_24h': None,
+                    'removed': False,
+                    'action': 'fetch_error',
+                }
+                continue
+
+            # SUM aggregate always returns exactly one row.
+            insert_sum = rows[0][0] if rows else None
+
+            if insert_sum is None:
+                print(
+                    f'[prune_and_report_seed_cron_jobs] WARNING {table!r}: '
+                    f'no succeeded runs with parseable insert_size in last '
+                    f'{lookback_minutes}min (SUM is NULL); no action taken'
+                )
+                stats[table] = {
+                    'insert_sum': None,
+                    'projected_24h': None,
+                    'removed': False,
+                    'action': 'no_data',
+                }
+                continue
+
+            insert_sum_int = int(insert_sum)
+            projected_24h = int(round(insert_sum_int * projection_factor))
+
+            if insert_sum_int == 0:
+                job_name = f'seed_refresh_{table}'
+                try:
+                    existing = self._db_tool.fetch_all(
+                        'SELECT jobid FROM cron.job WHERE jobname = %s',
+                        (job_name,),
+                    )
+                    if existing:
+                        self._db_tool.execute_query(
+                            'SELECT cron.unschedule(%s);', (job_name,)
+                        )
+                        print(
+                            f'[prune_and_report_seed_cron_jobs] REMOVED cron '
+                            f'job {job_name!r} for seed table pop.{table} '
+                            f'(SUM(insert_size)=0 across succeeded runs in '
+                            f'last {lookback_minutes}min)'
+                        )
+                        stats[table] = {
+                            'insert_sum': 0,
+                            'projected_24h': 0,
+                            'removed': True,
+                            'action': 'removed',
+                        }
+                    else:
+                        print(
+                            f'[prune_and_report_seed_cron_jobs] {table!r}: '
+                            f'SUM(insert_size)=0 but cron.job entry '
+                            f'{job_name!r} not found (already unscheduled?)'
+                        )
+                        stats[table] = {
+                            'insert_sum': 0,
+                            'projected_24h': 0,
+                            'removed': False,
+                            'action': 'no_job',
+                        }
+                except Exception as e:
+                    print(
+                        f'[prune_and_report_seed_cron_jobs] failed to '
+                        f'unschedule {job_name!r}: {e}'
+                    )
+                    stats[table] = {
+                        'insert_sum': 0,
+                        'projected_24h': 0,
+                        'removed': False,
+                        'action': 'unschedule_error',
+                    }
+            else:
+                print(
+                    f'[prune_and_report_seed_cron_jobs] {table!r}: kept '
+                    f'(SUM(insert_size)={insert_sum_int}); '
+                    f'last {lookback_minutes}min INSERT sum = {insert_sum_int}, '
+                    f'projected 24h insert count ~ {projected_24h}'
+                )
+                stats[table] = {
+                    'insert_sum': insert_sum_int,
+                    'projected_24h': projected_24h,
+                    'removed': False,
+                    'action': 'kept',
+                }
+
+        return stats
