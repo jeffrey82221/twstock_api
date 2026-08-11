@@ -4,18 +4,13 @@
     "chain_info_list": 1024,
     "product_revenue_filer_list": 1,
     "company_list": 1,
-<<<<<<< Updated upstream
     "company_basic_info_list": 2,
     "dividend_event_yfinance_list": 2,
     "dividend_event_list": 5,
-    "financial_month_twse_list": 1,
     "financial_year_yfinance_list": 8,
-    "financial_month_list": 1,
     "ohlcv_monthly_list": 7,
     "financial_year_list": 18,
-    "financial_quarter_yfinance_list": 1
-=======
+    "financial_quarter_yfinance_list": 1,
     "financial_month_twse_list": 4,
     "financial_month_list": 8
->>>>>>> Stashed changes
 }
