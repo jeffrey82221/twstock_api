@@ -284,7 +284,7 @@ twstock_api/
 
 2. Create Materialized Views `Pipeline().create_mat_view()`
 
-3. Probe Limit Count `Pipeline().probe_all()`
+3. Probe Limit Count `Pipeline().probe_all_throughput()`
 
 4. Setup 1 minute Schedules `Pipeline().setup_schedules()`
 
