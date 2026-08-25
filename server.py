@@ -1,111 +1,52 @@
 """FastMCP server exposing read-only access to the twstock_api Postgres.
 
-All database access is delegated to :mod:`pg_tool` (``PostgreSQLTool``).
-This module owns **no** ``psycopg`` connection of its own — it only:
+This is a deliberately simple wrapper: every tool calls
+``pg_tool.PostgreSQLTool.fetch_all`` (``execute_query`` is available too but
+none of the read-only tools below need it). Connection lifecycle -- opening,
+closing, DSN -- is entirely owned by ``pg_tool.py``; this file does not
+create or hold a ``psycopg`` connection or pool of its own.
 
-1. validates and wraps user-supplied SQL,
-2. maps a per-call ``timeout_ms`` into the query via ``SET LOCAL``,
-3. exposes four MCP tools (``list_tables``, ``list_schemas``,
-   ``describe_table``, ``select``).
-
-The read-only / timeout / pool configuration lives entirely in
-``PostgreSQLTool`` (see ``pg_tool.py``), so connection lifecycle has a
-single source of truth shared with ``pipeline.py``.
+Known limitation (deferred on purpose): ``pg_tool.PostgreSQLTool`` opens
+and closes a brand-new connection on every call, so there is no connection
+pooling here, no per-query ``statement_timeout``, and no protection against
+many concurrent/long-running queries. That is fine for the current "let an
+AI read the data" use case; pooling and parallel-query safety will be
+revisited separately.
 
 Environment variables
 ---------------------
-``DATABASE_URL``           libpq DSN passed to ``PostgreSQLTool``.
-``DB_POOL_MIN``            Min idle pooled connections (default 1).
-``DB_POOL_MAX``            Max total pooled connections (default 16).
-``DB_POOL_TIMEOUT``       Seconds to wait for a free conn (default 30).
-``DB_STATEMENT_TIMEOUT_MS``  Default per-query timeout in ms (default 30000).
-``DB_MAX_ROWS``            Row cap enforced by ``select`` (default 1000).
-``PORT``                   HTTP listen port (default 8000).
+DB_MAX_ROWS   Row cap enforced by ``select`` (default 1000).
+PORT          HTTP listen port (default 8000).
 """
 from __future__ import annotations
 
-import atexit
-import contextlib
-import inspect
 import logging
 import os
 import re
 from typing import Any
 
-import psycopg
 from fastmcp import FastMCP
 
 from pg_tool import PostgreSQLTool
 
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-DEFAULT_STATEMENT_TIMEOUT_MS = int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "30000"))
 MAX_ROWS = int(os.getenv("DB_MAX_ROWS", "1000"))
-POOL_MIN = int(os.getenv("DB_POOL_MIN", "1"))
-POOL_MAX = int(os.getenv("DB_POOL_MAX", "16"))
-POOL_TIMEOUT = float(os.getenv("DB_POOL_TIMEOUT", "30"))
 
 logger = logging.getLogger("twstock_api.mcp")
 
-# The single DB handle for the whole server. Read-only + session timeouts are
-# applied to every pooled connection by PostgreSQLTool.configure; the MCP tools
-# never touch a psycopg.Connection directly.
-_db = PostgreSQLTool(
-    dsn=os.environ.get("DATABASE_URL"),
-    read_only=True,
-    statement_timeout_ms=DEFAULT_STATEMENT_TIMEOUT_MS,
-    pool_min=POOL_MIN,
-    pool_max=POOL_MAX,
-    pool_timeout=POOL_TIMEOUT,
-)
+# Single PostgreSQLTool instance shared by all tools below. Its DSN and
+# connection lifecycle are entirely defined in pg_tool.py -- this file only
+# ever calls its fetch_all()/execute_query() methods, never a raw
+# psycopg.Connection.
+_db = PostgreSQLTool()
 
-
-def _close_db() -> None:
-    """atexit safety net for the pool."""
-    try:
-        _db.close()
-    except Exception:  # pragma: no cover - defensive
-        pass
-
-
-atexit.register(_close_db)
-
-
-@contextlib.asynccontextmanager
-async def _lifespan(_mcp: FastMCP):
-    """Open the pool on startup, close it on shutdown."""
-    # Touching .pool forces lazy creation so a misconfigured DSN surfaces now,
-    # not on the first tool call.
-    _ = _db.pool
-    logger.info(
-        "db pool ready (read_only, min=%d max=%d timeout=%ss statement_timeout=%dms)",
-        POOL_MIN, POOL_MAX, POOL_TIMEOUT, DEFAULT_STATEMENT_TIMEOUT_MS,
-    )
-    try:
-        yield
-    finally:
-        logger.info("closing db pool")
-        _db.close()
-
-
-mcp_kwargs: dict[str, Any] = {"name": "app-db"}
-if "lifespan" in inspect.signature(FastMCP.__init__).parameters:
-    # FastMCP 2.x / 3.x support a server lifespan for startup/shutdown hooks.
-    mcp_kwargs["lifespan"] = _lifespan
-mcp = FastMCP(**mcp_kwargs)
-
-if not "lifespan" in mcp_kwargs:
-    # FastMCP 1.0 (or any version without lifespan support): eagerly open the
-    # pool now so a bad DSN surfaces at import time instead of on first call.
-    # atexit (registered above) still drains it on shutdown.
-    _ = _db.pool
+mcp = FastMCP("app-db")
 
 
 # ---------------------------------------------------------------------------
-# SELECT whitelist (defence-in-depth on top of the read-only transaction)
+# SELECT whitelist (defence-in-depth; pg_tool.py's connections are not
+# forced read-only, so this Python-side check is the only guard for the
+# free-form `select` tool).
 # ---------------------------------------------------------------------------
 
 _FORBIDDEN_KEYWORDS = re.compile(
@@ -141,8 +82,25 @@ def _validate_select_sql(user_sql: str) -> str:
     return stripped
 
 
+def _fetch_as_dicts(sql: str, params: tuple | None = None) -> list[dict[str, Any]]:
+    """Run ``sql`` via ``pg_tool.fetch_all`` and return dict rows.
+
+    ``pg_tool.PostgreSQLTool.fetch_all`` returns plain tuples with no
+    column names attached (it doesn't expose ``cursor.description``), and
+    we are not touching ``pg_tool.py`` to add that. Instead we let Postgres
+    do the naming: wrap the query in ``json_agg`` so it comes back as a
+    single JSON value, which psycopg3 auto-parses into a native Python
+    ``list[dict]`` -- no pg_tool.py changes needed.
+    """
+    wrapped = f"SELECT COALESCE(json_agg(t), '[]'::json) FROM ({sql}) AS t"
+    rows = _db.fetch_all(wrapped, params)
+    if not rows or rows[0][0] is None:
+        return []
+    return rows[0][0]
+
+
 # ---------------------------------------------------------------------------
-# Tools — every DB access goes through _db (PostgreSQLTool)
+# Tools -- every DB access goes through _db.fetch_all()
 # ---------------------------------------------------------------------------
 
 
@@ -155,12 +113,12 @@ def list_tables(schema: str = "public") -> list[dict[str, Any]]:
         WHERE table_schema = %s
         ORDER BY table_name
     """
-    return _db.fetch_all_dicts(sql, (schema,))
+    return _fetch_as_dicts(sql, (schema,))
 
 
 @mcp.tool()
 def list_schemas() -> list[dict[str, Any]]:
-    """列出 database 所有 non-system schema (排除 pg_* 與 information_schema)."""
+    """列出 database 所有 non-system schema (排除 pg_* 與 information_schema)。"""
     sql = """
         SELECT nspname AS schema_name
         FROM pg_namespace
@@ -168,7 +126,7 @@ def list_schemas() -> list[dict[str, Any]]:
           AND nspname <> 'information_schema'
         ORDER BY nspname
     """
-    return _db.fetch_all_dicts(sql)
+    return _fetch_as_dicts(sql)
 
 
 @mcp.tool()
@@ -185,51 +143,26 @@ def describe_table(table_name: str, schema: str = "public") -> list[dict[str, An
           AND table_name = %s
         ORDER BY ordinal_position
     """
-    return _db.fetch_all_dicts(sql, (schema, table_name))
+    return _fetch_as_dicts(sql, (schema, table_name))
 
 
 @mcp.tool()
-def select(
-    sql: str,
-    limit: int | None = None,
-    timeout_ms: int | None = None,
-) -> list[dict[str, Any]]:
+def select(sql: str, limit: int | None = None) -> list[dict[str, Any]]:
     """執行唯讀 SELECT 或 WITH 查詢。
 
     Args:
         sql: SELECT / WITH 語句（不可含 ``;``）。
         limit: 最多回傳筆數；預設 ``DB_MAX_ROWS`` (1000)，上限 10000。
-        timeout_ms: 本次查詢的 statement_timeout 覆寫 (毫秒)；預設
-                    ``DB_STATEMENT_TIMEOUT_MS`` (30000)，上限 300000 (5 分鐘)。
+
+    注意：這是簡化版本，沒有 connection pool、沒有 per-query
+    statement_timeout、也沒有 read-only transaction 強制 -- 安全性完全
+    依賴上面的 SQL 白名單檢查。長查詢與大量平行查詢的保護會在之後
+    另外處理。
     """
     inner_sql = _validate_select_sql(sql)
-
     effective_limit = min(max(1, limit or MAX_ROWS), 10000)
-    effective_timeout = min(
-        max(100, timeout_ms or DEFAULT_STATEMENT_TIMEOUT_MS),
-        300_000,
-    )
-
-    # Wrap the validated user SQL in an outer SELECT to enforce a LIMIT
-    # even when the caller forgot one. ``effective_limit`` is a validated
-    # int owned by this function, so inlining it as a literal is
-    # injection-safe; ``inner_sql`` has already passed the SELECT/WITH +
-    # no-``;`` + no-DML/DDL whitelist, with the read-only transaction as
-    # the final backstop.
-    wrapped_select = (
-        f"SELECT * FROM ({inner_sql}) AS mcp_query LIMIT {effective_limit}"
-    )
-
-    try:
-        return _db.fetch_all_dicts(
-            wrapped_select,
-            statement_timeout_ms=effective_timeout,
-        )
-    except psycopg.errors.QueryCanceled as e:
-        # statement_timeout fired server-side; surface a clear error.
-        raise TimeoutError(
-            f"Query exceeded statement_timeout of {effective_timeout} ms"
-        ) from e
+    limited_sql = f"SELECT * FROM ({inner_sql}) AS mcp_query LIMIT {effective_limit}"
+    return _fetch_as_dicts(limited_sql)
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +170,9 @@ def select(
 # ---------------------------------------------------------------------------
 # fastmcp 1.0 exposes a ``settings`` attribute (host/port); fastmcp 3.x does
 # not and instead takes ``host``/``port`` directly as ``run()`` kwargs.
-# Support both so the same file runs against either pinned version.
+# Support both so the same file runs against either pinned version -- the
+# repo's requirements.txt currently pins both (``fastmcp[tasks]`` and
+# ``fastmcp==1.0``).
 if hasattr(mcp, "settings"):
     mcp.settings.host = "0.0.0.0"
     mcp.settings.port = int(os.getenv("PORT", "8000"))
