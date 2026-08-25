@@ -227,7 +227,7 @@ def _validate_select_sql(user_sql: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool
+@mcp.tool()
 def list_tables(schema: str = "public") -> list[dict[str, Any]]:
     """列出指定 schema 的資料表與 views。"""
     sql = """
@@ -241,7 +241,7 @@ def list_tables(schema: str = "public") -> list[dict[str, Any]]:
         return cur.fetchall()
 
 
-@mcp.tool
+@mcp.tool()
 def list_schemas() -> list[dict[str, Any]]:
     """列出 database 所有 non-system schema (排除 pg_* 與 information_schema)."""
     sql = """
@@ -256,7 +256,7 @@ def list_schemas() -> list[dict[str, Any]]:
         return cur.fetchall()
 
 
-@mcp.tool
+@mcp.tool()
 def describe_table(table_name: str, schema: str = "public") -> list[dict[str, Any]]:
     """取得資料表欄位、型別與 nullable 資訊。"""
     sql = """
@@ -275,7 +275,7 @@ def describe_table(table_name: str, schema: str = "public") -> list[dict[str, An
         return cur.fetchall()
 
 
-@mcp.tool
+@mcp.tool()
 def select(
     sql: str,
     limit: int | None = None,
@@ -325,14 +325,13 @@ def select(
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
-
+mcp.settings.host = "0.0.0.0"
+mcp.settings.port = 8000
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     mcp.run(
-        transport="http",
-        host="0.0.0.0",
-        port=int(os.getenv("PORT", "8000")),
+        transport="sse"
     )
