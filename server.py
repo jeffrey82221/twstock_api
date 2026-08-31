@@ -19,7 +19,8 @@ DB_MAX_ROWS   Row cap enforced by ``select`` (default 1000).
 PORT          HTTP listen port (default 8000).
 """
 from __future__ import annotations
-
+import uvicorn
+import asyncio
 import logging
 import os
 import re
@@ -28,7 +29,8 @@ from typing import Any
 from fastmcp import FastMCP
 
 from pg_tool import PostgreSQLTool
-
+from pydantic import Field
+from typing import Annotated
 
 MAX_ROWS = int(os.getenv("DB_MAX_ROWS", "1000"))
 
@@ -105,7 +107,7 @@ def _fetch_as_dicts(sql: str, params: tuple | None = None) -> list[dict[str, Any
 
 
 @mcp.tool()
-def list_tables(schema: str = "public") -> list[dict[str, Any]]:
+def list_tables(schema_name: Annotated[str, Field(alias='schema', description='Name of the specify table schema for listing its tables')]) -> list[dict[str, Any]]:
     """列出指定 schema 的資料表與 views。"""
     sql = """
         SELECT table_schema, table_name, table_type
@@ -113,7 +115,7 @@ def list_tables(schema: str = "public") -> list[dict[str, Any]]:
         WHERE table_schema = %s
         ORDER BY table_name
     """
-    return _fetch_as_dicts(sql, (schema,))
+    return _fetch_as_dicts(sql, (schema_name,))
 
 
 @mcp.tool()
@@ -130,7 +132,11 @@ def list_schemas() -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-def describe_table(table_name: str, schema: str = "public") -> list[dict[str, Any]]:
+def describe_table(table_name: str,
+    schema_name: Annotated[
+        str,
+        Field(alias="schema", description="要查詢的資料庫 schema 名稱"),
+    ] = "public") -> list[dict[str, Any]]:
     """取得資料表欄位、型別與 nullable 資訊。"""
     sql = """
         SELECT
@@ -143,7 +149,7 @@ def describe_table(table_name: str, schema: str = "public") -> list[dict[str, An
           AND table_name = %s
         ORDER BY ordinal_position
     """
-    return _fetch_as_dicts(sql, (schema, table_name))
+    return _fetch_as_dicts(sql, (schema_name, table_name))
 
 
 @mcp.tool()
@@ -176,14 +182,14 @@ def select(sql: str, limit: int | None = None) -> list[dict[str, Any]]:
 if hasattr(mcp, "settings"):
     mcp.settings.host = "0.0.0.0"
     mcp.settings.port = int(os.getenv("PORT", "8000"))
-
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    run_kwargs = {"transport": "sse"}
+    # run_kwargs = {"transport": "http"}
     if not hasattr(mcp, "settings"):
         run_kwargs["host"] = "0.0.0.0"
-        run_kwargs["port"] = int(os.getenv("PORT", "8000"))
-    mcp.run(**run_kwargs)
+        run_kwargs["port"] = int(os.getenv("PORT", "8001"))
+
+    mcp.run()
