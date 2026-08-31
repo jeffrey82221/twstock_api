@@ -218,3 +218,62 @@ PARALLEL SAFE AS
 $$
     SELECT jsonb_array_elements(data);
 $$;
+
+
+-- MCP Service Setup
+DO $$
+BEGIN
+    CREATE ROLE mcp_reader WITH LOGIN PASSWORD 'password@MCP';
+EXCEPTION
+    WHEN duplicate_object THEN
+        RAISE NOTICE 'Role "mcp_reader" already exists, skipping.';
+END
+$$;
+
+GRANT CONNECT ON DATABASE app_db TO mcp_reader;
+GRANT USAGE ON SCHEMA public TO mcp_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_reader;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+GRANT SELECT ON TABLES TO mcp_reader;
+
+GRANT USAGE ON SCHEMA pop TO mcp_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA pop TO mcp_reader;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA pop
+GRANT SELECT ON TABLES TO mcp_reader;
+
+GRANT USAGE ON SCHEMA poc TO mcp_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA poc TO mcp_reader;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA poc
+GRANT SELECT ON TABLES TO mcp_reader;
+
+
+-- 1. Allow the user to see and access objects inside the schema
+GRANT USAGE ON SCHEMA custom TO mcp_reader;
+
+GRANT EXECUTE ON ALL ROUTINES IN SCHEMA custom TO mcp_reader;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA custom 
+GRANT EXECUTE ON ROUTINES TO mcp_reader;
+
+-- 以 postgres/admin 身份執行
+CREATE or REPLACE VIEW public.job_run_details
+  WITH (security_barrier = false)
+AS
+SELECT * FROM cron.job_run_details;
+
+ALTER VIEW public.job_run_details OWNER TO postgres;
+
+GRANT SELECT ON public.job_run_details TO mcp_reader;
+
+-- 以 postgres/admin 身份執行
+CREATE or REPLACE VIEW public.job
+  WITH (security_barrier = false)
+AS
+SELECT * FROM cron.job;
+
+ALTER VIEW public.job OWNER TO postgres;
+
+GRANT SELECT ON public.job TO mcp_reader;

@@ -1,4 +1,43 @@
 {
+    "product_revenue_filer_scope_list": {
+        "max_throughput": {
+            "period_seconds": 1,
+            "row_cnt": 2,
+            "rows_per_second": 2.0
+        },
+        "min_period": {
+            "period_seconds": 1,
+            "row_cnt": 2,
+            "rows_per_second": 2.0
+        },
+        "max_batch": {
+            "period_seconds": 5,
+            "row_cnt": 8,
+            "rows_per_second": 1.6
+        },
+        "sweep": [
+            {
+                "period_seconds": 1,
+                "row_cnt": 2,
+                "rows_per_second": 2.0
+            },
+            {
+                "period_seconds": 2,
+                "row_cnt": 3,
+                "rows_per_second": 1.5
+            },
+            {
+                "period_seconds": 3,
+                "row_cnt": 4,
+                "rows_per_second": 1.3333333333333333
+            },
+            {
+                "period_seconds": 5,
+                "row_cnt": 8,
+                "rows_per_second": 1.6
+            }
+        ]
+    },
     "chain_list": {
         "max_throughput": {
             "period_seconds": 1,
@@ -23,27 +62,47 @@
             }
         ]
     },
-    "product_revenue_filer_scope_list": {
+    "product_revenue_filer_list": {
         "max_throughput": {
             "period_seconds": 1,
-            "row_cnt": 16,
-            "rows_per_second": 16.0
+            "row_cnt": 1,
+            "rows_per_second": 1.0
         },
         "min_period": {
             "period_seconds": 1,
-            "row_cnt": 16,
-            "rows_per_second": 16.0
+            "row_cnt": 1,
+            "rows_per_second": 1.0
         },
         "max_batch": {
-            "period_seconds": 1,
-            "row_cnt": 16,
-            "rows_per_second": 16.0
+            "period_seconds": 30,
+            "row_cnt": 12,
+            "rows_per_second": 0.4
         },
         "sweep": [
             {
                 "period_seconds": 1,
-                "row_cnt": 16,
-                "rows_per_second": 16.0
+                "row_cnt": 1,
+                "rows_per_second": 1.0
+            },
+            {
+                "period_seconds": 3,
+                "row_cnt": 2,
+                "rows_per_second": 0.6666666666666666
+            },
+            {
+                "period_seconds": 10,
+                "row_cnt": 1,
+                "rows_per_second": 0.1
+            },
+            {
+                "period_seconds": 30,
+                "row_cnt": 12,
+                "rows_per_second": 0.4
+            },
+            {
+                "period_seconds": 60,
+                "row_cnt": 1,
+                "rows_per_second": 0.016666666666666666
             }
         ]
     },
@@ -71,76 +130,173 @@
             }
         ]
     },
-    "dividend_event_list": {
+    "company_list": {
         "max_throughput": {
-            "period_seconds": 1,
-            "row_cnt": 3,
-            "rows_per_second": 3.0
+            "period_seconds": 5,
+            "row_cnt": 2,
+            "rows_per_second": 0.4
         },
         "min_period": {
-            "period_seconds": 1,
-            "row_cnt": 3,
-            "rows_per_second": 3.0
+            "period_seconds": 5,
+            "row_cnt": 2,
+            "rows_per_second": 0.4
         },
         "max_batch": {
-            "period_seconds": 1,
-            "row_cnt": 3,
-            "rows_per_second": 3.0
+            "period_seconds": 15,
+            "row_cnt": 4,
+            "rows_per_second": 0.26666666666666666
         },
         "sweep": [
             {
-                "period_seconds": 1,
+                "period_seconds": 5,
+                "row_cnt": 2,
+                "rows_per_second": 0.4
+            },
+            {
+                "period_seconds": 15,
+                "row_cnt": 4,
+                "rows_per_second": 0.26666666666666666
+            }
+        ]
+    },
+    "dividend_event_list": {
+        "max_throughput": {
+            "period_seconds": 2,
+            "row_cnt": 3,
+            "rows_per_second": 1.5
+        },
+        "min_period": {
+            "period_seconds": 2,
+            "row_cnt": 3,
+            "rows_per_second": 1.5
+        },
+        "max_batch": {
+            "period_seconds": 10,
+            "row_cnt": 8,
+            "rows_per_second": 0.8
+        },
+        "sweep": [
+            {
+                "period_seconds": 2,
                 "row_cnt": 3,
-                "rows_per_second": 3.0
+                "rows_per_second": 1.5
+            },
+            {
+                "period_seconds": 10,
+                "row_cnt": 8,
+                "rows_per_second": 0.8
+            },
+            {
+                "period_seconds": 30,
+                "row_cnt": 1,
+                "rows_per_second": 0.03333333333333333
             }
         ]
     },
     "dividend_event_yfinance_list": {
         "max_throughput": {
-            "period_seconds": 1,
-            "row_cnt": 2,
-            "rows_per_second": 2.0
+            "period_seconds": 2,
+            "row_cnt": 3,
+            "rows_per_second": 1.5
         },
         "min_period": {
-            "period_seconds": 1,
-            "row_cnt": 2,
-            "rows_per_second": 2.0
-        },
-        "max_batch": {
-            "period_seconds": 1,
-            "row_cnt": 2,
-            "rows_per_second": 2.0
-        },
-        "sweep": [
-            {
-                "period_seconds": 1,
-                "row_cnt": 2,
-                "rows_per_second": 2.0
-            }
-        ]
-    },
-    "financial_year_list": {
-        "max_throughput": {
-            "period_seconds": 1,
-            "row_cnt": 2,
-            "rows_per_second": 2.0
-        },
-        "min_period": {
-            "period_seconds": 1,
-            "row_cnt": 2,
-            "rows_per_second": 2.0
+            "period_seconds": 2,
+            "row_cnt": 3,
+            "rows_per_second": 1.5
         },
         "max_batch": {
             "period_seconds": 3,
-            "row_cnt": 6,
-            "rows_per_second": 2.0
+            "row_cnt": 4,
+            "rows_per_second": 1.3333333333333333
+        },
+        "sweep": [
+            {
+                "period_seconds": 2,
+                "row_cnt": 3,
+                "rows_per_second": 1.5
+            },
+            {
+                "period_seconds": 3,
+                "row_cnt": 4,
+                "rows_per_second": 1.3333333333333333
+            }
+        ]
+    },
+    "company_basic_info_list": {
+        "max_throughput": {
+            "period_seconds": 1,
+            "row_cnt": 4,
+            "rows_per_second": 4.0
+        },
+        "min_period": {
+            "period_seconds": 1,
+            "row_cnt": 4,
+            "rows_per_second": 4.0
+        },
+        "max_batch": {
+            "period_seconds": 1,
+            "row_cnt": 4,
+            "rows_per_second": 4.0
         },
         "sweep": [
             {
                 "period_seconds": 1,
-                "row_cnt": 2,
-                "rows_per_second": 2.0
+                "row_cnt": 4,
+                "rows_per_second": 4.0
+            }
+        ]
+    },
+    "financial_month_twse_list": {
+        "max_throughput": {
+            "period_seconds": 10,
+            "row_cnt": 1,
+            "rows_per_second": 0.1
+        },
+        "min_period": {
+            "period_seconds": 10,
+            "row_cnt": 1,
+            "rows_per_second": 0.1
+        },
+        "max_batch": {
+            "period_seconds": 10,
+            "row_cnt": 1,
+            "rows_per_second": 0.1
+        },
+        "sweep": [
+            {
+                "period_seconds": 10,
+                "row_cnt": 1,
+                "rows_per_second": 0.1
             },
+            {
+                "period_seconds": 20,
+                "row_cnt": 1,
+                "rows_per_second": 0.05
+            },
+            {
+                "period_seconds": 30,
+                "row_cnt": 1,
+                "rows_per_second": 0.03333333333333333
+            }
+        ]
+    },
+    "financial_year_yfinance_list": {
+        "max_throughput": {
+            "period_seconds": 3,
+            "row_cnt": 4,
+            "rows_per_second": 1.3333333333333333
+        },
+        "min_period": {
+            "period_seconds": 2,
+            "row_cnt": 1,
+            "rows_per_second": 0.5
+        },
+        "max_batch": {
+            "period_seconds": 10,
+            "row_cnt": 11,
+            "rows_per_second": 1.1
+        },
+        "sweep": [
             {
                 "period_seconds": 2,
                 "row_cnt": 1,
@@ -148,8 +304,18 @@
             },
             {
                 "period_seconds": 3,
-                "row_cnt": 6,
-                "rows_per_second": 2.0
+                "row_cnt": 4,
+                "rows_per_second": 1.3333333333333333
+            },
+            {
+                "period_seconds": 10,
+                "row_cnt": 11,
+                "rows_per_second": 1.1
+            },
+            {
+                "period_seconds": 15,
+                "row_cnt": 4,
+                "rows_per_second": 0.26666666666666666
             }
         ]
     },
@@ -165,9 +331,9 @@
             "rows_per_second": 2.0
         },
         "max_batch": {
-            "period_seconds": 30,
-            "row_cnt": 16,
-            "rows_per_second": 0.5333333333333333
+            "period_seconds": 20,
+            "row_cnt": 32,
+            "rows_per_second": 1.6
         },
         "sweep": [
             {
@@ -177,18 +343,18 @@
             },
             {
                 "period_seconds": 2,
-                "row_cnt": 2,
-                "rows_per_second": 1.0
+                "row_cnt": 3,
+                "rows_per_second": 1.5
             },
             {
                 "period_seconds": 3,
-                "row_cnt": 1,
-                "rows_per_second": 0.3333333333333333
+                "row_cnt": 3,
+                "rows_per_second": 1.0
             },
             {
                 "period_seconds": 5,
-                "row_cnt": 1,
-                "rows_per_second": 0.2
+                "row_cnt": 10,
+                "rows_per_second": 2.0
             },
             {
                 "period_seconds": 10,
@@ -197,101 +363,43 @@
             },
             {
                 "period_seconds": 15,
-                "row_cnt": 2,
-                "rows_per_second": 0.13333333333333333
-            },
-            {
-                "period_seconds": 30,
-                "row_cnt": 16,
+                "row_cnt": 8,
                 "rows_per_second": 0.5333333333333333
-            }
-        ]
-    },
-    "company_basic_info_list": {
-        "max_throughput": {
-            "period_seconds": 1,
-            "row_cnt": 2,
-            "rows_per_second": 2.0
-        },
-        "min_period": {
-            "period_seconds": 1,
-            "row_cnt": 2,
-            "rows_per_second": 2.0
-        },
-        "max_batch": {
-            "period_seconds": 1,
-            "row_cnt": 2,
-            "rows_per_second": 2.0
-        },
-        "sweep": [
-            {
-                "period_seconds": 1,
-                "row_cnt": 2,
-                "rows_per_second": 2.0
-            }
-        ]
-    },
-    "financial_month_twse_list": {
-        "max_throughput": {
-            "period_seconds": 15,
-            "row_cnt": 2,
-            "rows_per_second": 0.13333333333333333
-        },
-        "min_period": {
-            "period_seconds": 15,
-            "row_cnt": 2,
-            "rows_per_second": 0.13333333333333333
-        },
-        "max_batch": {
-            "period_seconds": 15,
-            "row_cnt": 2,
-            "rows_per_second": 0.13333333333333333
-        },
-        "sweep": [
-            {
-                "period_seconds": 15,
-                "row_cnt": 2,
-                "rows_per_second": 0.13333333333333333
             },
             {
                 "period_seconds": 20,
-                "row_cnt": 1,
-                "rows_per_second": 0.05
+                "row_cnt": 32,
+                "rows_per_second": 1.6
+            },
+            {
+                "period_seconds": 30,
+                "row_cnt": 32,
+                "rows_per_second": 1.0666666666666667
             },
             {
                 "period_seconds": 60,
-                "row_cnt": 1,
-                "rows_per_second": 0.016666666666666666
-            },
-            {
-                "period_seconds": 120,
-                "row_cnt": 2,
-                "rows_per_second": 0.016666666666666666
+                "row_cnt": 22,
+                "rows_per_second": 0.36666666666666664
             }
         ]
     },
-    "product_revenue_filer_list": {
+    "financial_year_list": {
         "max_throughput": {
+            "period_seconds": 5,
+            "row_cnt": 13,
+            "rows_per_second": 2.6
+        },
+        "min_period": {
             "period_seconds": 2,
             "row_cnt": 3,
             "rows_per_second": 1.5
         },
-        "min_period": {
-            "period_seconds": 1,
-            "row_cnt": 1,
-            "rows_per_second": 1.0
-        },
         "max_batch": {
             "period_seconds": 10,
-            "row_cnt": 4,
-            "rows_per_second": 0.4
+            "row_cnt": 16,
+            "rows_per_second": 1.6
         },
         "sweep": [
-            {
-                "period_seconds": 1,
-                "row_cnt": 1,
-                "rows_per_second": 1.0
-            },
             {
                 "period_seconds": 2,
                 "row_cnt": 3,
@@ -299,134 +407,91 @@
             },
             {
                 "period_seconds": 3,
-                "row_cnt": 1,
-                "rows_per_second": 0.3333333333333333
+                "row_cnt": 7,
+                "rows_per_second": 2.3333333333333335
+            },
+            {
+                "period_seconds": 5,
+                "row_cnt": 13,
+                "rows_per_second": 2.6
             },
             {
                 "period_seconds": 10,
-                "row_cnt": 4,
-                "rows_per_second": 0.4
+                "row_cnt": 16,
+                "rows_per_second": 1.6
+            },
+            {
+                "period_seconds": 15,
+                "row_cnt": 1,
+                "rows_per_second": 0.06666666666666667
             },
             {
                 "period_seconds": 20,
-                "row_cnt": 1,
-                "rows_per_second": 0.05
-            }
-        ]
-    },
-    "company_list": {
-        "max_throughput": {
-            "period_seconds": 60,
-            "row_cnt": 2,
-            "rows_per_second": 0.03333333333333333
-        },
-        "min_period": {
-            "period_seconds": 60,
-            "row_cnt": 2,
-            "rows_per_second": 0.03333333333333333
-        },
-        "max_batch": {
-            "period_seconds": 60,
-            "row_cnt": 2,
-            "rows_per_second": 0.03333333333333333
-        },
-        "sweep": [
+                "row_cnt": 7,
+                "rows_per_second": 0.35
+            },
+            {
+                "period_seconds": 30,
+                "row_cnt": 10,
+                "rows_per_second": 0.3333333333333333
+            },
             {
                 "period_seconds": 60,
-                "row_cnt": 2,
-                "rows_per_second": 0.03333333333333333
+                "row_cnt": 16,
+                "rows_per_second": 0.26666666666666666
+            },
+            {
+                "period_seconds": 120,
+                "row_cnt": 1,
+                "rows_per_second": 0.008333333333333333
             }
         ]
     },
     "financial_month_list": {
         "max_throughput": {
-            "period_seconds": 2,
-            "row_cnt": 3,
-            "rows_per_second": 1.5
-        },
-        "min_period": {
-            "period_seconds": 2,
-            "row_cnt": 3,
-            "rows_per_second": 1.5
-        },
-        "max_batch": {
-            "period_seconds": 20,
+            "period_seconds": 60,
             "row_cnt": 16,
-            "rows_per_second": 0.8
-        },
-        "sweep": [
-            {
-                "period_seconds": 2,
-                "row_cnt": 3,
-                "rows_per_second": 1.5
-            },
-            {
-                "period_seconds": 3,
-                "row_cnt": 2,
-                "rows_per_second": 0.6666666666666666
-            },
-            {
-                "period_seconds": 20,
-                "row_cnt": 16,
-                "rows_per_second": 0.8
-            }
-        ]
-    },
-    "financial_year_yfinance_list": {
-        "max_throughput": {
-            "period_seconds": 5,
-            "row_cnt": 4,
-            "rows_per_second": 0.8
+            "rows_per_second": 0.26666666666666666
         },
         "min_period": {
-            "period_seconds": 2,
-            "row_cnt": 1,
-            "rows_per_second": 0.5
+            "period_seconds": 60,
+            "row_cnt": 16,
+            "rows_per_second": 0.26666666666666666
         },
         "max_batch": {
-            "period_seconds": 5,
-            "row_cnt": 4,
-            "rows_per_second": 0.8
+            "period_seconds": 60,
+            "row_cnt": 16,
+            "rows_per_second": 0.26666666666666666
         },
         "sweep": [
-            {
-                "period_seconds": 2,
-                "row_cnt": 1,
-                "rows_per_second": 0.5
-            },
-            {
-                "period_seconds": 5,
-                "row_cnt": 4,
-                "rows_per_second": 0.8
-            },
             {
                 "period_seconds": 60,
-                "row_cnt": 1,
-                "rows_per_second": 0.016666666666666666
+                "row_cnt": 16,
+                "rows_per_second": 0.26666666666666666
             }
         ]
     },
     "financial_quarter_yfinance_list": {
         "max_throughput": {
             "period_seconds": 1,
-            "row_cnt": 2,
-            "rows_per_second": 2.0
+            "row_cnt": 4,
+            "rows_per_second": 4.0
         },
         "min_period": {
             "period_seconds": 1,
-            "row_cnt": 2,
-            "rows_per_second": 2.0
+            "row_cnt": 4,
+            "rows_per_second": 4.0
         },
         "max_batch": {
             "period_seconds": 1,
-            "row_cnt": 2,
-            "rows_per_second": 2.0
+            "row_cnt": 4,
+            "rows_per_second": 4.0
         },
         "sweep": [
             {
                 "period_seconds": 1,
-                "row_cnt": 2,
-                "rows_per_second": 2.0
+                "row_cnt": 4,
+                "rows_per_second": 4.0
             }
         ]
     }

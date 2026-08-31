@@ -155,7 +155,7 @@ class Pipeline:
             )
         ]
 
-    def _build_seed_insert_sql(self, table: str, row_cnt: int = 1) -> str:
+    def _build_seed_insert_sql(self, table: str, row_cnt: int = 1) -> List[str]:
         """Build the INSERT SQL that copies new rows from hidden.<table>
         into pop.<table>, skipping any row where any column is NULL.
 
@@ -196,14 +196,14 @@ class Pipeline:
                 '(was create_seed_tables run?).'
             )
         not_null_clause = ' AND '.join(f'"{c}" IS NOT NULL' for c in columns)
-        return (
-            f'REINDEX TABLE pop.{table}; '
+        return [
+            f'REINDEX TABLE CONCURRENTLY pop.{table}; ',
             f'INSERT INTO pop.{table} '
             f'SELECT * FROM hidden.{table} '
             f'WHERE {not_null_clause} '
             f'EXCEPT SELECT * FROM pop.{table} '
             f'LIMIT {row_cnt};'
-        )
+        ]
 
     def _set_seed_table_primary_key(self, schema: str, table: str) -> None:
         """Promote every column of a freshly created seed table to PRIMARY KEY.
@@ -547,24 +547,25 @@ class Pipeline:
         # Use the exact same INSERT shape as _insert_few_rows_to_seed_tables
         # via the shared _build_seed_insert_sql helper (keeps the null-row
         # filter in one place). Baked into cron.job at schedule time.
-        command = self._build_seed_insert_sql(table, row_cnt=row_cnt)
-
-        # "Upsert" the job: alter if it exists, otherwise schedule.
-        existing = self._db_tool.fetch_all(
-            'SELECT jobid FROM cron.job WHERE jobname = %s',
-            (job_name,),
-        )
-        if existing:
-            self._db_tool.execute_query('SELECT cron.unschedule(%s);', (job_name,))
-        
-        print(
-            f'Creating pg_cron job {job_name!r}: '
-            f'schedule={schedule!r}, command={command!r}'
-        )
-        self._db_tool.execute_query(
-            'SELECT cron.schedule(%s, %s, %s);',
-            (job_name, schedule, command),
-        )
+        commands = self._build_seed_insert_sql(table, row_cnt=row_cnt)
+        for i, sub_command in enumerate(commands):
+            # "Upsert" the job: alter if it exists, otherwise schedule.
+            subjob_name = job_name + str(i)
+            existing = self._db_tool.fetch_all(
+                'SELECT jobid FROM cron.job WHERE jobname = %s',
+                (subjob_name, ),
+            )
+            if existing:
+                self._db_tool.execute_query('SELECT cron.unschedule(%s);', (subjob_name,))
+            
+            print(
+                f'Creating pg_cron job {subjob_name!r}: '
+                f'schedule={schedule!r}, command={sub_command!r}'
+            )
+            self._db_tool.execute_query(
+                'SELECT cron.schedule(%s, %s, %s);',
+                (subjob_name, schedule, sub_command),
+            )
 
         return job_name
 
@@ -577,7 +578,7 @@ class Pipeline:
             table = sql_path.split('.')[0]
             if table in self.seed_tables:
                 time.sleep(sleep_time)
-                insert_sql = self._build_seed_insert_sql(table, row_cnt=row_cnt)
+                insert_sql = self._build_seed_insert_sql(table, row_cnt=row_cnt)[1]
                 print('Inserting one row into seed table:', table)
                 print('Executing SQL:\n', insert_sql)
                 try:
@@ -626,7 +627,7 @@ class Pipeline:
         # Fair-start: empty the seed so every run inserts fresh rows.
         # self._db_tool.execute_query(f'TRUNCATE TABLE pop.{table};')
 
-        insert_sql = self._build_seed_insert_sql(table, row_cnt=limit_count)
+        reindex_sql, insert_sql = self._build_seed_insert_sql(table, row_cnt=limit_count)
         print(f'[probe {limit_count}]   insert SQL:\n{insert_sql}')
         start_cnt = self._db_tool.fetch_all(
                 f'SELECT count(*) FROM pop.{table};'
@@ -634,14 +635,20 @@ class Pipeline:
         for i in range(1, trials + 1):
             if i > 1:
                 time.sleep(sleep_between_sec)
-            wrapped = (
+            reindex_wrapped = (
+                f"SET statement_timeout = '{per_insert_timeout_sec}s'; "
+                f'{reindex_sql} '
+                f'RESET statement_timeout;'
+            )
+            insert_wrapped = (
                 f"SET statement_timeout = '{per_insert_timeout_sec}s'; "
                 f'{insert_sql} '
                 f'RESET statement_timeout;'
             )
             t0 = time.monotonic()
             try:
-                self._db_tool.execute_query(wrapped)
+                self._db_tool.execute_query(reindex_wrapped)
+                self._db_tool.execute_query(insert_wrapped)
             except OperationalError as e:
                 elapsed = time.monotonic() - t0
                 print(
@@ -1243,15 +1250,16 @@ class Pipeline:
                         (job_name,),
                     )
                     if existing:
-                        self._db_tool.execute_query(
-                            'SELECT cron.unschedule(%s);', (job_name,)
-                        )
-                        print(
-                            f'[prune_and_report_seed_cron_jobs] REMOVED cron '
-                            f'job {job_name!r} for seed table pop.{table} '
-                            f'(SUM(insert_size)=0 across succeeded runs in '
-                            f'last {lookback_minutes}min)'
-                        )
+                        for i in [0, 1]:
+                            self._db_tool.execute_query(
+                                'SELECT cron.unschedule(%s);', (job_name + str(i),)
+                            )
+                            print(
+                                f'[prune_and_report_seed_cron_jobs] REMOVED cron '
+                                f'job {job_name!r} {i} for seed table pop.{table} '
+                                f'(SUM(insert_size)=0 across succeeded runs in '
+                                f'last {lookback_minutes}min)'
+                            )
                         stats[table] = {
                             'insert_sum': 0,
                             'projected_24h': 0,
