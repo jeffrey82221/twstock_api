@@ -481,6 +481,23 @@ class Pipeline:
                 row_cnt=resolved_row_cnt,
             )
 
+    def truncate_cron_jobs(self) -> None:
+        """Stop every pg_cron job by unscheduling it and truncating cron.job.
+
+        This is useful when you want to fully disable the seed refresh jobs
+        without removing the cron extension itself.
+        """
+        job_rows = self._db_tool.fetch_all('SELECT jobid FROM cron.job;')
+        for (jobid,) in job_rows:
+            try:
+                self._db_tool.execute_query('SELECT cron.unschedule(%s);', (jobid,))
+                print(f'[truncate_cron_jobs] unscheduled cron job {jobid}')
+            except Exception as exc:  # pragma: no cover - defensive logging branch
+                print(f'[truncate_cron_jobs] failed to unschedule cron job {jobid}: {exc}')
+
+        self._db_tool.execute_query('TRUNCATE TABLE cron.job;')
+        print('[truncate_cron_jobs] truncated cron.job; all pg_cron jobs are stopped.')
+
     def schedule_seed_table_refresh(
         self,
         table: str,
