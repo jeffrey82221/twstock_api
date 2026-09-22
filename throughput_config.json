@@ -1,103 +1,52 @@
 {
-    "product_revenue_filer_scope_list": {
-        "max_throughput": {
-            "period_seconds": 1,
-            "row_cnt": 2,
-            "rows_per_second": 2.0
-        },
-        "min_period": {
-            "period_seconds": 1,
-            "row_cnt": 2,
-            "rows_per_second": 2.0
-        },
-        "max_batch": {
-            "period_seconds": 5,
-            "row_cnt": 8,
-            "rows_per_second": 1.6
-        },
-        "sweep": [
-            {
-                "period_seconds": 1,
-                "row_cnt": 2,
-                "rows_per_second": 2.0
-            },
-            {
-                "period_seconds": 2,
-                "row_cnt": 3,
-                "rows_per_second": 1.5
-            },
-            {
-                "period_seconds": 3,
-                "row_cnt": 4,
-                "rows_per_second": 1.3333333333333333
-            },
-            {
-                "period_seconds": 5,
-                "row_cnt": 8,
-                "rows_per_second": 1.6
-            }
-        ]
-    },
     "chain_list": {
-        "max_throughput": {
-            "period_seconds": 1,
-            "row_cnt": 8,
-            "rows_per_second": 8.0
-        },
-        "min_period": {
-            "period_seconds": 1,
-            "row_cnt": 8,
-            "rows_per_second": 8.0
-        },
-        "max_batch": {
-            "period_seconds": 1,
-            "row_cnt": 8,
-            "rows_per_second": 8.0
-        },
-        "sweep": [
-            {
-                "period_seconds": 1,
-                "row_cnt": 8,
-                "rows_per_second": 8.0
-            }
-        ]
+        "sweep": []
+    },
+    "product_revenue_filer_scope_list": {
+        "sweep": []
     },
     "product_revenue_filer_list": {
+        "sweep": []
+    },
+    "chain_info_list": {
+        "sweep": []
+    },
+    "company_list": {
+        "sweep": []
+    },
+    "company_basic_info_list": {
+        "sweep": []
+    },
+    "dividend_event_list": {
+        "sweep": []
+    },
+    "dividend_event_yfinance_list": {
+        "sweep": []
+    },
+    "financial_year_yfinance_list": {
+        "sweep": []
+    },
+    "financial_month_twse_list": {
         "max_throughput": {
-            "period_seconds": 1,
+            "period_seconds": 15,
             "row_cnt": 1,
-            "rows_per_second": 1.0
+            "rows_per_second": 0.06666666666666667
         },
         "min_period": {
-            "period_seconds": 1,
+            "period_seconds": 15,
             "row_cnt": 1,
-            "rows_per_second": 1.0
+            "rows_per_second": 0.06666666666666667
         },
         "max_batch": {
-            "period_seconds": 30,
-            "row_cnt": 12,
-            "rows_per_second": 0.4
+            "period_seconds": 15,
+            "row_cnt": 1,
+            "rows_per_second": 0.06666666666666667
         },
         "sweep": [
             {
-                "period_seconds": 1,
+                "period_seconds": 15,
                 "row_cnt": 1,
-                "rows_per_second": 1.0
-            },
-            {
-                "period_seconds": 3,
-                "row_cnt": 2,
-                "rows_per_second": 0.6666666666666666
-            },
-            {
-                "period_seconds": 10,
-                "row_cnt": 1,
-                "rows_per_second": 0.1
-            },
-            {
-                "period_seconds": 30,
-                "row_cnt": 12,
-                "rows_per_second": 0.4
+                "rows_per_second": 0.06666666666666667
             },
             {
                 "period_seconds": 60,
@@ -106,185 +55,11 @@
             }
         ]
     },
-    "chain_info_list": {
-        "max_throughput": {
-            "period_seconds": 1,
-            "row_cnt": 1024,
-            "rows_per_second": 1024.0
-        },
-        "min_period": {
-            "period_seconds": 1,
-            "row_cnt": 1024,
-            "rows_per_second": 1024.0
-        },
-        "max_batch": {
-            "period_seconds": 1,
-            "row_cnt": 1024,
-            "rows_per_second": 1024.0
-        },
-        "sweep": [
-            {
-                "period_seconds": 1,
-                "row_cnt": 1024,
-                "rows_per_second": 1024.0
-            }
-        ]
-    },
-    "company_list": {
+    "ohlcv_monthly_list": {
         "max_throughput": {
             "period_seconds": 5,
-            "row_cnt": 2,
-            "rows_per_second": 0.4
-        },
-        "min_period": {
-            "period_seconds": 5,
-            "row_cnt": 2,
-            "rows_per_second": 0.4
-        },
-        "max_batch": {
-            "period_seconds": 15,
-            "row_cnt": 4,
-            "rows_per_second": 0.26666666666666666
-        },
-        "sweep": [
-            {
-                "period_seconds": 5,
-                "row_cnt": 2,
-                "rows_per_second": 0.4
-            },
-            {
-                "period_seconds": 15,
-                "row_cnt": 4,
-                "rows_per_second": 0.26666666666666666
-            }
-        ]
-    },
-    "dividend_event_list": {
-        "max_throughput": {
-            "period_seconds": 2,
-            "row_cnt": 3,
-            "rows_per_second": 1.5
-        },
-        "min_period": {
-            "period_seconds": 2,
-            "row_cnt": 3,
-            "rows_per_second": 1.5
-        },
-        "max_batch": {
-            "period_seconds": 10,
             "row_cnt": 8,
-            "rows_per_second": 0.8
-        },
-        "sweep": [
-            {
-                "period_seconds": 2,
-                "row_cnt": 3,
-                "rows_per_second": 1.5
-            },
-            {
-                "period_seconds": 10,
-                "row_cnt": 8,
-                "rows_per_second": 0.8
-            },
-            {
-                "period_seconds": 30,
-                "row_cnt": 1,
-                "rows_per_second": 0.03333333333333333
-            }
-        ]
-    },
-    "dividend_event_yfinance_list": {
-        "max_throughput": {
-            "period_seconds": 2,
-            "row_cnt": 3,
-            "rows_per_second": 1.5
-        },
-        "min_period": {
-            "period_seconds": 2,
-            "row_cnt": 3,
-            "rows_per_second": 1.5
-        },
-        "max_batch": {
-            "period_seconds": 3,
-            "row_cnt": 4,
-            "rows_per_second": 1.3333333333333333
-        },
-        "sweep": [
-            {
-                "period_seconds": 2,
-                "row_cnt": 3,
-                "rows_per_second": 1.5
-            },
-            {
-                "period_seconds": 3,
-                "row_cnt": 4,
-                "rows_per_second": 1.3333333333333333
-            }
-        ]
-    },
-    "company_basic_info_list": {
-        "max_throughput": {
-            "period_seconds": 1,
-            "row_cnt": 4,
-            "rows_per_second": 4.0
-        },
-        "min_period": {
-            "period_seconds": 1,
-            "row_cnt": 4,
-            "rows_per_second": 4.0
-        },
-        "max_batch": {
-            "period_seconds": 1,
-            "row_cnt": 4,
-            "rows_per_second": 4.0
-        },
-        "sweep": [
-            {
-                "period_seconds": 1,
-                "row_cnt": 4,
-                "rows_per_second": 4.0
-            }
-        ]
-    },
-    "financial_month_twse_list": {
-        "max_throughput": {
-            "period_seconds": 10,
-            "row_cnt": 1,
-            "rows_per_second": 0.1
-        },
-        "min_period": {
-            "period_seconds": 10,
-            "row_cnt": 1,
-            "rows_per_second": 0.1
-        },
-        "max_batch": {
-            "period_seconds": 10,
-            "row_cnt": 1,
-            "rows_per_second": 0.1
-        },
-        "sweep": [
-            {
-                "period_seconds": 10,
-                "row_cnt": 1,
-                "rows_per_second": 0.1
-            },
-            {
-                "period_seconds": 20,
-                "row_cnt": 1,
-                "rows_per_second": 0.05
-            },
-            {
-                "period_seconds": 30,
-                "row_cnt": 1,
-                "rows_per_second": 0.03333333333333333
-            }
-        ]
-    },
-    "financial_year_yfinance_list": {
-        "max_throughput": {
-            "period_seconds": 3,
-            "row_cnt": 4,
-            "rows_per_second": 1.3333333333333333
+            "rows_per_second": 1.6
         },
         "min_period": {
             "period_seconds": 2,
@@ -292,9 +67,9 @@
             "rows_per_second": 0.5
         },
         "max_batch": {
-            "period_seconds": 10,
-            "row_cnt": 11,
-            "rows_per_second": 1.1
+            "period_seconds": 120,
+            "row_cnt": 64,
+            "rows_per_second": 0.5333333333333333
         },
         "sweep": [
             {
@@ -304,141 +79,72 @@
             },
             {
                 "period_seconds": 3,
-                "row_cnt": 4,
-                "rows_per_second": 1.3333333333333333
-            },
-            {
-                "period_seconds": 10,
-                "row_cnt": 11,
-                "rows_per_second": 1.1
-            },
-            {
-                "period_seconds": 15,
-                "row_cnt": 4,
-                "rows_per_second": 0.26666666666666666
-            }
-        ]
-    },
-    "ohlcv_monthly_list": {
-        "max_throughput": {
-            "period_seconds": 1,
-            "row_cnt": 2,
-            "rows_per_second": 2.0
-        },
-        "min_period": {
-            "period_seconds": 1,
-            "row_cnt": 2,
-            "rows_per_second": 2.0
-        },
-        "max_batch": {
-            "period_seconds": 20,
-            "row_cnt": 32,
-            "rows_per_second": 1.6
-        },
-        "sweep": [
-            {
-                "period_seconds": 1,
-                "row_cnt": 2,
-                "rows_per_second": 2.0
-            },
-            {
-                "period_seconds": 2,
-                "row_cnt": 3,
-                "rows_per_second": 1.5
-            },
-            {
-                "period_seconds": 3,
-                "row_cnt": 3,
-                "rows_per_second": 1.0
+                "row_cnt": 1,
+                "rows_per_second": 0.3333333333333333
             },
             {
                 "period_seconds": 5,
-                "row_cnt": 10,
-                "rows_per_second": 2.0
-            },
-            {
-                "period_seconds": 10,
                 "row_cnt": 8,
-                "rows_per_second": 0.8
-            },
-            {
-                "period_seconds": 15,
-                "row_cnt": 8,
-                "rows_per_second": 0.5333333333333333
-            },
-            {
-                "period_seconds": 20,
-                "row_cnt": 32,
                 "rows_per_second": 1.6
             },
             {
+                "period_seconds": 10,
+                "row_cnt": 4,
+                "rows_per_second": 0.4
+            },
+            {
                 "period_seconds": 30,
-                "row_cnt": 32,
-                "rows_per_second": 1.0666666666666667
+                "row_cnt": 4,
+                "rows_per_second": 0.13333333333333333
             },
             {
                 "period_seconds": 60,
-                "row_cnt": 22,
-                "rows_per_second": 0.36666666666666664
+                "row_cnt": 10,
+                "rows_per_second": 0.16666666666666666
+            },
+            {
+                "period_seconds": 120,
+                "row_cnt": 64,
+                "rows_per_second": 0.5333333333333333
             }
         ]
     },
     "financial_year_list": {
         "max_throughput": {
-            "period_seconds": 5,
-            "row_cnt": 13,
-            "rows_per_second": 2.6
+            "period_seconds": 3,
+            "row_cnt": 1,
+            "rows_per_second": 0.3333333333333333
         },
         "min_period": {
-            "period_seconds": 2,
-            "row_cnt": 3,
-            "rows_per_second": 1.5
+            "period_seconds": 3,
+            "row_cnt": 1,
+            "rows_per_second": 0.3333333333333333
         },
         "max_batch": {
-            "period_seconds": 10,
-            "row_cnt": 16,
-            "rows_per_second": 1.6
+            "period_seconds": 15,
+            "row_cnt": 2,
+            "rows_per_second": 0.13333333333333333
         },
         "sweep": [
             {
-                "period_seconds": 2,
-                "row_cnt": 3,
-                "rows_per_second": 1.5
-            },
-            {
                 "period_seconds": 3,
-                "row_cnt": 7,
-                "rows_per_second": 2.3333333333333335
-            },
-            {
-                "period_seconds": 5,
-                "row_cnt": 13,
-                "rows_per_second": 2.6
-            },
-            {
-                "period_seconds": 10,
-                "row_cnt": 16,
-                "rows_per_second": 1.6
-            },
-            {
-                "period_seconds": 15,
                 "row_cnt": 1,
-                "rows_per_second": 0.06666666666666667
-            },
-            {
-                "period_seconds": 20,
-                "row_cnt": 7,
-                "rows_per_second": 0.35
-            },
-            {
-                "period_seconds": 30,
-                "row_cnt": 10,
                 "rows_per_second": 0.3333333333333333
             },
             {
+                "period_seconds": 15,
+                "row_cnt": 2,
+                "rows_per_second": 0.13333333333333333
+            },
+            {
+                "period_seconds": 20,
+                "row_cnt": 1,
+                "rows_per_second": 0.05
+            },
+            {
                 "period_seconds": 60,
-                "row_cnt": 16,
-                "rows_per_second": 0.26666666666666666
+                "row_cnt": 1,
+                "rows_per_second": 0.016666666666666666
             },
             {
                 "period_seconds": 120,
@@ -447,52 +153,7 @@
             }
         ]
     },
-    "financial_month_list": {
-        "max_throughput": {
-            "period_seconds": 60,
-            "row_cnt": 16,
-            "rows_per_second": 0.26666666666666666
-        },
-        "min_period": {
-            "period_seconds": 60,
-            "row_cnt": 16,
-            "rows_per_second": 0.26666666666666666
-        },
-        "max_batch": {
-            "period_seconds": 60,
-            "row_cnt": 16,
-            "rows_per_second": 0.26666666666666666
-        },
-        "sweep": [
-            {
-                "period_seconds": 60,
-                "row_cnt": 16,
-                "rows_per_second": 0.26666666666666666
-            }
-        ]
-    },
     "financial_quarter_yfinance_list": {
-        "max_throughput": {
-            "period_seconds": 1,
-            "row_cnt": 4,
-            "rows_per_second": 4.0
-        },
-        "min_period": {
-            "period_seconds": 1,
-            "row_cnt": 4,
-            "rows_per_second": 4.0
-        },
-        "max_batch": {
-            "period_seconds": 1,
-            "row_cnt": 4,
-            "rows_per_second": 4.0
-        },
-        "sweep": [
-            {
-                "period_seconds": 1,
-                "row_cnt": 4,
-                "rows_per_second": 4.0
-            }
-        ]
+        "sweep": []
     }
 }

@@ -155,39 +155,22 @@ class Pipeline:
             )
         ]
 
-    def _build_seed_insert_sql(self, table: str, row_cnt: int = 1) -> List[str]:
-        """Build the INSERT SQL that copies new rows from hidden.<table>
-        into pop.<table>, skipping any row where any column is NULL.
+    def _build_seed_insert_sql(self, table: str, row_cnt: int = 1, table_reindex: bool = False) -> List[str]:
+        """Build the seed-refresh SQL for ``pop.<table>``.
 
-        Shared by :meth:`_insert_few_rows_to_seed_tables` (one-shot at
-        bootstrap) and :meth:`schedule_seed_table_refresh` (pg_cron tick)
-        so both paths stay in sync.
+        Parameters
+        ----------
+        table:
+            Seed table target, e.g. ``company_list``.
+        row_cnt:
+            How many new rows to insert per tick.
+        table_reindex:
+            When True, prepend ``REINDEX TABLE CONCURRENTLY pop.<table>;``
+            before the INSERT. Defaults to False to avoid unnecessary index
+            maintenance during routine probes and scheduled refreshes.
 
-        Steps in the returned SQL block
-        -------------------------------
-        1. ``REINDEX TABLE pop.<table>`` -- keep the composite PK index
-           compact before the anti-join. Seed tables see many small
-           inserts driven by pg_cron; over time index bloat slows down
-           the ``EXCEPT SELECT * FROM pop.<table>`` scan. REINDEX is
-           cheap on small seed tables and pays for itself on the anti
-           -join that follows.
-        2. ``INSERT ... SELECT ... WHERE <all cols> IS NOT NULL EXCEPT
-           SELECT ... LIMIT row_cnt`` -- copy new rows from
-           ``hidden.<table>`` into ``pop.<table>``.
-
-        Why the NULL filter
-        -------------------
-        Seed tables have a composite PRIMARY KEY over every column, so
-        every column is NOT NULL. Upstream ``hidden.<table>`` views can
-        still emit rows with NULLs (missing joins, upstream data gaps,
-        yfinance / FinMind returning partial records). Without this
-        filter those rows raise ``NotNullViolation`` and the whole
-        INSERT rolls back, stalling seed-table population.
-
-        The filter is derived from the actual columns of pop.<table> at
-        call time -- for :meth:`schedule_seed_table_refresh` that means
-        the string baked into cron.job is fixed at schedule time (the
-        seed table shape is stable once created).
+        This SQL is shared by both the bootstrap one-shot path and the
+        pg_cron scheduled refresh path so all callers stay in sync.
         """
         columns = self._get_table_columns('pop', table)
         if not columns:
@@ -196,14 +179,19 @@ class Pipeline:
                 '(was create_seed_tables run?).'
             )
         not_null_clause = ' AND '.join(f'"{c}" IS NOT NULL' for c in columns)
-        return [
-            f'REINDEX TABLE CONCURRENTLY pop.{table}; ',
+        insert_sql = (
             f'INSERT INTO pop.{table} '
             f'SELECT * FROM hidden.{table} '
             f'WHERE {not_null_clause} '
             f'EXCEPT SELECT * FROM pop.{table} '
             f'LIMIT {row_cnt};'
-        ]
+        )
+        if table_reindex:
+            return [
+                f'REINDEX TABLE CONCURRENTLY pop.{table}; ',
+                insert_sql,
+            ]
+        return [insert_sql]
 
     def _set_seed_table_primary_key(self, schema: str, table: str) -> None:
         """Promote every column of a freshly created seed table to PRIMARY KEY.
@@ -397,8 +385,18 @@ class Pipeline:
         config_path: str = 'throughput_config.json',
         profile: str = 'max_throughput',
         period_minutes: Optional[int] = None,
+        table_reindex: bool = False,
+        restart: bool = False,
     ):
         """Set up pg_cron jobs for all seed tables.
+
+        Parameters
+        ----------
+        restart:
+            When True, delete all existing cron jobs via
+            :meth:`truncate_cron_jobs` before recreating the refreshed
+            schedules. Defaults to False so existing jobs are kept unless
+            a full reset is explicitly requested.
 
         Each job inserts new rows from ``hidden.<table>`` into
         ``pop.<table>`` every ``period_seconds`` seconds. If a
@@ -433,6 +431,9 @@ class Pipeline:
             period_seconds = period_minutes * 60
         if period_seconds is None:
             period_seconds = 60  # default: once per minute
+
+        if restart:
+            self.truncate_cron_jobs()
 
         # --- Load throughput config produced by probe_all_throughput ---
         throughput_cfg: Dict[str, Dict[str, int]] = {}
@@ -479,6 +480,7 @@ class Pipeline:
                 table=table,
                 period_seconds=resolved_period,
                 row_cnt=resolved_row_cnt,
+                table_reindex=table_reindex,
             )
 
     def truncate_cron_jobs(self) -> None:
@@ -505,6 +507,7 @@ class Pipeline:
         row_cnt: int = 1,
         job_name: Optional[str] = None,
         period_minutes: Optional[int] = None,
+        table_reindex: bool = False,
     ) -> str:
         """Schedule (or update) a pg_cron job that periodically inserts new
         rows from hidden.<table> into pop.<table>.
@@ -564,7 +567,11 @@ class Pipeline:
         # Use the exact same INSERT shape as _insert_few_rows_to_seed_tables
         # via the shared _build_seed_insert_sql helper (keeps the null-row
         # filter in one place). Baked into cron.job at schedule time.
-        commands = self._build_seed_insert_sql(table, row_cnt=row_cnt)
+        commands = self._build_seed_insert_sql(
+            table,
+            row_cnt=row_cnt,
+            table_reindex=table_reindex,
+        )
         for i, sub_command in enumerate(commands):
             # "Upsert" the job: alter if it exists, otherwise schedule.
             subjob_name = job_name + str(i)
@@ -586,7 +593,12 @@ class Pipeline:
 
         return job_name
 
-    def _insert_few_rows_to_seed_tables(self, row_cnt: int = 1, sleep_time: int = 0):
+    def _insert_few_rows_to_seed_tables(
+        self,
+        row_cnt: int = 1,
+        sleep_time: int = 0,
+        table_reindex: bool = False,
+    ):
         """
         從 poc views 取一筆資料，插入到 seed tables
         """
@@ -595,10 +607,17 @@ class Pipeline:
             table = sql_path.split('.')[0]
             if table in self.seed_tables:
                 time.sleep(sleep_time)
-                insert_sql = self._build_seed_insert_sql(table, row_cnt=row_cnt)[1]
+                statements = self._build_seed_insert_sql(
+                    table,
+                    row_cnt=row_cnt,
+                    table_reindex=table_reindex,
+                )
+                insert_sql = statements[-1]
                 print('Inserting one row into seed table:', table)
                 print('Executing SQL:\n', insert_sql)
                 try:
+                    if len(statements) > 1:
+                        self._db_tool.execute_query(statements[0])
                     self._db_tool.execute_query(insert_sql)
                 except Exception as e:
                     print(f"[_insert_few_rows_to_seed_tables] Failed to insert into seed table {table}: {e}")
@@ -615,6 +634,7 @@ class Pipeline:
         per_insert_timeout_sec: int = 50,
         sleep_between_sec: int = 5,
         trials: int = 3,
+        table_reindex: bool = False,
     ) -> bool:
         """Run one capacity trial at a given ``limit_count``.
 
@@ -644,7 +664,13 @@ class Pipeline:
         # Fair-start: empty the seed so every run inserts fresh rows.
         # self._db_tool.execute_query(f'TRUNCATE TABLE pop.{table};')
 
-        reindex_sql, insert_sql = self._build_seed_insert_sql(table, row_cnt=limit_count)
+        statements = self._build_seed_insert_sql(
+            table,
+            row_cnt=limit_count,
+            table_reindex=table_reindex,
+        )
+        reindex_sql = statements[0] if len(statements) > 1 else None
+        insert_sql = statements[-1]
         print(f'[probe {limit_count}]   insert SQL:\n{insert_sql}')
         start_cnt = self._db_tool.fetch_all(
                 f'SELECT count(*) FROM pop.{table};'
@@ -652,11 +678,14 @@ class Pipeline:
         for i in range(1, trials + 1):
             if i > 1:
                 time.sleep(sleep_between_sec)
-            reindex_wrapped = (
-                f"SET statement_timeout = '{per_insert_timeout_sec}s'; "
-                f'{reindex_sql} '
-                f'RESET statement_timeout;'
-            )
+            if reindex_sql is not None:
+                reindex_wrapped = (
+                    f"SET statement_timeout = '{per_insert_timeout_sec}s'; "
+                    f'{reindex_sql} '
+                    f'RESET statement_timeout;'
+                )
+            else:
+                reindex_wrapped = None
             insert_wrapped = (
                 f"SET statement_timeout = '{per_insert_timeout_sec}s'; "
                 f'{insert_sql} '
@@ -664,7 +693,8 @@ class Pipeline:
             )
             t0 = time.monotonic()
             try:
-                self._db_tool.execute_query(reindex_wrapped)
+                if reindex_wrapped is not None:
+                    self._db_tool.execute_query(reindex_wrapped)
                 self._db_tool.execute_query(insert_wrapped)
             except OperationalError as e:
                 elapsed = time.monotonic() - t0
@@ -708,6 +738,7 @@ class Pipeline:
         sleep_between_sec: int = 5,
         trials: int = 3,
         max_limit: Optional[int] = None,
+        table_reindex: bool = False,
     ) -> int:
         """Find the largest ``row_cnt`` at which the seed-refresh insert
         for ``pop.<table>`` is *stably* fast enough.
@@ -773,6 +804,7 @@ class Pipeline:
                 per_insert_timeout_sec=per_insert_timeout_sec,
                 sleep_between_sec=sleep_between_sec,
                 trials=trials,
+                table_reindex=table_reindex,
             )
             if ok:
                 low_success = candidate
@@ -805,6 +837,7 @@ class Pipeline:
                 per_insert_timeout_sec=per_insert_timeout_sec,
                 sleep_between_sec=sleep_between_sec,
                 trials=trials,
+                table_reindex=table_reindex,
             )
             if ok:
                 low_success = mid
@@ -837,6 +870,7 @@ class Pipeline:
         sleep_between_sec: int = 5,
         trials: int = 3,
         max_limit: Optional[int] = None,
+        table_reindex: bool = False,
     ) -> Dict[str, int]:
         """Probe all seed tables and return a dict of {table: safe_limit}."""
         results = {}
@@ -861,6 +895,7 @@ class Pipeline:
                         sleep_between_sec=sleep_between_sec,
                         trials=trials,
                         max_limit=max_limit,
+                        table_reindex=table_reindex,
                     )
                 except OperationalError as e:
                     print(f'[probe_all] ERROR: {table} failed to probe due to OperationalError: {e}. Retrying...')
@@ -877,7 +912,8 @@ class Pipeline:
                             results[upstream_table],
                             per_insert_timeout_sec=per_insert_timeout_sec,
                             sleep_between_sec=sleep_between_sec,
-                            trials= 3
+                            trials=3,
+                            table_reindex=table_reindex,
                         )
                     continue
                 elif attempts >= 3 and safe_limit == 0:
@@ -907,6 +943,7 @@ class Pipeline:
         trials: int = 3,
         sleep_between_sec: int = 1,
         max_row_cnt: Optional[int] = None,
+        table_reindex: bool = False,
     ) -> Dict[str, Dict[str, int]]:
         """Sweep the (period_seconds x row_cnt) grid to find the maximum
         stable insert rate for ``pop.<table>``.
@@ -1006,6 +1043,7 @@ class Pipeline:
                     per_insert_timeout_sec=timeout_sec,
                     sleep_between_sec=sleep_between_sec,
                     trials=trials,
+                    table_reindex=table_reindex,
                 )
                 if ok:
                     best_row_cnt = candidate
@@ -1043,6 +1081,7 @@ class Pipeline:
                         per_insert_timeout_sec=timeout_sec,
                         sleep_between_sec=sleep_between_sec,
                         trials=trials,
+                        table_reindex=table_reindex,
                     )
                     if ok:
                         low = mid
@@ -1103,6 +1142,8 @@ class Pipeline:
         sleep_between_sec: int = 1,
         max_row_cnt: Optional[int] = None,
         config_path: str = 'throughput_config.json',
+        table_reindex: bool = False,
+        restart: bool = False,
     ) -> Dict[str, Dict[str, Dict[str, int]]]:
         """Probe every seed table and persist per-table
         (period_seconds, row_cnt) profiles to ``config_path``.
@@ -1127,6 +1168,9 @@ class Pipeline:
         every table completes).
         """
         results: Dict[str, Dict[str, Dict[str, int]]] = {}
+        if restart and os.path.exists(config_path):
+            os.remove(config_path)
+            print(f'[probe_all_throughput] restart=True: removed existing config at {config_path!r}')
         if os.path.exists(config_path):
             with open(config_path, 'r') as file:
                 results = json.load(file)
@@ -1142,6 +1186,7 @@ class Pipeline:
                     trials=trials,
                     sleep_between_sec=sleep_between_sec,
                     max_row_cnt=max_row_cnt,
+                    table_reindex=table_reindex,
                 )
             except OperationalError as e:
                 print(
