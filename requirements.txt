@@ -11,6 +11,7 @@ psycopg-pool==3.2.4
 paradag==1.2.0
 fastmcp[tasks]
 pytest==9.1.1
+pytest-asyncio==1.4.0
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.14.2

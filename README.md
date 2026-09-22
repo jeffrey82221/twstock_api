@@ -47,6 +47,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 5000
 - `GET /api/company/{stock_id}/basic` 公司基本資料
 - `GET /api/company/{stock_id}/business-items` 主要營業項目
 - `GET /api/company/{stock_id}/financials?as_of=YYYY-MM-DD` 財務指標（EPS、淨利、營業利潤率）
+- `GET /api/company/{stock_id}/quarterly-financials?as_of=YYYY-MM-DD` 季度財務分析（MOPS t163sb06 + t163sb04）；最早 `as_of=2013-03-31`
 - `GET /api/company/{stock_id}/revenue?as_of=YYYY-MM-DD` 月營收與 TTM / YoY（FinMind）
 - `GET /api/company/{stock_id}/revenue/twse?as_of=YYYY-MM-DD` 月營收與 YoY（TWSE/TPEx OpenAPI t187ap05；TTM 欄位始終為 null）
 - `GET /api/company/{stock_id}/dividend?as_of=YYYY-MM-DD` 股利（FinMind）
@@ -70,6 +71,7 @@ Swagger UI: http://localhost:5000/docs
 - 月營收：每月 10 日前公告上月數據
 - **櫃買中心 產業價值鏈資訊平台**（`ic.tpex.org.tw`）：47 條產業鏈，server-rendered HTML，無 API。本服務首次查詢時 lazy 背景全量收集（47 頁併發，semaphore=6，~8 秒），落盤至 `data/icchain.json`，TTL 7 天。公司比對採純 `stk_code` 反查（嚴謹，不做模糊比對），約 1853 家上市櫃公司有產業鏈定位資料。
 - **公開資訊觀測站（MOPS）主要產品比重**：`ajax_t05st08_all` 月度申報資料，依 `as_of` 自動回溯最近一份有效申報期。
+- **公開資訊觀測站（MOPS）季度財務分析**：卡片原記載的 `ajax_t05st21` 已提示改用 IFRS 報表；本 API 使用官方 `ajax_t163sb06` 營益分析彙總表與 `ajax_t163sb04` 綜合損益表，按市場／民國年／季度抓全市場 HTML 後過濾個股。實測 2330 最早資料日為 `2013-03-31`；`as_of` 會選不晚於基準日的最近完整季度並以 `data_date` 標示實際日期。
 - **TWSE 外資及陸資投資持股統計（MI_QFIIS）**：官方免費、免 API key 的 Big5 CSV；以單一日期下載全市場資料後過濾股票代號。實測最早可得日期為 `2004-02-11`；`as_of` 不得早於此日。整日 payload 快取於 `/tmp/foreign_ownership_cache`；週末與休市日會逐日往前回溯，並以 `data_date` / `row.trade_date` 標示實際資料日。
 
 ## 結構

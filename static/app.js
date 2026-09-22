@@ -970,6 +970,59 @@ resultEl.addEventListener('click', (e) => {
 })();
 
 // ============================================================================
+// MOPS 季度財務分析（as_of → 最近完整季度）
+// ============================================================================
+(function initQuarterlyFinancials() {
+  const form = document.getElementById("qfForm");
+  const stock = document.getElementById("qfStk");
+  const asOf = document.getElementById("qfDate");
+  const result = document.getElementById("qfResult");
+  if (!form || !stock || !asOf || !result) return;
+
+  asOf.value = new Date().toISOString().slice(0, 10);
+
+  function value(n, digits = 2) {
+    return n == null || !Number.isFinite(Number(n)) ? "—" : Number(n).toLocaleString("en-US", { maximumFractionDigits: digits });
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const id = stock.value.trim();
+    if (!id || !asOf.value) return;
+    const button = form.querySelector("button");
+    button.disabled = true;
+    result.innerHTML = `<div class="mv-card"><div class="mv-empty">查詢中…</div></div>`;
+    try {
+      const response = await fetch(api(`/api/company/${encodeURIComponent(id)}/quarterly-financials?as_of=${encodeURIComponent(asOf.value)}`));
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        result.innerHTML = `<div class="mv-card"><div class="mv-empty">錯誤：${escapeHtml(body.detail || `HTTP ${response.status}`)}</div></div>`;
+        return;
+      }
+      const d = body.data || {};
+      const fallback = body.data_date && body.data_date !== body.as_of;
+      result.innerHTML = `
+        <div class="mv-card">
+          <div class="mv-header"><div class="mv-title">${escapeHtml(body.company_name || body.stock_id)} · ${escapeHtml(body.market || "")}</div><div class="mv-date">Q${escapeHtml(body.quarter)} ${escapeHtml(String(body.fiscal_year))}</div></div>
+          ${fallback ? `<div class="fo-notice">基準日 ${escapeHtml(body.as_of)} 沒有新的完整季度，已回溯至實際資料日 ${escapeHtml(body.data_date)}。</div>` : `<div class="mv-method">實際資料日：${escapeHtml(body.data_date || "—")}</div>`}
+          <div class="mv-metrics">
+            <div class="mv-metric"><div class="mv-label">營收（百萬元）</div><div class="mv-value">${value(d.revenue_millions)}</div></div>
+            <div class="mv-metric"><div class="mv-label">毛利率</div><div class="mv-value">${value(d.gross_margin_pct)}%</div></div>
+            <div class="mv-metric"><div class="mv-label">營業利益率</div><div class="mv-value">${value(d.operating_margin_pct)}%</div></div>
+            <div class="mv-metric"><div class="mv-label">稅後純益率</div><div class="mv-value">${value(d.net_margin_pct)}%</div></div>
+            <div class="mv-metric"><div class="mv-label">基本 EPS</div><div class="mv-value">${value(d.eps)} 元</div></div>
+          </div>
+          <div class="mv-source">資料來源：${escapeHtml(body.source || "MOPS")}</div>
+        </div>`;
+    } catch (error) {
+      result.innerHTML = `<div class="mv-card"><div class="mv-empty">請求失敗：${escapeHtml(error.message)}</div></div>`;
+    } finally {
+      button.disabled = false;
+    }
+  });
+})();
+
+// ============================================================================
 // 外資及陸資持股（單日 as_of，非交易日往前回溯）
 // ============================================================================
 (function initForeignOwnership() {
