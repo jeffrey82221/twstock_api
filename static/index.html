@@ -49,6 +49,17 @@
   </section>
 
   <section class="panel">
+    <h2>外資及陸資持股（TWSE MI_QFIIS）</h2>
+    <p class="sub">輸入股票代號與基準日，查詢該日的外資持股；若遇週末或休市日，系統會自動回溯至最近一筆資料。資料源最早可追溯至 2004-02-11。</p>
+    <form id="foForm" class="search">
+      <input id="foStk" type="text" placeholder="股票代號 例如 2330" autocomplete="off" value="2330" />
+      <input id="foDate" type="date" min="2004-02-11" required />
+      <button type="submit">查詢</button>
+    </form>
+    <div id="foResult" class="inst-result"></div>
+  </section>
+
+  <section class="panel">
     <h2>全市場估值（本益比 / 殖利率 / 股價淨值比）</h2>
     <p class="sub">TWSE 上市股票單一交易日的市值加權估值。分子 / 分母皆由 BWIBBU_d 個股資料反推：EPS=close/PER、BVPS=close/PBR、DPS=close×yield%/100；股數 ≈ paid_in_capital / 10（台股面額慣例，非嚴格流通股本）。</p>
     <form id="mvForm" class="search">

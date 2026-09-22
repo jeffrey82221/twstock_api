@@ -777,6 +777,36 @@ class InstitutionalNetBuySellResponse(BaseModel):
     source: Optional[str] = Field(None, description="本筆資料來源註記。")
 
 
+class ForeignOwnershipRow(BaseModel):
+    """單一交易日的 TWSE MI_QFIIS 外資持股資料。"""
+    model_config = ConfigDict(extra="allow")
+
+    trade_date: str = Field(..., description="資料日期（`YYYY-MM-DD`，西元年）。")
+    stock_id: str = Field(..., description="股票代號。")
+    stock_name: str = Field(..., description="證券名稱。")
+    issued_shares: Optional[float] = Field(None, description="發行股數（股），取 MI_QFIIS 第 4 欄。")
+    foreign_investment_available_shares: Optional[float] = Field(None, description="外資及陸資尚可投資股數（股），取第 5 欄。")
+    foreign_investment_shares: Optional[float] = Field(None, description="全體外資及陸資持有股數（股），取第 6 欄。")
+    foreign_investment_available_ratio_pct: Optional[float] = Field(None, description="尚可投資比率（%），取第 7 欄。")
+    foreign_investment_ratio_pct: Optional[float] = Field(None, description="全體外資及陸資持股比率（%），取第 8 欄。")
+    foreign_investment_limit_ratio_pct: Optional[float] = Field(None, description="外資及陸資共用法令投資上限比率（%），取第 9 欄。")
+    china_investment_limit_ratio_pct: Optional[float] = Field(None, description="陸資法令投資上限比率（%），取第 10 欄。")
+    change_reason: Optional[str] = Field(None, description="與前日異動原因（註），取第 11 欄。")
+    last_change_date: Optional[str] = Field(None, description="最近一次上市公司申報外資及陸資持股異動日期，轉為 `YYYY-MM-DD`。")
+
+
+class ForeignOwnershipResponse(BaseModel):
+    """`GET /api/company/{stock_id}/foreign-ownership` 回應。"""
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否在指定日期查到該股票的資料。")
+    stock_id: str = Field(..., description="查詢股票代號。")
+    as_of: str = Field(..., description="查詢基準日，`YYYY-MM-DD`；服務會回傳該日或之前最近可得資料。")
+    data_date: Optional[str] = Field(None, description="實際資料日期，等同 `row.trade_date`；若 as_of 為週末或休市日，通常早於 as_of。")
+    row: Optional[ForeignOwnershipRow] = Field(None, description="as_of 當日或往前最近交易日的外資持股資料；找不到歷史資料時為 null。")
+    source: Optional[str] = Field(None, description="TWSE MI_QFIIS 官方資料源註記。")
+
+
 class MarketValuationConstituent(BaseModel):
     """單一成分股樣本（供交叉驗證加總邏輯）。"""
     model_config = ConfigDict(extra="allow")

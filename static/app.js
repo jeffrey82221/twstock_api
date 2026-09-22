@@ -970,6 +970,75 @@ resultEl.addEventListener('click', (e) => {
 })();
 
 // ============================================================================
+// 外資及陸資持股（單日 as_of，非交易日往前回溯）
+// ============================================================================
+(function initForeignOwnership() {
+  const foForm = document.getElementById("foForm");
+  const foStk = document.getElementById("foStk");
+  const foDate = document.getElementById("foDate");
+  const foResult = document.getElementById("foResult");
+  if (!foForm || !foStk || !foDate || !foResult) return;
+
+  const today = new Date();
+  foDate.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+
+  function num(value, digits = 0) {
+    if (value == null || !Number.isFinite(Number(value))) return "—";
+    return Number(value).toLocaleString("en-US", { maximumFractionDigits: digits });
+  }
+
+  function render(data) {
+    if (!data.found || !data.row) {
+      foResult.innerHTML = `<div class="inst-card"><div class="inst-empty">${escapeHtml(data.stock_id)} 在 ${escapeHtml(data.as_of)} 以前沒有可取得的外資持股資料。</div></div>`;
+      return;
+    }
+    const r = data.row;
+    const fallback = data.data_date !== data.as_of;
+    foResult.innerHTML = `
+      <div class="inst-card">
+        <div class="head">
+          <span class="name">${escapeHtml(r.stock_name || "")}</span>
+          <span class="code">${escapeHtml(r.stock_id)}</span>
+          <span class="meta">基準日 ${escapeHtml(data.as_of)} · 實際資料日 ${escapeHtml(data.data_date || r.trade_date)}</span>
+        </div>
+        ${fallback ? `<div class="fo-notice">基準日沒有交易資料，已回溯至 ${escapeHtml(data.data_date || r.trade_date)}。</div>` : ""}
+        <div class="inst-grid">
+          <div class="inst-row"><span class="k">外資及陸資持有股數</span><span class="v">${num(r.foreign_investment_shares)}</span></div>
+          <div class="inst-row"><span class="k">外資及陸資持股比率</span><span class="v">${num(r.foreign_investment_ratio_pct, 2)}%</span></div>
+          <div class="inst-row"><span class="k">發行股數</span><span class="v">${num(r.issued_shares)}</span></div>
+          <div class="inst-row"><span class="k">尚可投資股數</span><span class="v">${num(r.foreign_investment_available_shares)}</span></div>
+          <div class="inst-row"><span class="k">尚可投資比率</span><span class="v">${num(r.foreign_investment_available_ratio_pct, 2)}%</span></div>
+          <div class="inst-row"><span class="k">外資投資上限比率</span><span class="v">${num(r.foreign_investment_limit_ratio_pct, 2)}%</span></div>
+        </div>
+        <div class="inst-source">資料來源：${escapeHtml(data.source || "TWSE MI_QFIIS")}</div>
+      </div>`;
+  }
+
+  foForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const stockId = foStk.value.trim();
+    const asOf = foDate.value;
+    if (!stockId || !asOf) return;
+    const button = foForm.querySelector("button");
+    button.disabled = true;
+    foResult.innerHTML = `<div class="inst-empty">查詢中 ...</div>`;
+    try {
+      const response = await fetch(api(`/api/company/${encodeURIComponent(stockId)}/foreign-ownership?as_of=${encodeURIComponent(asOf)}`));
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        foResult.innerHTML = `<div class="inst-card"><div class="inst-empty">錯誤：${escapeHtml(body.detail || `HTTP ${response.status}`)}</div></div>`;
+        return;
+      }
+      render(body);
+    } catch (error) {
+      foResult.innerHTML = `<div class="inst-card"><div class="inst-empty">請求失敗：${escapeHtml(error.message)}</div></div>`;
+    } finally {
+      button.disabled = false;
+    }
+  });
+})();
+
+// ============================================================================
 // 全市場估值查詢面板（GET /api/market-valuation-summary）
 // ============================================================================
 (function initMarketValuation() {
