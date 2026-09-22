@@ -1039,6 +1039,56 @@ resultEl.addEventListener('click', (e) => {
 })();
 
 // ============================================================================
+// TWSE SBL 借券歷史還券明細
+// ============================================================================
+(function initSblHistory() {
+  const form = document.getElementById("sblForm");
+  const stock = document.getElementById("sblStk");
+  const asOf = document.getElementById("sblDate");
+  const result = document.getElementById("sblResult");
+  if (!form || !stock || !asOf || !result) return;
+
+  asOf.value = new Date().toISOString().slice(0, 10);
+
+  function number(value, digits = 2) {
+    if (value == null || !Number.isFinite(Number(value))) return "—";
+    return Number(value).toLocaleString("en-US", { maximumFractionDigits: digits });
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const id = stock.value.trim();
+    if (!id || !asOf.value) return;
+    const button = form.querySelector("button");
+    button.disabled = true;
+    result.innerHTML = `<div class="inst-empty">查詢中 ...</div>`;
+    try {
+      const response = await fetch(api(`/api/company/${encodeURIComponent(id)}/sbl-history?as_of=${encodeURIComponent(asOf.value)}`));
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        result.innerHTML = `<div class="inst-card"><div class="inst-empty">錯誤：${escapeHtml(body.detail || `HTTP ${response.status}`)}</div></div>`;
+        return;
+      }
+      const fallback = body.data_date !== body.as_of;
+      const rows = (body.records || []).map((record) => `
+        <tr><td>${escapeHtml(record.transaction_date || "—")}</td><td>${escapeHtml(record.transaction_type)}</td><td class="num">${number(record.quantity_lots, 0)}</td><td class="num">${number(record.fee_rate_pct)}%</td><td class="num">${number(record.completion_close_price)}</td><td>${escapeHtml(record.lending_days == null ? "—" : record.lending_days)}</td></tr>
+      `).join("");
+      result.innerHTML = `
+        <div class="inst-card">
+          <div class="head"><span class="name">${escapeHtml(body.records?.[0]?.stock_name || body.stock_id)}</span><span class="code">${escapeHtml(body.stock_id)}</span><span class="meta">實際資料日 ${escapeHtml(body.data_date || "—")}</span></div>
+          ${fallback ? `<div class="fo-notice">基準日 ${escapeHtml(body.as_of)} 沒有最近事件，已回溯至 ${escapeHtml(body.data_date)}。</div>` : ""}
+          <div class="mv-table-wrap"><table class="mv-table"><thead><tr><th>借券成交日</th><th>交易方式</th><th>數量（張）</th><th>費率</th><th>還券日收盤價</th><th>借券天數</th></tr></thead><tbody>${rows}</tbody></table></div>
+          <div class="inst-source">資料來源：${escapeHtml(body.source || "TWSE SBL t13sa870")}</div>
+        </div>`;
+    } catch (error) {
+      result.innerHTML = `<div class="inst-card"><div class="inst-empty">請求失敗：${escapeHtml(error.message)}</div></div>`;
+    } finally {
+      button.disabled = false;
+    }
+  });
+})();
+
+// ============================================================================
 // 全市場估值查詢面板（GET /api/market-valuation-summary）
 // ============================================================================
 (function initMarketValuation() {

@@ -807,6 +807,33 @@ class ForeignOwnershipResponse(BaseModel):
     source: Optional[str] = Field(None, description="TWSE MI_QFIIS 官方資料源註記。")
 
 
+class SblHistoryRecord(BaseModel):
+    """TWSE SBL t13sa870 單筆完成還券明細。"""
+    model_config = ConfigDict(extra="allow")
+
+    transaction_date: Optional[str] = Field(None, description="借券成交日期（西元 `YYYY-MM-DD`）。")
+    stock_id: str = Field(..., description="股票代號。")
+    stock_name: str = Field(..., description="證券名稱。")
+    transaction_type: str = Field(..., description="交易方式，例如 `競價`、`議借`。")
+    quantity_lots: Optional[float] = Field(None, description="成交數量，TWSE 原始單位為交易單位／張。")
+    fee_rate_pct: Optional[float] = Field(None, description="成交費率（%）。")
+    completion_close_price: Optional[float] = Field(None, description="完成還券日收盤價（新台幣元）。")
+    completion_date: str = Field(..., description="完成還券日期（西元 `YYYY-MM-DD`）。")
+    lending_days: Optional[int] = Field(None, description="借券天數。")
+
+
+class SblHistoryResponse(BaseModel):
+    """`GET /api/company/{stock_id}/sbl-history` 回應。"""
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否找到指定股票的借券還券明細。")
+    stock_id: str = Field(..., description="查詢股票代號。")
+    as_of: str = Field(..., description="查詢基準日；只接受不晚於此日的完成還券資料。")
+    data_date: Optional[str] = Field(None, description="實際找到的最近完成還券日期；可能早於 `as_of`。")
+    records: list[SblHistoryRecord] = Field(default_factory=list, description="實際資料日視窗內的借券還券事件明細。")
+    source: str = Field(..., description="TWSE SBL t13sa870 官方資料源註記。")
+
+
 class MarketValuationConstituent(BaseModel):
     """單一成分股樣本（供交叉驗證加總邏輯）。"""
     model_config = ConfigDict(extra="allow")

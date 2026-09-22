@@ -53,6 +53,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 5000
 - `GET /api/company/{stock_id}/dividend/yfinance?as_of=YYYY-MM-DD` 股利（yfinance）
 - `GET /api/company/{stock_id}/value-chain` 公司在產業鏈的定位與鄰居
 - `GET /api/company/{stock_id}/foreign-ownership?as_of=YYYY-MM-DD` 外資及陸資持股（TWSE MI_QFIIS）；若基準日無交易，回溯至最近資料日並以 `data_date` / `row.trade_date` 標示
+- `GET /api/company/{stock_id}/sbl-history?as_of=YYYY-MM-DD` 借券歷史還券明細（TWSE SBL t13sa870）；以完成還券日期為基準，回溯至最近有事件的 `data_date`
 - `GET /api/company/{stock_id}/product-revenue?as_of=YYYY-MM-DD` 主要產品比重（MOPS）
 - `GET /api/ohlcv?stk_code=XXXX&from=YYYY-MM-DD&to=YYYY-MM-DD` 日 K OHLCV 行情（上市 + 上櫃整合，智能切換）：≤ 7 天範圍逐日拉全市場 payload（MI_INDEX / dailyQuotes）+ 磁碟 cache；> 7 天逐月拉單股整月 payload（STOCK_DAY / tradingStock）。TPEx 上游「張 / 仟元」已對齊到「股 / 元」。
 - `GET /api/chains` 列出全部 47 條產業鏈（IC 代碼 + 名稱）
@@ -71,6 +72,7 @@ Swagger UI: http://localhost:5000/docs
 - **櫃買中心 產業價值鏈資訊平台**（`ic.tpex.org.tw`）：47 條產業鏈，server-rendered HTML，無 API。本服務首次查詢時 lazy 背景全量收集（47 頁併發，semaphore=6，~8 秒），落盤至 `data/icchain.json`，TTL 7 天。公司比對採純 `stk_code` 反查（嚴謹，不做模糊比對），約 1853 家上市櫃公司有產業鏈定位資料。
 - **公開資訊觀測站（MOPS）主要產品比重**：`ajax_t05st08_all` 月度申報資料，依 `as_of` 自動回溯最近一份有效申報期。
 - **TWSE 外資及陸資投資持股統計（MI_QFIIS）**：官方免費、免 API key 的 Big5 CSV；以單一日期下載全市場資料後過濾股票代號。實測最早可得日期為 `2004-02-11`；`as_of` 不得早於此日。整日 payload 快取於 `/tmp/foreign_ownership_cache`；週末與休市日會逐日往前回溯，並以 `data_date` / `row.trade_date` 標示實際資料日。
+- **TWSE 借券歷史還券明細（SBL t13sa870）**：官方免費、免 API key 的 JSON；以 `startDate`／`endDate` 指定完成還券日期區間，再帶 `stockNo` 查詢單一股票。服務以 31 日視窗快取並向前回溯，實測 2330 最早可得完成還券資料為 `2005-01-28`（更早的 `2005-01-13` 是借券成交日期，不是本 endpoint 的 as_of 日期），並以 `data_date` 標示實際事件日期。
 
 ## 結構
 
