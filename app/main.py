@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from . import icchain, institutional_source, mops_financial_analysis, ohlcv_source, valuation_source
+from . import foreign_ownership_source, icchain, institutional_source, mops_financial_analysis, ohlcv_source, valuation_source
 from .schemas import (
     BusinessItemsResponse,
     ChainResponse,
@@ -36,6 +36,7 @@ from .schemas import (
     MarketValuationSummaryResponse,
     CompanyValuationResponse,
     FinancialAnalysisResponse,
+    ForeignOwnershipResponse,
     OhlcvResponse,
     ProductRevenueFilersResponse,
     ProductRevenueResponse,
@@ -809,6 +810,49 @@ async def institutional_net_buy_sell(
     if d > date.today():
         raise HTTPException(status_code=400, detail="`date` must be <= today")
     return await institutional_source.get_institutional_net_buy_sell(stk_code.strip(), d)
+
+
+@app.get(
+    "/api/company/{stock_id}/foreign-ownership",
+    response_model=ForeignOwnershipResponse,
+    tags=["Company (per-source)"],
+    summary="外資及陸資持股歷史（TWSE MI_QFIIS）",
+    description=(
+        "取得指定股票在基準日或之前最近可得交易日的外資及陸資持股股數與比率。\n\n"
+        "**資料來源網站正式名稱**：臺灣證券交易所（TWSE）外資及陸資投資持股統計。\n\n"
+        "**上游 endpoint**：`GET https://www.twse.com.tw/fund/MI_QFIIS?response=csv&date=YYYYMMDD&selectType=ALLBUT0999`。"
+        "回應是 Big5 編碼 CSV；本服務尋找 `證券代號` 表頭，略過頁首說明與頁尾文字，再以 `csv.reader` 解析。\n\n"
+        "**查詢參數**：`as_of` 為西元日期 `YYYY-MM-DD`。TWSE MI_QFIIS 實際可取得的最早日期為 **2004-02-11**；"
+        "早於此日期回 HTTP 400。若 as_of 當日沒有資料，服務會逐日往前查找，直到找到最近一筆資料或抵達 2004-02-11。\n\n"
+        "**欄位轉換**：股數欄位去除千分位逗號後轉為股；比例欄位保留百分點（例如 `2.54` 代表 2.54%）；"
+        "民國日期轉為 `YYYY-MM-DD`；回應的 `data_date` / `row.trade_date` 是實際資料日，可能早於使用者輸入的 `as_of`。\n\n"
+        "**成本與限流**：官方免費且不需 API key。資料只能逐日下載；fallback 過程的連續 cache miss 間隔 3 秒，"
+        "並以 `/tmp/foreign_ownership_cache/{YYYYMMDD}.json.gz` 快取整日全市場 CSV，因此重複查詢不會重打上游。"
+    ),
+)
+async def company_foreign_ownership(
+    stock_id: str,
+    as_of: str = Query(..., description="查詢日期，`YYYY-MM-DD`。"),
+):
+    try:
+        query_date = datetime.strptime(as_of, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="`as_of` must be YYYY-MM-DD")
+    if not stock_id.strip():
+        raise HTTPException(status_code=400, detail="stock_id must not be empty")
+    if query_date < foreign_ownership_source.MIN_DATE:
+        raise HTTPException(status_code=400, detail=f"`as_of` must be >= {foreign_ownership_source.MIN_DATE.isoformat()}")
+    if query_date > date.today():
+        raise HTTPException(status_code=400, detail="`as_of` must be <= today")
+    row = await foreign_ownership_source.get_foreign_ownership(stock_id.strip(), query_date)
+    return {
+        "found": row is not None,
+        "stock_id": stock_id.strip(),
+        "as_of": query_date.isoformat(),
+        "data_date": row.get("trade_date") if row else None,
+        "row": row,
+        "source": "TWSE MI_QFIIS",
+    }
 
 
 @app.get(
