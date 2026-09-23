@@ -1,3 +1,78 @@
+# Upstream contract tests
+
+The default `pytest` run uses local unit tests and does not call external services. To check whether official upstream URLs changed their response contracts, run the opt-in live suite:
+
+```bash
+RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
+```
+
+The suite checks TWSE, TPEx, FinMind, GCIS, MOPS, IC Chain, yfinance, foreign ownership, institutional trading, OHLCV, and valuation response shapes. It is intentionally opt-in because upstream services have rate limits and occasional outages.
+
+# 測試開發規範：新增 `app/main.py` 資料源 endpoint
+
+未來 AI 新增資料源 endpoint 時，必須同時更新 `tests/`，不可只修改 `app/main.py` 或只測試 happy path。請依照以下規範實作與回報。
+
+## 測試檔案
+
+新增資料源至少建立兩個測試層：
+
+1. `tests/test_<source>_source.py`
+  - 測試 JSON、CSV、HTML parser 與資料清洗。
+  - 使用固定 fixture，不連外部網路。
+  - 覆蓋正常 payload、空資料、缺欄位、非法數值、日期格式錯誤與上游 schema 變更。
+  - 驗證民國日期轉西元日期、單位換算、欄位名稱、排序、去重與資料型別。
+  - 使用 `monkeypatch` mock HTTP，測試 retry、cache、timeout、HTTP error 與 rate limit。
+
+2. `tests/test_<source>_endpoint.py`
+  - 使用 FastAPI `TestClient` 或 `httpx.AsyncClient` 呼叫實際 route。
+  - mock source adapter，不要直接 mock endpoint handler。
+  - 驗證 HTTP status、response JSON、Pydantic response model、OpenAPI 欄位與 `source`。
+  - 至少覆蓋：成功、股票不存在、缺少參數、非法日期、超出歷史下限、空資料、timeout、HTTP error、rate limit、缺少必要欄位。
+
+## `as_of` 與資料日期
+
+- 數值型或交易日資料：測試交易日、週末、國定假日與無資料日期；若產品規則要求 interpolation，必須向前找到最近資料，並回傳 `as_of` 與實際 `data_date`。
+- 新聞、公告等事件／文字資料：不可 interpolation 或日期回溯，只查詢指定 `as_of`；當日無資料回 HTTP 404，成功時 `data_date == as_of`。
+- API description 必須寫明資料源最早可查日期，並測試早於該日期的 HTTP 400。
+
+## 資料正確性
+
+- 至少使用 5 檔代表性股票：`2330`、`2317`、`2454`、`1101`、`2882`。
+- 至少使用 5 個不同年份或日期。
+- 驗證股票代號、日期與來源欄位沒有錯置。
+- 計算型 endpoint 必須測試至少一組手算結果，例如 EPS / TTM、YoY、PER、PBR、殖利率、market cap 與單位換算。
+- 明確測試 `None`、空字串、`-`、零值、負值與缺欄位。
+- 來源錯誤應遵守專案既有 `source_errors` 與 `found=False` 行為，不可吞掉錯誤或回傳看似正常的假資料。
+
+## 上游 contract test
+
+- 更新 `tests/test_upstream_contracts.py`，並標記 `@pytest.mark.upstream_contract`。
+- 一般 `pytest` 不可依賴外部服務；live check 必須 opt-in：
+
+```bash
+RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
+```
+
+- live check 必須驗證官方 URL 的 HTTP status、JSON / CSV / HTML 類型、頂層結構、至少一筆資料與 endpoint 使用的必要欄位。
+- 測試失敗時，錯誤訊息要包含 URL、dataset／參數、缺少欄位與實際收到的 schema。
+- 不可把暫時 outage、空交易日或 rate limit 誤判為 spec change；需分別標示原因。
+
+## 測試完成條件
+
+AI 完成 endpoint 後必須執行並回報：
+
+```bash
+pytest -q
+RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
+```
+
+並確認：
+
+- source unit tests 與 API integration tests 都已新增。
+- response model 與 Swagger/OpenAPI 可成功產生。
+- 至少有一個成功案例與所有主要錯誤分支。
+- 若資料具有歷史性質，已測試不同年份與 `as_of` 邊界。
+- 若驗證發現程式錯誤，必須從 `main` 建立 `fix/<name>` branch，修正後重新執行相同測試，並提供完整 PR 指令與驗證結果。
 # TWStock Query · 台灣上市櫃公司查詢平台
 
 > **Version: v0.0.10-patch5**
@@ -6,6 +81,19 @@
 提供任一上市/上櫃公司的基本資料、主要營業項目、EPS、營收、淨利、股利、營業利潤率、營收成長率、總經理等資訊。
 
 支援 `as_of` 任一日期回推 TTM（trailing twelve months）/ 年化值。
+
+## FinMind TaiwanStockNews endpoint
+
+`GET /api/company/{stock_id}/news/finmind?as_of=YYYY-MM-DD` 查詢指定股票在指定日期的 FinMind 台股新聞。
+
+- 上游：`https://api.finmindtrade.com/api/v4/data`，參數為 `dataset=TaiwanStockNews`、`data_id` 與單日 `start_date`；此 dataset 不接受 `end_date`。
+- `as_of` 預設為今天，資料源下限標示為 `2019-01-01`。這是事件／文字資料，不做數值 interpolation；只查詢指定日期，無新聞時回傳 HTTP 404。
+- `items` 保留官方 `date`、`stock_id`、`title`、`source`、`link` 欄位，`data_date` 標示實際查詢日期。
+- FinMind 免費方案卡片記載每小時 600 次；服務對每個股票／日期快取 6 小時。可設定 `FINMIND_TOKEN` 使用 ******
+
+```bash
+curl 'http://127.0.0.1:5003/api/company/2330/news/finmind?as_of=2024-01-07'
+```
 
 ## 欄位來源對照
 
@@ -54,6 +142,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 5000
 - `GET /api/company/{stock_id}/dividend/yfinance?as_of=YYYY-MM-DD` 股利（yfinance）
 - `GET /api/company/{stock_id}/value-chain` 公司在產業鏈的定位與鄰居
 - `GET /api/company/{stock_id}/foreign-ownership?as_of=YYYY-MM-DD` 外資及陸資持股（TWSE MI_QFIIS）；若基準日無交易，回溯至最近資料日並以 `data_date` / `row.trade_date` 標示
+- `GET /api/company/{stock_id}/sbl-history?as_of=YYYY-MM-DD` 借券歷史還券明細（TWSE SBL t13sa870）；以完成還券日期為基準，回溯至最近有事件的 `data_date`
 - `GET /api/company/{stock_id}/product-revenue?as_of=YYYY-MM-DD` 主要產品比重（MOPS）
 - `GET /api/ohlcv?stk_code=XXXX&from=YYYY-MM-DD&to=YYYY-MM-DD` 日 K OHLCV 行情（上市 + 上櫃整合，智能切換）：≤ 7 天範圍逐日拉全市場 payload（MI_INDEX / dailyQuotes）+ 磁碟 cache；> 7 天逐月拉單股整月 payload（STOCK_DAY / tradingStock）。TPEx 上游「張 / 仟元」已對齊到「股 / 元」。
 - `GET /api/chains` 列出全部 47 條產業鏈（IC 代碼 + 名稱）
@@ -73,6 +162,7 @@ Swagger UI: http://localhost:5000/docs
 - **公開資訊觀測站（MOPS）主要產品比重**：`ajax_t05st08_all` 月度申報資料，依 `as_of` 自動回溯最近一份有效申報期。
 - **公開資訊觀測站（MOPS）季度財務分析**：卡片原記載的 `ajax_t05st21` 已提示改用 IFRS 報表；本 API 使用官方 `ajax_t163sb06` 營益分析彙總表與 `ajax_t163sb04` 綜合損益表，按市場／民國年／季度抓全市場 HTML 後過濾個股。實測 2330 最早資料日為 `2013-03-31`；`as_of` 會選不晚於基準日的最近完整季度並以 `data_date` 標示實際日期。
 - **TWSE 外資及陸資投資持股統計（MI_QFIIS）**：官方免費、免 API key 的 Big5 CSV；以單一日期下載全市場資料後過濾股票代號。實測最早可得日期為 `2004-02-11`；`as_of` 不得早於此日。整日 payload 快取於 `/tmp/foreign_ownership_cache`；週末與休市日會逐日往前回溯，並以 `data_date` / `row.trade_date` 標示實際資料日。
+- **TWSE 借券歷史還券明細（SBL t13sa870）**：官方免費、免 API key 的 JSON；以 `startDate`／`endDate` 指定完成還券日期區間，再帶 `stockNo` 查詢單一股票。服務以 31 日視窗快取並向前回溯，實測 2330 最早可得完成還券資料為 `2005-01-28`（更早的 `2005-01-13` 是借券成交日期，不是本 endpoint 的 as_of 日期），並以 `data_date` 標示實際事件日期。
 
 ## 結構
 

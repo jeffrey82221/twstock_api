@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -515,6 +516,27 @@ class FinancialsResponse(BaseModel):
     source: Optional[str] = Field(None, description="本筆資料來源註記。")
 
 
+class FinMindNewsItem(BaseModel):
+    """FinMind `TaiwanStockNews` 的單筆新聞。"""
+
+    date: datetime = Field(..., description="新聞發布時間。")
+    stock_id: str = Field(..., description="股票代號。")
+    title: str = Field(..., description="新聞標題。")
+    source: str = Field(..., description="新聞來源媒體。")
+    link: str = Field(..., description="原始新聞連結。")
+
+
+class FinMindNewsResponse(BaseModel):
+    """`GET /api/company/{stock_id}/news/finmind` 回應。"""
+
+    found: bool = Field(..., description="指定日期是否找到新聞。")
+    stock_id: str = Field(..., description="查詢股票代號。")
+    as_of: date = Field(..., description="查詢基準日。")
+    data_date: date | None = Field(None, description="實際回傳新聞日期；無資料時為 null。")
+    items: list[FinMindNewsItem] = Field(..., description="該日期的新聞列表。")
+    source: str = Field(..., description="資料來源。")
+
+
 class RevenueResponse(BaseModel):
     """`GET /api/company/{stock_id}/revenue` 回應。"""
     model_config = ConfigDict(extra="allow")
@@ -805,6 +827,33 @@ class ForeignOwnershipResponse(BaseModel):
     data_date: Optional[str] = Field(None, description="實際資料日期，等同 `row.trade_date`；若 as_of 為週末或休市日，通常早於 as_of。")
     row: Optional[ForeignOwnershipRow] = Field(None, description="as_of 當日或往前最近交易日的外資持股資料；找不到歷史資料時為 null。")
     source: Optional[str] = Field(None, description="TWSE MI_QFIIS 官方資料源註記。")
+
+
+class SblHistoryRecord(BaseModel):
+    """TWSE SBL t13sa870 單筆完成還券明細。"""
+    model_config = ConfigDict(extra="allow")
+
+    transaction_date: Optional[str] = Field(None, description="借券成交日期（西元 `YYYY-MM-DD`）。")
+    stock_id: str = Field(..., description="股票代號。")
+    stock_name: str = Field(..., description="證券名稱。")
+    transaction_type: str = Field(..., description="交易方式，例如 `競價`、`議借`。")
+    quantity_lots: Optional[float] = Field(None, description="成交數量，TWSE 原始單位為交易單位／張。")
+    fee_rate_pct: Optional[float] = Field(None, description="成交費率（%）。")
+    completion_close_price: Optional[float] = Field(None, description="完成還券日收盤價（新台幣元）。")
+    completion_date: str = Field(..., description="完成還券日期（西元 `YYYY-MM-DD`）。")
+    lending_days: Optional[int] = Field(None, description="借券天數。")
+
+
+class SblHistoryResponse(BaseModel):
+    """`GET /api/company/{stock_id}/sbl-history` 回應。"""
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否找到指定股票的借券還券明細。")
+    stock_id: str = Field(..., description="查詢股票代號。")
+    as_of: str = Field(..., description="查詢基準日；只接受不晚於此日的完成還券資料。")
+    data_date: Optional[str] = Field(None, description="實際找到的最近完成還券日期；可能早於 `as_of`。")
+    records: list[SblHistoryRecord] = Field(default_factory=list, description="實際資料日視窗內的借券還券事件明細。")
+    source: str = Field(..., description="TWSE SBL t13sa870 官方資料源註記。")
 
 
 class MarketValuationConstituent(BaseModel):

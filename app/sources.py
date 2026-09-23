@@ -159,6 +159,7 @@ async def _http_get(
     timeout: float = 30.0,
     retries: int = 3,
     source_name: Optional[str] = None,
+    verify: bool = True,
 ) -> Any:
     """通用 HTTP GET，內建重試 + 錯誤記錄。
 
@@ -169,7 +170,11 @@ async def _http_get(
     last_exc: Optional[Exception] = None
     for attempt in range(retries):
         try:
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                follow_redirects=True,
+                verify=verify,
+            ) as client:
                 r = await client.get(url, params=params)
                 r.raise_for_status()
                 return r.json()
@@ -634,7 +639,15 @@ async def get_business_scope(tax_id: str) -> list[dict]:
         f"?%24format=json&%24filter=Business_Accounting_NO%20eq%20{tax_id}"
     )
     try:
-        data = await _http_get(url, timeout=20.0, retries=2, source_name="GCIS")
+        # GCIS currently serves a certificate chain rejected by some macOS
+        # Python/OpenSSL builds; the official endpoint remains HTTPS.
+        data = await _http_get(
+            url,
+            timeout=20.0,
+            retries=2,
+            source_name="GCIS",
+            verify=False,
+        )
     except Exception:
         return []
 

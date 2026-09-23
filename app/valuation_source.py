@@ -149,6 +149,7 @@ async def _fetch_twse_bwibbu_day(d: date) -> dict[str, dict]:
         try:
             async with httpx.AsyncClient(
                 timeout=30.0, follow_redirects=True,
+                verify=False,
                 headers={"User-Agent": "Mozilla/5.0 (twstock_api)"},
             ) as client:
                 r = await client.get(url)

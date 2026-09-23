@@ -145,6 +145,7 @@ async function loadCompanyParallel(stockId, asOf) {
     { key: "revenue",       url: `/api/company/${stockEnc}/revenue`,         asOf: true  },
     { key: "productRevenue",url: `/api/company/${stockEnc}/product-revenue`, asOf: true  },
     { key: "dividend",      url: `/api/company/${stockEnc}/dividend`,        asOf: true  },
+    { key: "news",          url: `/api/company/${stockEnc}/news/finmind`,    asOf: true  },
   ];
 
   // 啟動 6 個非阻塞請求；每個獨立 then() 更新對應卡片
@@ -208,6 +209,11 @@ function renderSkeleton(stockId, asOf) {
       <div class="kv">${skelKvRows(4)}</div>
     </div>
 
+    <div class="card" id="card-news" data-loading="1">
+      <h3 class="section-title">個股新聞（FinMind）</h3>
+      <div class="muted skel-line">載入中…</div>
+    </div>
+
     <div class="card" id="card-sources">
       <h3 class="section-title">資料來源</h3>
       <div class="muted" id="sources-list" style="font-size:13px">—</div>
@@ -251,6 +257,7 @@ function updateCard(key, data, stockId) {
     case "revenue":       return updateRevenue(data);
     case "productRevenue":return updateProductRevenue(data);
     case "dividend":      return updateDividend(data);
+    case "news":          return updateNews(data);
   }
 }
 
@@ -263,6 +270,7 @@ function updateCardError(key, msg) {
     revenue: "card-revenue",
     productRevenue: "card-product-revenue",
     dividend: "card-dividend",
+    news: "card-news",
   };
   const titleMap = {
     basic: "公司基本資料",
@@ -272,6 +280,7 @@ function updateCardError(key, msg) {
     revenue: "營收",
     productRevenue: "主要產品比重（公開資訊觀測站）",
     dividend: "股利股息",
+    news: "個股新聞（FinMind）",
   };
   const el = document.getElementById(idMap[key]);
   if (!el) return;
@@ -838,6 +847,26 @@ function updateDividend(d) {
   `;
 }
 
+// ---------- news ----------
+function updateNews(d) {
+  const el = document.getElementById("card-news");
+  if (!el) return;
+  el.dataset.loading = "0";
+  if (!d.found) {
+    el.innerHTML = `<h3 class="section-title">個股新聞（FinMind）</h3><div class="muted">指定日期沒有新聞。</div>`;
+    return;
+  }
+  const items = (d.items || []).slice(0, 8).map((item) => `
+    <li><a href="${escapeHtml(item.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a>
+      <span class="muted">${escapeHtml(item.source)} · ${escapeHtml(item.date)}</span></li>
+  `).join("");
+  el.innerHTML = `
+    <h3 class="section-title">個股新聞 · ${escapeHtml(d.data_date)}</h3>
+    <div class="muted">只顯示指定日期的新聞，不做日期回溯。</div>
+    <ul class="news-list">${items || '<li class="muted">沒有新聞。</li>'}</ul>
+  `;
+}
+
 // ---------- 子公司連結點擊（事件委派）----------
 resultEl.addEventListener('click', (e) => {
   const a = e.target.closest('.co-link');
@@ -1085,6 +1114,56 @@ resultEl.addEventListener('click', (e) => {
       render(body);
     } catch (error) {
       foResult.innerHTML = `<div class="inst-card"><div class="inst-empty">請求失敗：${escapeHtml(error.message)}</div></div>`;
+    } finally {
+      button.disabled = false;
+    }
+  });
+})();
+
+// ============================================================================
+// TWSE SBL 借券歷史還券明細
+// ============================================================================
+(function initSblHistory() {
+  const form = document.getElementById("sblForm");
+  const stock = document.getElementById("sblStk");
+  const asOf = document.getElementById("sblDate");
+  const result = document.getElementById("sblResult");
+  if (!form || !stock || !asOf || !result) return;
+
+  asOf.value = new Date().toISOString().slice(0, 10);
+
+  function number(value, digits = 2) {
+    if (value == null || !Number.isFinite(Number(value))) return "—";
+    return Number(value).toLocaleString("en-US", { maximumFractionDigits: digits });
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const id = stock.value.trim();
+    if (!id || !asOf.value) return;
+    const button = form.querySelector("button");
+    button.disabled = true;
+    result.innerHTML = `<div class="inst-empty">查詢中 ...</div>`;
+    try {
+      const response = await fetch(api(`/api/company/${encodeURIComponent(id)}/sbl-history?as_of=${encodeURIComponent(asOf.value)}`));
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        result.innerHTML = `<div class="inst-card"><div class="inst-empty">錯誤：${escapeHtml(body.detail || `HTTP ${response.status}`)}</div></div>`;
+        return;
+      }
+      const fallback = body.data_date !== body.as_of;
+      const rows = (body.records || []).map((record) => `
+        <tr><td>${escapeHtml(record.transaction_date || "—")}</td><td>${escapeHtml(record.transaction_type)}</td><td class="num">${number(record.quantity_lots, 0)}</td><td class="num">${number(record.fee_rate_pct)}%</td><td class="num">${number(record.completion_close_price)}</td><td>${escapeHtml(record.lending_days == null ? "—" : record.lending_days)}</td></tr>
+      `).join("");
+      result.innerHTML = `
+        <div class="inst-card">
+          <div class="head"><span class="name">${escapeHtml(body.records?.[0]?.stock_name || body.stock_id)}</span><span class="code">${escapeHtml(body.stock_id)}</span><span class="meta">實際資料日 ${escapeHtml(body.data_date || "—")}</span></div>
+          ${fallback ? `<div class="fo-notice">基準日 ${escapeHtml(body.as_of)} 沒有最近事件，已回溯至 ${escapeHtml(body.data_date)}。</div>` : ""}
+          <div class="mv-table-wrap"><table class="mv-table"><thead><tr><th>借券成交日</th><th>交易方式</th><th>數量（張）</th><th>費率</th><th>還券日收盤價</th><th>借券天數</th></tr></thead><tbody>${rows}</tbody></table></div>
+          <div class="inst-source">資料來源：${escapeHtml(body.source || "TWSE SBL t13sa870")}</div>
+        </div>`;
+    } catch (error) {
+      result.innerHTML = `<div class="inst-card"><div class="inst-empty">請求失敗：${escapeHtml(error.message)}</div></div>`;
     } finally {
       button.disabled = false;
     }

@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from . import foreign_ownership_source, icchain, institutional_source, mops_financial_analysis, mops_quarterly_financials, ohlcv_source, valuation_source
+from . import finmind_news_source, foreign_ownership_source, icchain, institutional_source, mops_financial_analysis, mops_quarterly_financials, ohlcv_source, twse_sbl_source, valuation_source
 from .schemas import (
     BusinessItemsResponse,
     ChainResponse,
@@ -36,8 +36,10 @@ from .schemas import (
     MarketValuationSummaryResponse,
     CompanyValuationResponse,
     FinancialAnalysisResponse,
+    FinMindNewsResponse,
     MopsQuarterlyFinancialsResponse,
     ForeignOwnershipResponse,
+    SblHistoryResponse,
     OhlcvResponse,
     ProductRevenueFilersResponse,
     ProductRevenueResponse,
@@ -427,6 +429,37 @@ async def api_company_financials(
 
 
 @app.get(
+    "/api/company/{stock_id}/news/finmind",
+    response_model=FinMindNewsResponse,
+    tags=["Company (per-source)"],
+    summary="個股新聞（FinMind TaiwanStockNews）",
+    description=(
+        "**資料來源**：FinMind TaiwanStockNews。\n\n"
+        "**官方 API**：`GET https://api.finmindtrade.com/api/v4/data`，參數為 "
+        "`dataset=TaiwanStockNews`, `data_id={stock_id}`, `start_date=YYYY-MM-DD`。"
+        "此 dataset 一次只能查單日，不能使用 `end_date`。\n\n"
+        f"**最早 as_of**：`{finmind_news_source.MIN_DATE.isoformat()}`（卡片研究與實際 API 探索的資料源下限；不同股票首筆日期可能不同）。\n\n"
+        "**日期行為**：新聞是事件／文字資料，不做數值 interpolation；只查詢 `as_of` 當日。"
+        "若當日沒有新聞，回傳 HTTP 404，不會改回傳其他日期；成功回應的 `data_date` 等於 `as_of`。\n\n"
+        "**限制**：FinMind 免費方案卡片記載每小時 600 次；每個股票／日期快取 6 小時。"
+        "可選用 `FINMIND_TOKEN` 環境變數傳送 Bearer token。"
+    ),
+)
+async def api_company_finmind_news(
+    stock_id: str,
+    as_of: date = Query(default_factory=date.today, description="查詢單日新聞；沒有新聞時回 HTTP 404。"),
+):
+    if as_of < finmind_news_source.MIN_DATE:
+        raise HTTPException(status_code=400, detail=f"as_of must be >= {finmind_news_source.MIN_DATE.isoformat()}")
+    if as_of > date.today():
+        raise HTTPException(status_code=400, detail="as_of must be <= today")
+    result = await finmind_news_source.get_news(stock_id, as_of)
+    if not result["found"]:
+        raise HTTPException(status_code=404, detail=f"no FinMind news for stock_id={stock_id!r} on {as_of.isoformat()}")
+    return result
+
+
+@app.get(
     "/api/company/{stock_id}/financials/yfinance",
     response_model=FinancialsResponse,
     tags=["Company (per-source)"],
@@ -811,6 +844,43 @@ async def institutional_net_buy_sell(
     if d > date.today():
         raise HTTPException(status_code=400, detail="`date` must be <= today")
     return await institutional_source.get_institutional_net_buy_sell(stk_code.strip(), d)
+
+
+@app.get(
+    "/api/company/{stock_id}/sbl-history",
+    response_model=SblHistoryResponse,
+    tags=["Market Data"],
+    summary="個股借券歷史還券明細（TWSE SBL t13sa870）",
+    description=(
+        "以股票代號查詢臺灣證券交易所 SBL 借券歷史還券明細。\n\n"
+        "**上游 endpoint**：`GET https://www.twse.com.tw/SBL/t13sa870?response=json&startDate=YYYYMMDD&endDate=YYYYMMDD&stockNo={stock_id}&dateType=B`。"
+        "日期語意是完成還券日期；本服務將民國日期轉為西元日期。\n\n"
+        "**回傳內容**：借券成交日、股票代號／名稱、交易方式、成交數量（交易單位／張）、成交費率、"
+        "完成還券日收盤價、完成還券日與借券天數。\n\n"
+        f"**最早日期**：實測股票 2330 的最早可得完成還券資料為 `{twse_sbl_source.SBL_MIN_DATE.isoformat()}`；"
+        "早於此日期回 HTTP 400，不同股票實際第一筆事件可能較晚。\n\n"
+        "**as_of 行為**：以 `as_of` 為完成還券日期上限，從該日往前以 31 日視窗尋找最近有資料的日期；"
+        "週末、休市日或該股沒有還券事件時，回溯到最近一筆 `data_date`，並保留查詢基準日。\n\n"
+        "官方免費、無 API key；服務依股票／日期視窗 gzip 快取，避免重複請求。"
+    ),
+)
+async def sbl_history(
+    stock_id: str,
+    as_of: date = Query(default_factory=date.today, description="完成還券日期的查詢上限；省略則使用今天。"),
+):
+    if as_of < twse_sbl_source.SBL_MIN_DATE:
+        raise HTTPException(status_code=400, detail=(
+            f"`as_of` must be >= {twse_sbl_source.SBL_MIN_DATE.isoformat()} "
+            "(TWSE SBL t13sa870 實測最早可得資料)"
+        ))
+    if as_of > date.today():
+        raise HTTPException(status_code=400, detail="`as_of` must be <= today")
+    result = await twse_sbl_source.get_sbl_history(stock_id, as_of)
+    if not result.get("found"):
+        raise HTTPException(status_code=404, detail=(
+            f"no SBL history for stock_id={stock_id!r} at or before {as_of.isoformat()}"
+        ))
+    return result
 
 
 @app.get(
