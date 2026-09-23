@@ -145,6 +145,7 @@ async function loadCompanyParallel(stockId, asOf) {
     { key: "revenue",       url: `/api/company/${stockEnc}/revenue`,         asOf: true  },
     { key: "productRevenue",url: `/api/company/${stockEnc}/product-revenue`, asOf: true  },
     { key: "dividend",      url: `/api/company/${stockEnc}/dividend`,        asOf: true  },
+    { key: "news",          url: `/api/company/${stockEnc}/news/finmind`,    asOf: true  },
   ];
 
   // 啟動 6 個非阻塞請求；每個獨立 then() 更新對應卡片
@@ -208,6 +209,11 @@ function renderSkeleton(stockId, asOf) {
       <div class="kv">${skelKvRows(4)}</div>
     </div>
 
+    <div class="card" id="card-news" data-loading="1">
+      <h3 class="section-title">個股新聞（FinMind）</h3>
+      <div class="muted skel-line">載入中…</div>
+    </div>
+
     <div class="card" id="card-sources">
       <h3 class="section-title">資料來源</h3>
       <div class="muted" id="sources-list" style="font-size:13px">—</div>
@@ -251,6 +257,7 @@ function updateCard(key, data, stockId) {
     case "revenue":       return updateRevenue(data);
     case "productRevenue":return updateProductRevenue(data);
     case "dividend":      return updateDividend(data);
+    case "news":          return updateNews(data);
   }
 }
 
@@ -263,6 +270,7 @@ function updateCardError(key, msg) {
     revenue: "card-revenue",
     productRevenue: "card-product-revenue",
     dividend: "card-dividend",
+    news: "card-news",
   };
   const titleMap = {
     basic: "公司基本資料",
@@ -272,6 +280,7 @@ function updateCardError(key, msg) {
     revenue: "營收",
     productRevenue: "主要產品比重（公開資訊觀測站）",
     dividend: "股利股息",
+    news: "個股新聞（FinMind）",
   };
   const el = document.getElementById(idMap[key]);
   if (!el) return;
@@ -835,6 +844,26 @@ function updateDividend(d) {
       <div><dt>除權交易日</dt><dd class="num">${escapeHtml(dv.stock_ex_dividend_date) || "—"}</dd></div>
       <div><dt>公告日</dt><dd class="num">${escapeHtml(dv.announcement_date) || "—"}</dd></div>
     </div>
+  `;
+}
+
+// ---------- news ----------
+function updateNews(d) {
+  const el = document.getElementById("card-news");
+  if (!el) return;
+  el.dataset.loading = "0";
+  if (!d.found) {
+    el.innerHTML = `<h3 class="section-title">個股新聞（FinMind）</h3><div class="muted">指定日期沒有新聞。</div>`;
+    return;
+  }
+  const items = (d.items || []).slice(0, 8).map((item) => `
+    <li><a href="${escapeHtml(item.link)}" target="_blank" rel="noopener">${escapeHtml(item.title)}</a>
+      <span class="muted">${escapeHtml(item.source)} · ${escapeHtml(item.date)}</span></li>
+  `).join("");
+  el.innerHTML = `
+    <h3 class="section-title">個股新聞 · ${escapeHtml(d.data_date)}</h3>
+    <div class="muted">只顯示指定日期的新聞，不做日期回溯。</div>
+    <ul class="news-list">${items || '<li class="muted">沒有新聞。</li>'}</ul>
   `;
 }
 
