@@ -7,6 +7,72 @@ RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
 ```
 
 The suite checks TWSE, TPEx, FinMind, GCIS, MOPS, IC Chain, yfinance, foreign ownership, institutional trading, OHLCV, and valuation response shapes. It is intentionally opt-in because upstream services have rate limits and occasional outages.
+
+# 測試開發規範：新增 `app/main.py` 資料源 endpoint
+
+未來 AI 新增資料源 endpoint 時，必須同時更新 `tests/`，不可只修改 `app/main.py` 或只測試 happy path。請依照以下規範實作與回報。
+
+## 測試檔案
+
+新增資料源至少建立兩個測試層：
+
+1. `tests/test_<source>_source.py`
+  - 測試 JSON、CSV、HTML parser 與資料清洗。
+  - 使用固定 fixture，不連外部網路。
+  - 覆蓋正常 payload、空資料、缺欄位、非法數值、日期格式錯誤與上游 schema 變更。
+  - 驗證民國日期轉西元日期、單位換算、欄位名稱、排序、去重與資料型別。
+  - 使用 `monkeypatch` mock HTTP，測試 retry、cache、timeout、HTTP error 與 rate limit。
+
+2. `tests/test_<source>_endpoint.py`
+  - 使用 FastAPI `TestClient` 或 `httpx.AsyncClient` 呼叫實際 route。
+  - mock source adapter，不要直接 mock endpoint handler。
+  - 驗證 HTTP status、response JSON、Pydantic response model、OpenAPI 欄位與 `source`。
+  - 至少覆蓋：成功、股票不存在、缺少參數、非法日期、超出歷史下限、空資料、timeout、HTTP error、rate limit、缺少必要欄位。
+
+## `as_of` 與資料日期
+
+- 數值型或交易日資料：測試交易日、週末、國定假日與無資料日期；若產品規則要求 interpolation，必須向前找到最近資料，並回傳 `as_of` 與實際 `data_date`。
+- 新聞、公告等事件／文字資料：不可 interpolation 或日期回溯，只查詢指定 `as_of`；當日無資料回 HTTP 404，成功時 `data_date == as_of`。
+- API description 必須寫明資料源最早可查日期，並測試早於該日期的 HTTP 400。
+
+## 資料正確性
+
+- 至少使用 5 檔代表性股票：`2330`、`2317`、`2454`、`1101`、`2882`。
+- 至少使用 5 個不同年份或日期。
+- 驗證股票代號、日期與來源欄位沒有錯置。
+- 計算型 endpoint 必須測試至少一組手算結果，例如 EPS / TTM、YoY、PER、PBR、殖利率、market cap 與單位換算。
+- 明確測試 `None`、空字串、`-`、零值、負值與缺欄位。
+- 來源錯誤應遵守專案既有 `source_errors` 與 `found=False` 行為，不可吞掉錯誤或回傳看似正常的假資料。
+
+## 上游 contract test
+
+- 更新 `tests/test_upstream_contracts.py`，並標記 `@pytest.mark.upstream_contract`。
+- 一般 `pytest` 不可依賴外部服務；live check 必須 opt-in：
+
+```bash
+RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
+```
+
+- live check 必須驗證官方 URL 的 HTTP status、JSON / CSV / HTML 類型、頂層結構、至少一筆資料與 endpoint 使用的必要欄位。
+- 測試失敗時，錯誤訊息要包含 URL、dataset／參數、缺少欄位與實際收到的 schema。
+- 不可把暫時 outage、空交易日或 rate limit 誤判為 spec change；需分別標示原因。
+
+## 測試完成條件
+
+AI 完成 endpoint 後必須執行並回報：
+
+```bash
+pytest -q
+RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
+```
+
+並確認：
+
+- source unit tests 與 API integration tests 都已新增。
+- response model 與 Swagger/OpenAPI 可成功產生。
+- 至少有一個成功案例與所有主要錯誤分支。
+- 若資料具有歷史性質，已測試不同年份與 `as_of` 邊界。
+- 若驗證發現程式錯誤，必須從 `main` 建立 `fix/<name>` branch，修正後重新執行相同測試，並提供完整 PR 指令與驗證結果。
 # TWStock Query · 台灣上市櫃公司查詢平台
 
 > **Version: v0.0.10-patch5**
