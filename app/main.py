@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from . import foreign_ownership_source, icchain, institutional_source, mops_financial_analysis, ohlcv_source, twse_sbl_source, valuation_source
+from . import finmind_news_source, foreign_ownership_source, icchain, institutional_source, mops_financial_analysis, ohlcv_source, twse_sbl_source, valuation_source
 from .schemas import (
     BusinessItemsResponse,
     ChainResponse,
@@ -36,6 +36,7 @@ from .schemas import (
     MarketValuationSummaryResponse,
     CompanyValuationResponse,
     FinancialAnalysisResponse,
+    FinMindNewsResponse,
     ForeignOwnershipResponse,
     SblHistoryResponse,
     OhlcvResponse,
@@ -424,6 +425,37 @@ async def api_company_financials(
     as_of: str | None = Query(None, description=_AS_OF_DESC),
 ):
     return await query_financials(stock_id, as_of)
+
+
+@app.get(
+    "/api/company/{stock_id}/news/finmind",
+    response_model=FinMindNewsResponse,
+    tags=["Company (per-source)"],
+    summary="個股新聞（FinMind TaiwanStockNews）",
+    description=(
+        "**資料來源**：FinMind TaiwanStockNews。\n\n"
+        "**官方 API**：`GET https://api.finmindtrade.com/api/v4/data`，參數為 "
+        "`dataset=TaiwanStockNews`, `data_id={stock_id}`, `start_date=YYYY-MM-DD`。"
+        "此 dataset 一次只能查單日，不能使用 `end_date`。\n\n"
+        f"**最早 as_of**：`{finmind_news_source.MIN_DATE.isoformat()}`（卡片研究與實際 API 探索的資料源下限；不同股票首筆日期可能不同）。\n\n"
+        "**日期行為**：新聞是事件／文字資料，不做數值 interpolation；只查詢 `as_of` 當日。"
+        "若當日沒有新聞，回傳 HTTP 404，不會改回傳其他日期；成功回應的 `data_date` 等於 `as_of`。\n\n"
+        "**限制**：FinMind 免費方案卡片記載每小時 600 次；每個股票／日期快取 6 小時。"
+        "可選用 `FINMIND_TOKEN` 環境變數傳送 Bearer token。"
+    ),
+)
+async def api_company_finmind_news(
+    stock_id: str,
+    as_of: date = Query(default_factory=date.today, description="查詢單日新聞；沒有新聞時回 HTTP 404。"),
+):
+    if as_of < finmind_news_source.MIN_DATE:
+        raise HTTPException(status_code=400, detail=f"as_of must be >= {finmind_news_source.MIN_DATE.isoformat()}")
+    if as_of > date.today():
+        raise HTTPException(status_code=400, detail="as_of must be <= today")
+    result = await finmind_news_source.get_news(stock_id, as_of)
+    if not result["found"]:
+        raise HTTPException(status_code=404, detail=f"no FinMind news for stock_id={stock_id!r} on {as_of.isoformat()}")
+    return result
 
 
 @app.get(
