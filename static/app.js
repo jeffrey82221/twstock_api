@@ -857,7 +857,7 @@ function updateNews(d) {
     return;
   }
   const items = (d.items || []).slice(0, 8).map((item) => `
-    <li><a href="${escapeHtml(item.link)}" target="_blank" rel="noopener">${escapeHtml(item.title)}</a>
+    <li><a href="${escapeHtml(item.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a>
       <span class="muted">${escapeHtml(item.source)} · ${escapeHtml(item.date)}</span></li>
   `).join("");
   el.innerHTML = `

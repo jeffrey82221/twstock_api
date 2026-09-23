@@ -1,15 +1,3 @@
-# FinMind TaiwanStockNews endpoint
-
-`GET /api/company/{stock_id}/news/finmind?as_of=YYYY-MM-DD` 查詢指定股票在指定日期的 FinMind 台股新聞。
-
-- 上游：`https://api.finmindtrade.com/api/v4/data`，參數為 `dataset=TaiwanStockNews`、`data_id` 與單日 `start_date`；此 dataset 不接受 `end_date`。
-- `as_of` 預設為今天，資料源下限標示為 `2019-01-01`。這是事件／文字資料，不做數值 interpolation；只查詢指定日期，無新聞時回傳 HTTP 404。
-- `items` 保留官方 `date`、`stock_id`、`title`、`source`、`link` 欄位，`data_date` 標示實際查詢日期。
-- FinMind 免費方案卡片記載每小時 600 次；服務對每個股票／日期快取 6 小時。可設定 `FINMIND_TOKEN` 使用 Bearer token。
-
-```bash
-curl 'http://127.0.0.1:5003/api/company/2330/news/finmind?as_of=2024-01-07'
-```
 # TWStock Query · 台灣上市櫃公司查詢平台
 
 > **Version: v0.0.10-patch5**
@@ -18,6 +6,19 @@ curl 'http://127.0.0.1:5003/api/company/2330/news/finmind?as_of=2024-01-07'
 提供任一上市/上櫃公司的基本資料、主要營業項目、EPS、營收、淨利、股利、營業利潤率、營收成長率、總經理等資訊。
 
 支援 `as_of` 任一日期回推 TTM（trailing twelve months）/ 年化值。
+
+## FinMind TaiwanStockNews endpoint
+
+`GET /api/company/{stock_id}/news/finmind?as_of=YYYY-MM-DD` 查詢指定股票在指定日期的 FinMind 台股新聞。
+
+- 上游：`https://api.finmindtrade.com/api/v4/data`，參數為 `dataset=TaiwanStockNews`、`data_id` 與單日 `start_date`；此 dataset 不接受 `end_date`。
+- `as_of` 預設為今天，資料源下限標示為 `2019-01-01`。這是事件／文字資料，不做數值 interpolation；只查詢指定日期，無新聞時回傳 HTTP 404。
+- `items` 保留官方 `date`、`stock_id`、`title`、`source`、`link` 欄位，`data_date` 標示實際查詢日期。
+- FinMind 免費方案卡片記載每小時 600 次；服務對每個股票／日期快取 6 小時。可設定 `FINMIND_TOKEN` 使用 ******
+
+```bash
+curl 'http://127.0.0.1:5003/api/company/2330/news/finmind?as_of=2024-01-07'
+```
 
 ## 欄位來源對照
 
