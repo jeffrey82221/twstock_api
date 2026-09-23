@@ -101,6 +101,17 @@
     </form>
     <div id="faResult" class="mv-result"></div>
   </section>
+
+  <section class="panel">
+    <h2>季度財務分析（MOPS IFRS）</h2>
+    <p class="sub">查詢股票代號與基準日；系統回傳不晚於基準日的最近完整季度，並顯示實際資料日。資料最早可追溯至 2013-03-31。</p>
+    <form id="qfForm" class="search">
+      <input id="qfStk" type="text" placeholder="股票代號 例如 2330" autocomplete="off" value="2330" />
+      <input id="qfDate" type="date" min="2013-03-31" required />
+      <button type="submit">查詢</button>
+    </form>
+    <div id="qfResult" class="mv-result"></div>
+  </section>
 </main>
 
 <footer>

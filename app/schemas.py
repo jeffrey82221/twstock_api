@@ -1057,3 +1057,33 @@ class FinancialAnalysisResponse(BaseModel):
         description="單一公司年度財務分析資料（欄位對照 `t51sb02` 21 欄）；查無資料時為 null。",
     )
     source: str = Field(..., description="資料來源註記。")
+
+
+class MopsQuarterlyFinancialsData(BaseModel):
+    """MOPS t163sb06 / t163sb04 單一公司季度資料。"""
+    model_config = ConfigDict(extra="allow")
+
+    stock_id: str = Field(..., description="股票代號，來自 MOPS 全市場表格第 1 欄。")
+    company_name: Optional[str] = Field(None, description="公司名稱，來自 MOPS 全市場表格第 2 欄。")
+    revenue_millions: Optional[float] = Field(None, description="營業收入，單位為新台幣百萬元；MOPS t163sb06。")
+    gross_margin_pct: Optional[float] = Field(None, description="毛利率（%）；MOPS t163sb06。")
+    operating_margin_pct: Optional[float] = Field(None, description="營業利益率（%）；MOPS t163sb06。")
+    pretax_margin_pct: Optional[float] = Field(None, description="稅前純益率（%）；MOPS t163sb06。")
+    net_margin_pct: Optional[float] = Field(None, description="稅後純益率（%）；MOPS t163sb06。")
+    eps: Optional[float] = Field(None, description="基本每股盈餘，單位為新台幣元；MOPS t163sb04 最後一欄。")
+
+
+class MopsQuarterlyFinancialsResponse(BaseModel):
+    """`GET /api/company/{stock_id}/quarterly-financials` 回應。"""
+    model_config = ConfigDict(extra="allow")
+
+    found: bool = Field(..., description="是否找到該股票的季度資料。")
+    stock_id: str = Field(..., description="查詢股票代號。")
+    company_name: Optional[str] = Field(None, description="MOPS 公司名稱。")
+    market: Optional[str] = Field(None, description="`sii`（上市）或 `otc`（上櫃）。")
+    as_of: str = Field(..., description="查詢基準日；不代表實際財報日期。")
+    data_date: Optional[str] = Field(None, description="實際回傳季度結束日；當 as_of 落在季度中或無當季資料時會早於 as_of。")
+    fiscal_year: Optional[int] = Field(None, description="財報西元年度。")
+    quarter: Optional[int] = Field(None, description="財報季度，1 至 4。")
+    data: Optional[MopsQuarterlyFinancialsData] = Field(None, description="MOPS 季度營益率與 EPS 資料。")
+    source: str = Field(..., description="MOPS 官方來源註記與實際使用的 endpoint。")

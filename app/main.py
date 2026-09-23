@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from . import finmind_news_source, foreign_ownership_source, icchain, institutional_source, mops_financial_analysis, ohlcv_source, twse_sbl_source, valuation_source
+from . import finmind_news_source, foreign_ownership_source, icchain, institutional_source, mops_financial_analysis, mops_quarterly_financials, ohlcv_source, twse_sbl_source, valuation_source
 from .schemas import (
     BusinessItemsResponse,
     ChainResponse,
@@ -37,6 +37,7 @@ from .schemas import (
     CompanyValuationResponse,
     FinancialAnalysisResponse,
     FinMindNewsResponse,
+    MopsQuarterlyFinancialsResponse,
     ForeignOwnershipResponse,
     SblHistoryResponse,
     OhlcvResponse,
@@ -1111,6 +1112,48 @@ async def financial_analysis(
                 f"year={year} (reason={reason})"
             ),
         )
+    return result
+
+
+@app.get(
+    "/api/company/{stock_id}/quarterly-financials",
+    response_model=MopsQuarterlyFinancialsResponse,
+    tags=["Fundamentals"],
+    summary="個股季度財務分析（MOPS IFRS t163sb06 + t163sb04）",
+    description=(
+        "以股票代號查詢 MOPS 官方 IFRS 季度財務資料。卡片原先記載的 `ajax_t05st21` "
+        "目前會提示改用 IFRS 報表；本 endpoint 實際使用其官方替代流程："
+        "`POST https://mopsov.twse.com.tw/mops/web/ajax_t163sb06`（營益分析彙總）與 "
+        "`POST https://mopsov.twse.com.tw/mops/web/ajax_t163sb04`（綜合損益表），"
+        "表單為 `TYPEK=sii|otc`, `year=民國年`, `season=1..4`，回傳 HTML 全市場表後過濾股票代號。\n\n"
+        "**回傳欄位**：營業收入（百萬元）、毛利率、營業利益率、稅前純益率、稅後純益率（t163sb06），"
+        "以及基本每股盈餘 EPS（t163sb04）。比率單位為 `%`，收入單位為百萬元，EPS 單位為新台幣元。\n\n"
+        f"**最早資料**：實測 2330 最早可得季度為 `{mops_quarterly_financials.QUARTERLY_MIN_DATE.isoformat()}` "
+        "（民國 102 年第 1 季）；早於此日回 HTTP 400。\n\n"
+        "**as_of 行為**：`as_of` 為查詢基準日，省略時為今天；服務選取不晚於該日的最近完整季度，"
+        "並以 `data_date` 回傳實際季度結束日。例如週末、季度中或尚未有當季資料時，會回傳前一個完整季度，"
+        "不把 `as_of` 偽裝成資料日期。\n\n"
+        "**快取與限流**：同一市場／年度／季度的兩份全市場 HTML 會分別 gzip 快取於 `/tmp/valuation_cache/mops_quarterly`；"
+        "MOPS 為免費官方來源，無需 token，但 endpoint 沒有穩定公開 rate-limit 保證，服務只在 cache miss 時請求。"
+    ),
+)
+async def quarterly_financials(
+    stock_id: str,
+    as_of: date = Query(default_factory=date.today, description="查詢基準日；選取不晚於此日的最近完整季度。"),
+):
+    if as_of < mops_quarterly_financials.QUARTERLY_MIN_DATE:
+        raise HTTPException(status_code=400, detail=(
+            f"`as_of` must be >= {mops_quarterly_financials.QUARTERLY_MIN_DATE.isoformat()} "
+            "(MOPS t163sb06 實測最早可得季度)"
+        ))
+    if as_of > date.today():
+        raise HTTPException(status_code=400, detail="`as_of` must be <= today")
+    result = await mops_quarterly_financials.get_quarterly_financials(stock_id, as_of)
+    if not result.get("found"):
+        raise HTTPException(status_code=404, detail=(
+            f"no quarterly financial data for stock_id={stock_id!r} "
+            f"at or before {as_of.isoformat()}"
+        ))
     return result
 
 
