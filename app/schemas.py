@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -513,6 +514,27 @@ class FinancialsResponse(BaseModel):
         description="從季財報 `Revenue` 加總出來的 TTM 營收（與 `revenue.ttm_value` 來源不同；外顯出來供比對、用於算營業利潤率）。",
     )
     source: Optional[str] = Field(None, description="本筆資料來源註記。")
+
+
+class FinMindNewsItem(BaseModel):
+    """FinMind `TaiwanStockNews` 的單筆新聞。"""
+
+    date: datetime = Field(..., description="新聞發布時間。")
+    stock_id: str = Field(..., description="股票代號。")
+    title: str = Field(..., description="新聞標題。")
+    source: str = Field(..., description="新聞來源媒體。")
+    link: str = Field(..., description="原始新聞連結。")
+
+
+class FinMindNewsResponse(BaseModel):
+    """`GET /api/company/{stock_id}/news/finmind` 回應。"""
+
+    found: bool = Field(..., description="指定日期是否找到新聞。")
+    stock_id: str = Field(..., description="查詢股票代號。")
+    as_of: date = Field(..., description="查詢基準日。")
+    data_date: date | None = Field(None, description="實際回傳新聞日期；無資料時為 null。")
+    items: list[FinMindNewsItem] = Field(..., description="該日期的新聞列表。")
+    source: str = Field(..., description="資料來源。")
 
 
 class RevenueResponse(BaseModel):
