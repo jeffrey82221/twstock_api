@@ -60,6 +60,17 @@
   </section>
 
   <section class="panel">
+    <h2>借券歷史還券明細（TWSE SBL）</h2>
+    <p class="sub">查詢股票代號與完成還券日期上限；若該日沒有事件，系統會回溯並標示最近有資料的實際日期。資料最早可追溯至 2005-01-28（2330 實測）。</p>
+    <form id="sblForm" class="search">
+      <input id="sblStk" type="text" placeholder="股票代號 例如 2330" autocomplete="off" value="2330" />
+      <input id="sblDate" type="date" min="2005-01-28" required />
+      <button type="submit">查詢</button>
+    </form>
+    <div id="sblResult" class="inst-result"></div>
+  </section>
+
+  <section class="panel">
     <h2>全市場估值（本益比 / 殖利率 / 股價淨值比）</h2>
     <p class="sub">TWSE 上市股票單一交易日的市值加權估值。分子 / 分母皆由 BWIBBU_d 個股資料反推：EPS=close/PER、BVPS=close/PBR、DPS=close×yield%/100；股數 ≈ paid_in_capital / 10（台股面額慣例，非嚴格流通股本）。</p>
     <form id="mvForm" class="search">
