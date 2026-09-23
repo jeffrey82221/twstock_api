@@ -1,3 +1,12 @@
+# Upstream contract tests
+
+The default `pytest` run uses local unit tests and does not call external services. To check whether official upstream URLs changed their response contracts, run the opt-in live suite:
+
+```bash
+RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
+```
+
+The suite checks TWSE, TPEx, FinMind, GCIS, MOPS, IC Chain, yfinance, foreign ownership, institutional trading, OHLCV, and valuation response shapes. It is intentionally opt-in because upstream services have rate limits and occasional outages.
 # TWStock Query · 台灣上市櫃公司查詢平台
 
 > **Version: v0.0.10-patch5**
