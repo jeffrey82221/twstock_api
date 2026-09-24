@@ -61,6 +61,7 @@ h2 { margin-top: 0; font-size: 16px; }
 .dot-seed { background: var(--seed); }
 .dot-raw { background: var(--raw); }
 .dot-normal { background: var(--normal); }
+.dot-highlight { background: var(--accent); }
 #dag-container { position: relative; overflow: auto; max-height: 560px; border: 1px solid #334155; border-radius: 8px; }
 #dag-svg { position: absolute; top: 0; left: 0; pointer-events: none; }
 .dag-edge { stroke: #64748b; stroke-width: 1.5; }
@@ -81,6 +82,28 @@ h2 { margin-top: 0; font-size: 16px; }
 .dag-node-raw { border-color: var(--raw); }
 .dag-node-title { font-weight: 600; word-break: break-all; }
 .dag-node-count { color: var(--muted); margin-top: 2px; }
+
+/* Single click: node + directly connected upstream/downstream neighbors. */
+.dag-node-highlight {
+  border-color: var(--accent) !important;
+  background: rgba(56, 189, 248, 0.28);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.55);
+  z-index: 5;
+}
+.dag-edge-highlight { stroke: var(--accent); stroke-width: 3; }
+
+/* Double click: enlarge in place and show columns inline. */
+.dag-node-expanded {
+  width: 340px;
+  min-height: 220px;
+  max-height: 420px;
+  overflow: auto;
+  z-index: 20;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  cursor: default;
+}
+.dag-node-columns { margin-top: 6px; }
+.dag-node-columns .col-table th, .dag-node-columns .col-table td { font-size: 11px; padding: 4px 6px; }
 .muted { color: var(--muted); }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #334155; }

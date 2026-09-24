@@ -11,6 +11,14 @@ function nodeClass(n) {
   return 'dag-node-normal';
 }
 
+// Populated on every renderDag() call; used by click/dblclick handlers below.
+let nodeEls = {};
+let edgeEls = {};
+let preds = {};
+let succs = {};
+let expandedNodeId = null;
+let columnsCache = {};
+
 async function loadDag() {
   const res = await fetch('/api/dag');
   const data = await res.json();
@@ -42,6 +50,12 @@ function renderDag(data) {
   const container = document.getElementById('dag-container');
   nodesEl.innerHTML = '';
   svg.innerHTML = '';
+  nodeEls = {};
+  edgeEls = {};
+  preds = {};
+  succs = {};
+  expandedNodeId = null;
+  columnsCache = {};
 
   const width = (maxLayer + 1) * colWidth + 60;
   const height = maxRows * rowHeight + 60;
@@ -63,6 +77,10 @@ function renderDag(data) {
     line.setAttribute('y2', b.y + 23);
     line.setAttribute('class', 'dag-edge');
     svg.appendChild(line);
+    (edgeEls[e.from] = edgeEls[e.from] || []).push(line);
+    (edgeEls[e.to] = edgeEls[e.to] || []).push(line);
+    (preds[e.to] = preds[e.to] || []).push(e.from);
+    (succs[e.from] = succs[e.from] || []).push(e.to);
   });
 
   nodes.forEach((n) => {
@@ -74,10 +92,83 @@ function renderDag(data) {
     div.innerHTML =
       `<div class="dag-node-title">${n.id}</div>` +
       `<div class="dag-node-count">pop: ${formatNumber(n.pop_row_count)}</div>`;
-    div.addEventListener('click', () => loadColumns(n.id));
+    div.addEventListener('click', () => highlightNode(n.id));
+    div.addEventListener('dblclick', (ev) => {
+      ev.stopPropagation();
+      toggleExpandNode(n.id);
+    });
     nodesEl.appendChild(div);
+    nodeEls[n.id] = div;
   });
 }
+
+function clearHighlights() {
+  Object.values(nodeEls).forEach((el) => el.classList.remove('dag-node-highlight'));
+  Object.values(edgeEls)
+    .flat()
+    .forEach((el) => el.classList.remove('dag-edge-highlight'));
+}
+
+// Single click: highlight the node plus its directly connected upstream/downstream
+// neighbors (both node fill + connecting edges), so the dependency chain stands out.
+function highlightNode(id) {
+  clearHighlights();
+  const related = new Set([id, ...(preds[id] || []), ...(succs[id] || [])]);
+  related.forEach((relatedId) => {
+    if (nodeEls[relatedId]) nodeEls[relatedId].classList.add('dag-node-highlight');
+  });
+  (edgeEls[id] || []).forEach((line) => line.classList.add('dag-edge-highlight'));
+  loadColumns(id);
+}
+
+// Double click: enlarge the node box in place and render its columns inline
+// (fetched once and cached so re-toggling doesn't re-hit the API).
+async function toggleExpandNode(id) {
+  const el = nodeEls[id];
+  if (!el) return;
+
+  if (expandedNodeId === id) {
+    el.classList.remove('dag-node-expanded');
+    el.innerHTML =
+      `<div class="dag-node-title">${id}</div>` +
+      `<div class="dag-node-count">${el.dataset.countLabel || ''}</div>`;
+    expandedNodeId = null;
+    return;
+  }
+
+  if (expandedNodeId && nodeEls[expandedNodeId]) {
+    const prev = nodeEls[expandedNodeId];
+    prev.classList.remove('dag-node-expanded');
+    prev.innerHTML =
+      `<div class="dag-node-title">${expandedNodeId}</div>` +
+      `<div class="dag-node-count">${prev.dataset.countLabel || ''}</div>`;
+  }
+
+  const countLabel = el.querySelector('.dag-node-count')?.textContent || '';
+  el.dataset.countLabel = countLabel;
+  el.classList.add('dag-node-expanded');
+  el.innerHTML = `<div class="dag-node-title">${id}</div><div class="dag-node-columns">載入欄位中...</div>`;
+  expandedNodeId = id;
+
+  try {
+    if (!columnsCache[id]) {
+      const res = await fetch(`/api/view/${encodeURIComponent(id)}/columns`);
+      columnsCache[id] = res.ok ? await res.json() : { error: (await res.json()).detail };
+    }
+    if (expandedNodeId !== id) return; // user toggled away while awaiting
+    const data = columnsCache[id];
+    const bodyHtml = data.error
+      ? `<div class="muted">${data.error}</div>`
+      : `<table class="col-table"><thead><tr><th>欄位</th><th>型別</th></tr></thead><tbody>${data.columns
+          .map((c) => `<tr><td>${c.name}</td><td>${c.type}</td></tr>`)
+          .join('')}</tbody></table>`;
+    el.innerHTML = `<div class="dag-node-title">${id}</div><div class="dag-node-columns">${bodyHtml}</div>`;
+  } catch (e) {
+    el.innerHTML = `<div class="dag-node-title">${id}</div><div class="dag-node-columns muted">查詢失敗：${e}</div>`;
+  }
+}
+
+
 
 async function loadColumns(name) {
   const el = document.getElementById('columns-content');
