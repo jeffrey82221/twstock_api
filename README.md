@@ -124,6 +124,15 @@ p = Pipeline()
 p.setup_schedules()
 ```
 
+> **新增 seed 上線前的檢查**：新的 `_list.sql`（例如 v0.0.11 新增的 8 個）第一次要正式讓 cronjob
+> 大量拉資料前，務必先跑過 step (5) 的 `probe_all_throughput()`（或針對單一新 seed 呼叫
+> `p.probe_seed_insert_throughput(table=<seed_name>)`），讓 `throughput_config.json` 有實測出的
+> `(period_seconds, row_cnt)`；否則 `setup_schedules()` 只會退回使用 `batch_size.json` 裡的保守猜測值
+> 或呼叫端傳入的預設值，長期跑下可能過度保守（回填太慢）或過度激進（觸發上游 rate limit）。
+>
+> 排程建立後可用 `p.prune_and_report_seed_cron_jobs()` 檢查各 seed 最近一段時間的實際 insert 量，
+> 找出「已回填完畢、cron 一直 insert 0 列」的 seed 並自動 unschedule，避免空轉浪費排程資源。
+
 # TWStock Query · 台灣上市櫃公司查詢平台
 
 > **Version: v0.0.11**
@@ -264,10 +273,22 @@ twstock_api/
   - 型別安全：所有正規化 view 的 JSON 數值欄位一律走 `->>`（text）再 `::NUMERIC` / `custom.parse_iso_date`，
     對齊 v0.0.10 二次補丁已確立的慣例，避免 `cannot cast jsonb null to type numeric`。
   - 欄位盡量與既有 view 命名慣例對齊（`stk_code` / `as_of` / `stock_id` / `market` / `data_date`）。
-- `batch_size.json` 新增 8 個對應 seed 的保守起始 batch size（僅新增鍵值，未修改既有項目）。
+- **爬取效率調整（為後續大量 cronjob 拉資料鋪路）**：
+  - `company_valuation_monthly_list` 改為直接 `CROSS JOIN market_valuation_date_list`（而非各自獨立
+    `generate_series`），確保 `/api/company-valuation` 與 `/api/market-valuation-summary` 這兩個共用同一份
+    TWSE `BWIBBU_d` 每日 payload（backend 磁碟 cache 以日期為 key）的 endpoint 在同一天觸發，cron 排程對
+    上游只需打 1 次，不會因兩個 seed 各自取樣到不同日期而讓上游被打兩次。
+  - `foreign_ownership_monthly_list` / `sbl_history_monthly_list` / `institutional_monthly_list` /
+    `finmind_news_monthly_list` 的取樣錨點日統一從「每月 1 日」改為「每月 5 日」，降低命中元旦等連續假期、
+    白白浪費一次 API 呼叫卻拿到空結果的機率。
+- `batch_size.json` 新增 8 個對應 seed 的保守起始 batch size（僅新增鍵值，未修改既有項目）；正式建立
+  cronjob 大量拉資料前，應先跑 `Pipeline().probe_all_throughput()` 讓這些值被實測結果覆蓋（見「Data Pipeline
+  串接方式」step 6 的新增說明）。
 - 驗證：依 `README.md`「Data Pipeline 串接方式」step 1-5 執行 — `docker compose up` → 建立虛擬環境 →
   `Pipeline().create_views()` → `uvicorn app.main:app` → `Pipeline().create_mat_views()` +
-  `probe_all_throughput()`，確認新 SQL chain 皆可正常建立 view 且無編譯錯誤。
+  `probe_all_throughput()`，確認新 SQL chain 皆可正常建立 view 且無編譯錯誤；並對每條新 chain 以真實股票
+  （2330）與歷史日期執行端到端查詢，確認回傳資料正確（如 `foreign_ownership` 拿到外資持股比、`sbl_history`
+  拿到真實還券明細、`market_valuation_summary`/`company_valuation` 拿到一致的市場估值資料）。
 
 ### v0.0.10 — 2026-06-30
 

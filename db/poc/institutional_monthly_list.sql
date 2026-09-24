@@ -7,6 +7,8 @@
 --   避免以日為單位密集抓取造成過大母體。
 -- 邊界：資料起始日為民國 101/5/2 = 2012-05-02
 --   （app/institutional_source.py INSTITUTIONAL_MIN_DATE）。
+-- 爬取效率：本 endpoint 無回溯 fallback（非交易日直接回 row=null），取樣日固定在每月 5 日
+--   （而非 1 日）可避開元旦等長假，降低無效呼叫佔比。
 -- rule 13 例外：`listing_date IS NOT NULL` 為技術性 guard（generate_series 起點不能是 NULL）。
 SELECT
     stk_code,
@@ -14,7 +16,7 @@ SELECT
         make_date(
             EXTRACT(YEAR FROM GREATEST(listing_date, DATE '2012-05-02'))::INT,
             EXTRACT(MONTH FROM GREATEST(listing_date, DATE '2012-05-02'))::INT,
-            1
+            5
         ),
         CURRENT_DATE,
         INTERVAL '1 month'

@@ -7,6 +7,8 @@
 --   （見 app/foreign_ownership_source.py），故以「每月一次」as_of 取樣即可涵蓋每月代表性持股
 --   水位，遇假日/非交易日自動回溯不會落空。
 -- 邊界：TWSE MI_QFIIS 實測最早可得日期為 2004-02-11（app/foreign_ownership_source.py MIN_DATE）。
+-- 爬取效率：取樣日固定在每月 5 日（而非 1 日），與 market_valuation_date_list 同慣例，
+--   避開元旦等長假造成的無效呼叫。
 -- rule 13 例外：`listing_date IS NOT NULL` 為技術性 guard（generate_series 起點不能是 NULL）。
 SELECT
     stk_code,
@@ -14,7 +16,7 @@ SELECT
         make_date(
             EXTRACT(YEAR FROM GREATEST(listing_date, DATE '2004-02-11'))::INT,
             EXTRACT(MONTH FROM GREATEST(listing_date, DATE '2004-02-11'))::INT,
-            1
+            5
         ),
         CURRENT_DATE,
         INTERVAL '1 month'

@@ -8,6 +8,7 @@
 --   彼此首尾相接，覆蓋全部月份而不重複打過於密集的日期。
 -- 邊界：TWSE SBL t13sa870 實測 2330 最早可得完成還券資料為 2005-01-28
 --   （app/twse_sbl_source.py SBL_MIN_DATE）。
+-- 爬取效率：取樣日固定在每月 5 日，與其他新增的月度取樣 seed 同慣例（一致的排程可讀性）。
 -- rule 13 例外：`listing_date IS NOT NULL` 為技術性 guard（generate_series 起點不能是 NULL）。
 SELECT
     stk_code,
@@ -15,7 +16,7 @@ SELECT
         make_date(
             EXTRACT(YEAR FROM GREATEST(listing_date, DATE '2005-01-28'))::INT,
             EXTRACT(MONTH FROM GREATEST(listing_date, DATE '2005-01-28'))::INT,
-            1
+            5
         ),
         CURRENT_DATE,
         INTERVAL '1 month'

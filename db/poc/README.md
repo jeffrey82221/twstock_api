@@ -245,8 +245,18 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
   as_of 取樣（而非逐日），對有 as_of 回溯 fallback 的 endpoint（foreign-ownership、sbl-history）此取樣完全不遺漏
   代表性資料；對無 fallback 的 endpoint（institutional-net-buy-sell、market-valuation-summary、company-valuation、
   news/finmind）則是 PoC 範圍內的代表性抽樣（未來如需提高密度，可額外新增「事件母體」endpoint 走完整 rule 15）。
+- **爬取效率（cronjob 大量拉資料前的重點）**：
+  - `company_valuation_monthly_list` 改為直接 `CROSS JOIN` [market_valuation_date_list](#market_valuation_date_list)
+    （而非各自獨立 `generate_series`），確保 `/api/company-valuation` 與 `/api/market-valuation-summary` 這兩個
+    共用同一份 TWSE `BWIBBU_d` 每日 payload（backend 磁碟 cache 以日期為 key）的 endpoint，**在同一天觸發**，
+    讓 cron 排程實際只需對上游打 1 次（backend cache hit），而非兩個 seed 各自取樣到不同日期造成雙倍上游成本。
+  - `foreign_ownership_monthly_list` / `sbl_history_monthly_list` / `institutional_monthly_list` /
+    `finmind_news_monthly_list` 的取樣錨點日一律從「每月 1 日」改為「每月 5 日」，與 `market_valuation_date_list`
+    對齊慣例；對沒有 as_of 回溯 fallback 的 endpoint（institutional-net-buy-sell、news/finmind）可降低命中元旦等
+    連續假期、白白浪費一次 API 呼叫卻拿到空結果的機率，長期大量 cron 拉取時可省下的無效呼叫比例更明顯。
 - `market_valuation_date_list` 是本次唯一「不依賴 `company_basic_info_list`」的新 `_list`，因為
-  `/api/market-valuation-summary` 是市場層級彙總（無 `stock_id` 參數）。
+  `/api/market-valuation-summary` 是市場層級彙總（無 `stock_id` 參數）；`company_valuation_monthly_list` 反過來
+  依賴它取得日期集合（見上方爬取效率說明）。
 - `sbl_history` / `finmind_news` 的正規化 view 需攤平陣列（`records[]` / `items[]`），依 rule 16 使用
   `CROSS JOIN LATERAL` + `COALESCE(..., '[]'::jsonb)`，found=false 或空陣列的月份自然攤平 0 列。
 - 所有新增正規化 view 的 JSON 存取一律使用 `->>`（text 抽取）再視需要 `::NUMERIC` / `custom.parse_iso_date`，
@@ -363,11 +373,12 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 - **HTTP API endpoint**：無（純 SQL `generate_series`）
 - 對應 [`/api/company/{stock_id}/foreign-ownership`](../../app/main.py) TWSE MI_QFIIS。
 - 設計理念（rule 11, 15 退化特例）：交易日頻連續資料 + 有回溯 fallback，每月一次取樣即可。
+- 爬取效率：取樣錨點日固定在每月 5 日（而非 1 日），降低命中元旦等長假的機率。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `month_start_date` | DATE | 每月 1 日（從 `GREATEST(listing_date, 2004-02-11)` 起） | `generate_series(...)` |
+| `month_start_date` | DATE | 每月 5 日（從 `GREATEST(listing_date, 2004-02-11)` 起） | `generate_series(...)` |
 
 ---
 
@@ -410,11 +421,12 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 - **HTTP API endpoint**：無（純 SQL `generate_series`）
 - 對應 [`/api/company/{stock_id}/sbl-history`](../../app/main.py) TWSE SBL t13sa870。
 - 設計理念（rule 11, 15 退化特例）：backend 以 31 日視窗回溯，月度取樣視窗首尾相接、無重複打過密日期。
+- 爬取效率：取樣錨點日固定在每月 5 日，與其餘新增 monthly seed 慣例一致。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `month_start_date` | DATE | 每月 1 日（從 `GREATEST(listing_date, 2005-01-28)` 起） | `generate_series(...)` |
+| `month_start_date` | DATE | 每月 5 日（從 `GREATEST(listing_date, 2005-01-28)` 起） | `generate_series(...)` |
 
 ---
 
@@ -461,11 +473,12 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 - **HTTP API endpoint**：無（純 SQL `generate_series`）
 - 對應 [`/api/institutional-net-buy-sell`](../../app/main.py) TWSE T86 / TPEx dailyTrade。
 - 設計理念（rule 11）：交易日頻連續資料、無回溯 fallback，PoC 每月一次代表性取樣。
+- 爬取效率：本 endpoint 無 fallback，取樣錨點日固定在每月 5 日以降低命中假日、拿到空結果的機率。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `month_start_date` | DATE | 每月 1 日（從 `GREATEST(listing_date, 2012-05-02)` 起） | `generate_series(...)` |
+| `month_start_date` | DATE | 每月 5 日（從 `GREATEST(listing_date, 2012-05-02)` 起） | `generate_series(...)` |
 
 ---
 
@@ -544,29 +557,32 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 ## company_valuation_monthly_list
 
-- **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
-- **HTTP API endpoint**：無（純 SQL `generate_series`）
+- **上游 SQL**：[company_basic_info_list](#company_basic_info_list) + [market_valuation_date_list](#market_valuation_date_list)
+- **HTTP API endpoint**：無（純 SQL `CROSS JOIN`）
 - 對應 [`/api/company-valuation`](../../app/main.py) TWSE BWIBBU_d（單股展開）。
-- 設計理念（rule 11）：與 `market_valuation_date_list` 共用上游 payload 概念但為個股維度，獨立 seed 供逐股查詢。
+- **爬取效率**：不再各自 `generate_series`，改為直接 `CROSS JOIN market_valuation_date_list` 取得與
+  `/api/market-valuation-summary` **完全相同**的日期集合（`WHERE valuation_date >= listing_date` 排除掛牌前）。
+  兩個 endpoint 共用同一份 TWSE `BWIBBU_d` 每日 payload（backend 依日期磁碟 cache），對齊取樣日期後
+  同一天只會打上游 1 次，避免因為兩個 seed 各自取樣到不同日期而讓上游被打兩次。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `month_start_date` | DATE | 每月 1 日（從 `GREATEST(listing_date, 2005-09-02)` 起） | `generate_series(...)` |
+| `valuation_date` | DATE | 與 `market_valuation_date_list` 完全相同的每月 5 日集合 | `market_valuation_date_list.valuation_date` |
 
 ---
 
 ## raw_company_valuation
 
 - **上游 SQL**：[company_valuation_monthly_list](#company_valuation_monthly_list)
-- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company-valuation?stock_id={stk_code}&date={month_start_date}`
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company-valuation?stock_id={stk_code}&date={valuation_date}`
   - 上游：TWSE `BWIBBU_d`
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_valuation_monthly_list.stk_code` |
 | `company_valuation` | JSONB | endpoint 回傳整包 JSON | `custom.http_get_content(url)` |
-| `as_of` | DATE | 查詢基準日 | `company_valuation_monthly_list.month_start_date` |
+| `as_of` | DATE | 查詢基準日 | `company_valuation_monthly_list.valuation_date` |
 
 ---
 
@@ -595,11 +611,12 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 - 對應 [`/api/company/{stock_id}/news/finmind`](../../app/main.py) FinMind `TaiwanStockNews`。
 - 設計理念（rule 15 附註）：新聞為事件/文字資料且無 interpolation、無歷史母體 endpoint，
   PoC 階段每月一次代表性取樣（已知會漏掉大部分無新聞月份，未來可補「新聞歷史」事件母體 endpoint）。
+- 爬取效率：本 endpoint 無回溯 fallback，取樣錨點日固定在每月 5 日以降低命中元旦等連續假期的機率。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `month_start_date` | DATE | 每月 1 日（從 `GREATEST(listing_date, 2019-01-01)` 起） | `generate_series(...)` |
+| `month_start_date` | DATE | 每月 5 日（從 `GREATEST(listing_date, 2019-01-01)` 起） | `generate_series(...)` |
 
 ---
 

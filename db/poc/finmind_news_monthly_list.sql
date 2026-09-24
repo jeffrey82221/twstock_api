@@ -8,6 +8,8 @@
 --   屬已知限制，未來如需提高命中率可考慮新增 `/news/finmind/history` 事件母體 endpoint，
 --   走 rule 15 的完整做法）。
 -- 邊界：FinMind TaiwanStockNews 卡片研究下限為 2019-01-01（app/finmind_news_source.py MIN_DATE）。
+-- 爬取效率：本 endpoint 無回溯 fallback（當日無新聞直接 404），取樣日固定在每月 5 日
+--   （而非 1 日）可略為降低命中元旦等長假的機率。
 -- rule 13 例外：`listing_date IS NOT NULL` 為技術性 guard（generate_series 起點不能是 NULL）。
 SELECT
     stk_code,
@@ -15,7 +17,7 @@ SELECT
         make_date(
             EXTRACT(YEAR FROM GREATEST(listing_date, DATE '2019-01-01'))::INT,
             EXTRACT(MONTH FROM GREATEST(listing_date, DATE '2019-01-01'))::INT,
-            1
+            5
         ),
         CURRENT_DATE,
         INTERVAL '1 month'
