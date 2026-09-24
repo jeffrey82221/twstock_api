@@ -76,6 +76,8 @@ function renderDag(data) {
     line.setAttribute('x2', b.x);
     line.setAttribute('y2', b.y + 23);
     line.setAttribute('class', 'dag-edge');
+    line.dataset.from = e.from;
+    line.dataset.to = e.to;
     svg.appendChild(line);
     (edgeEls[e.from] = edgeEls[e.from] || []).push(line);
     (edgeEls[e.to] = edgeEls[e.to] || []).push(line);
@@ -109,19 +111,52 @@ function clearHighlights() {
     .forEach((el) => el.classList.remove('dag-edge-highlight'));
 }
 
-// Single click: highlight the node plus its directly connected upstream/downstream
-// neighbors (both node fill + connecting edges), so the dependency chain stands out.
+function collectAncestors(id, visited) {
+  (preds[id] || []).forEach((p) => {
+    if (!visited.has(p)) {
+      visited.add(p);
+      collectAncestors(p, visited);
+    }
+  });
+}
+
+function collectDescendants(id, visited) {
+  (succs[id] || []).forEach((s) => {
+    if (!visited.has(s)) {
+      visited.add(s);
+      collectDescendants(s, visited);
+    }
+  });
+}
+
+// Single click: highlight the node plus every ancestor (all the way up to the
+// root _list seeds) and every descendant (all the way down to the leaves),
+// filling each highlighted node's background so the chain stands out, and
+// highlighting every edge that lies fully within that traced chain.
 function highlightNode(id) {
   clearHighlights();
-  const related = new Set([id, ...(preds[id] || []), ...(succs[id] || [])]);
+  const related = new Set([id]);
+  collectAncestors(id, related);
+  collectDescendants(id, related);
   related.forEach((relatedId) => {
     if (nodeEls[relatedId]) nodeEls[relatedId].classList.add('dag-node-highlight');
   });
-  (edgeEls[id] || []).forEach((line) => line.classList.add('dag-edge-highlight'));
+  Object.values(edgeEls)
+    .flat()
+    .forEach((line) => {
+      if (related.has(line.dataset.from) && related.has(line.dataset.to)) {
+        line.classList.add('dag-edge-highlight');
+      }
+    });
   loadColumns(id);
 }
 
-// Double click: enlarge the node box in place and render its columns inline
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Double click: enlarge the node box in place and render its columns (plus,
+// for raw_* views, the app/main.py endpoint(s) it actually calls) inline
 // (fetched once and cached so re-toggling doesn't re-hit the API).
 async function toggleExpandNode(id) {
   const el = nodeEls[id];
@@ -157,14 +192,28 @@ async function toggleExpandNode(id) {
     }
     if (expandedNodeId !== id) return; // user toggled away while awaiting
     const data = columnsCache[id];
-    const bodyHtml = data.error
-      ? `<div class="muted">${data.error}</div>`
-      : `<table class="col-table"><thead><tr><th>欄位</th><th>型別</th></tr></thead><tbody>${data.columns
-          .map((c) => `<tr><td>${c.name}</td><td>${c.type}</td></tr>`)
-          .join('')}</tbody></table>`;
-    el.innerHTML = `<div class="dag-node-title">${id}</div><div class="dag-node-columns">${bodyHtml}</div>`;
+    if (data.error) {
+      el.innerHTML = `<div class="dag-node-title">${id}</div><div class="dag-node-columns muted">${escapeHtml(data.error)}</div>`;
+      return;
+    }
+    const endpointsHtml = (data.endpoints || [])
+      .map(
+        (e) => `
+        <div class="dag-node-endpoint">
+          <div class="dag-node-endpoint-path">${escapeHtml(e.method)} ${escapeHtml(e.path)}</div>
+          ${e.summary ? `<div class="dag-node-endpoint-summary">${escapeHtml(e.summary)}</div>` : ''}
+          ${e.description ? `<div class="dag-node-endpoint-desc">${escapeHtml(e.description)}</div>` : ''}
+        </div>`
+      )
+      .join('');
+    const columnsHtml = `<table class="col-table"><thead><tr><th>欄位</th><th>型別</th></tr></thead><tbody>${data.columns
+      .map((c) => `<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.type)}</td></tr>`)
+      .join('')}</tbody></table>`;
+    el.innerHTML =
+      `<div class="dag-node-title">${id}</div>` +
+      `<div class="dag-node-columns">${endpointsHtml}${columnsHtml}</div>`;
   } catch (e) {
-    el.innerHTML = `<div class="dag-node-title">${id}</div><div class="dag-node-columns muted">查詢失敗：${e}</div>`;
+    el.innerHTML = `<div class="dag-node-title">${id}</div><div class="dag-node-columns muted">查詢失敗：${escapeHtml(String(e))}</div>`;
   }
 }
 

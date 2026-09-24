@@ -92,18 +92,31 @@ h2 { margin-top: 0; font-size: 16px; }
 }
 .dag-edge-highlight { stroke: var(--accent); stroke-width: 3; }
 
-/* Double click: enlarge in place and show columns inline. */
+/* Double click: enlarge in place and show columns inline. Opaque background
+   (overrides the semi-transparent highlight fill) keeps the text legible even
+   when the node is simultaneously highlighted. */
 .dag-node-expanded {
-  width: 340px;
+  width: 380px;
   min-height: 220px;
-  max-height: 420px;
+  max-height: 480px;
   overflow: auto;
   z-index: 20;
+  background: #0b1220 !important;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
   cursor: default;
 }
 .dag-node-columns { margin-top: 6px; }
 .dag-node-columns .col-table th, .dag-node-columns .col-table td { font-size: 11px; padding: 4px 6px; }
+.dag-node-endpoint {
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  background: #111c33;
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+}
+.dag-node-endpoint-path { font-family: monospace; font-size: 11px; color: var(--accent); word-break: break-all; }
+.dag-node-endpoint-summary { font-weight: 600; margin-top: 2px; }
+.dag-node-endpoint-desc { color: var(--muted); margin-top: 4px; font-size: 11px; white-space: pre-wrap; max-height: 140px; overflow: auto; }
 .muted { color: var(--muted); }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #334155; }
