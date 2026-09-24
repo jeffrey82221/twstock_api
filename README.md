@@ -73,9 +73,76 @@ RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
 - 至少有一個成功案例與所有主要錯誤分支。
 - 若資料具有歷史性質，已測試不同年份與 `as_of` 邊界。
 - 若驗證發現程式錯誤，必須從 `main` 建立 `fix/<name>` branch，修正後重新執行相同測試，並提供完整 PR 指令與驗證結果。
+
+# Data Pipeline 串接測試方式
+
+## (1) 啟動資料庫
+
+```bash
+cd db_start
+docker compose up
+```
+
+## (2) 安裝 python 環境
+
+```bash
+python3 -m pip install virtualenv
+python3 -m virtualenv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+## (3) 建立 poc 資料流
+
+```python
+from pipeline import Pipeline
+p = Pipeline()
+p.create_views()
+```
+
+## (4) 啟動資料抓取 API
+
+```bash
+source .venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 5002
+```
+
+## (5) 實測 pop 實體資料流 爬取速度 
+
+```python
+from pipeline import Pipeline
+p = Pipeline()
+p.create_mat_views()
+p.probe_all_throughput()
+```
+
+## (6) 建立資料爬取 Cronjobs
+
+```python
+from pipeline import Pipeline
+p = Pipeline()
+p.setup_schedules()
+```
+
+## (7) 資料爬取狀況監測網頁
+
+```bash
+source .venv/bin/activate
+uvicorn db_demo.main:app --host 0.0.0.0 --port 5100
+```
+
+> **新增 seed 上線前的檢查**：新的 `_list.sql`（例如 v0.0.11 新增的 8 個）第一次要正式讓 cronjob
+> 大量拉資料前，務必先跑過 step (5) 的 `probe_all_throughput()`（或針對單一新 seed 呼叫
+> `p.probe_seed_insert_throughput(table=<seed_name>)`），讓 `throughput_config.json` 有實測出的
+> `(period_seconds, row_cnt)`；否則 `setup_schedules()` 只會退回使用 `batch_size.json` 裡的保守猜測值
+> 或呼叫端傳入的預設值，長期跑下可能過度保守（回填太慢）或過度激進（觸發上游 rate limit）。
+>
+> 排程建立後可用 `p.prune_and_report_seed_cron_jobs()` 檢查各 seed 最近一段時間的實際 insert 量，
+> 找出「已回填完畢、cron 一直 insert 0 列」的 seed 並自動 unschedule，避免空轉浪費排程資源。
+
 # TWStock Query · 台灣上市櫃公司查詢平台
 
-> **Version: v0.0.10-patch5**
+> **Version: v0.0.11**
 
 整合免費公開資料源（TWSE OpenAPI、TPEx OpenAPI、FinMind v4、經濟部商工 API），
 提供任一上市/上櫃公司的基本資料、主要營業項目、EPS、營收、淨利、股利、營業利潤率、營收成長率、總經理等資訊。
