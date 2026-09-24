@@ -280,7 +280,7 @@ class Pipeline:
         result = self._db_tool.fetch_all(check_sql)
         return result[0][0] # Assuming the result is a list of tuples
 
-    def create_mat_views(self, recreate: bool = False, test_insert: bool=True):
+    def create_mat_views(self, recreate: bool = False, test_insert: bool=False):
         """
         從 seed tables 往後接 materialized view 
         (建立 materialized view ，如果已經存在就建立到 hidden schema)
