@@ -31,11 +31,12 @@
     </section>
 
     <section class="panel" id="dag-panel">
-      <h2>poc schema 依賴關聯圖（點擊節點看欄位）</h2>
+      <h2>poc schema 依賴關聯圖（單擊：highlight 上下游／雙擊：展開欄位）</h2>
       <div class="legend">
         <span class="legend-item"><span class="dot dot-seed"></span> seed (_list)</span>
         <span class="legend-item"><span class="dot dot-raw"></span> raw_</span>
         <span class="legend-item"><span class="dot dot-normal"></span> 正規化 view</span>
+        <span class="legend-item"><span class="dot dot-highlight"></span> highlight（上下游）</span>
       </div>
       <div id="dag-container"><svg id="dag-svg"></svg><div id="dag-nodes"></div></div>
     </section>
