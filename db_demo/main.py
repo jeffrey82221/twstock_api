@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pg_tool import PostgreSQLTool
 from pipeline import Pipeline
 
-from . import dag_builder, job_runner, row_counts
+from . import dag_builder, endpoint_docs, job_runner, row_counts
 
 SNAPSHOT_INTERVAL_SECONDS = 15 * 60
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -85,7 +85,12 @@ async def api_view_columns(name: str):
             status_code=404,
             detail=f"poc.{name} 沒有欄位資訊（view 可能尚未建立，請先執行 Pipeline().create_views()）",
         )
-    return {"table": name, "columns": [{"name": r[0], "type": r[1]} for r in rows]}
+    endpoints = await asyncio.to_thread(endpoint_docs.get_endpoint_docs, name)
+    return {
+        "table": name,
+        "columns": [{"name": r[0], "type": r[1]} for r in rows],
+        "endpoints": endpoints,
+    }
 
 
 @app.get("/api/pop/row_counts")
