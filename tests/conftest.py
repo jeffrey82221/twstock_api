@@ -138,6 +138,21 @@ def pg_dsn(pg_server) -> str:
 
 
 @pytest.fixture(scope="session")
+def db_tool(pg_dsn):
+    """A plain `pg_tool.PostgreSQLTool` instance wired to the pgserver-
+    backed mock database, for tests that exercise `pg_tool.py` directly
+    (e.g. `PostgreSQLTool.get_dependent_views`) rather than going through
+    `pipeline.Pipeline`. Unlike the `pipeline` fixture, this does not need
+    `_pg_tool_setup_noop()` -- `PostgreSQLTool()` construction never calls
+    `.setup()` itself, only `Pipeline.__init__` does."""
+    import pg_tool
+
+    tool = pg_tool.PostgreSQLTool()
+    tool._dsn = pg_dsn
+    return tool
+
+
+@pytest.fixture(scope="session")
 def pipeline(pg_dsn):
     """A real `pipeline.Pipeline` instance wired to the pgserver-backed
     mock database instead of the hard-coded `localhost:5432` DSN."""
