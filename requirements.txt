@@ -1,4 +1,6 @@
 Jinja2
+lineagex==0.0.27
+ipython>=8.0
 cachetools==5.5.0
 beautifulsoup4==4.12.3
 lxml==5.3.0

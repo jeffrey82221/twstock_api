@@ -100,32 +100,55 @@ p = Pipeline()
 p.create_views()
 ```
 
-## (4) 啟動資料抓取 API
+透過 create views 確認 SQL 語法皆正確且可運行。
+
+## (4) 欄位血緣分析
+
+```bash
+python tools/render_lineagex.py
+```
+
+使用血緣分析工具，觀察產出的column level lineage (`data/lineagex/output.json`) 是否有新增的 SQL 沒有上，或 column 沒有上游 column 的狀況，有的話請剖析原因並調整 SQL 寫法來避免。
+
+這能幫助資料庫內容的理解。
+
+
+## (5) 啟動資料抓取 API
 
 ```bash
 source .venv/bin/activate
 uvicorn app.main:app --host 0.0.0.0 --port 5002
 ```
 
-## (5) 實測 pop 實體資料流 爬取速度 
+## (6) 實測 pop 實體資料流 爬取速度 
+
+建立 incrementally 更新的 materialized view 並開始嘗試 insert 資料
 
 ```python
 from pipeline import Pipeline
 p = Pipeline()
 p.create_mat_views()
-p.probe_all_throughput()
+p.probe_all()
 ```
 
-## (6) 建立資料爬取 Cronjobs
+## (7) 建立資料爬取 Cronjobs
 
 ```python
 from pipeline import Pipeline
 p = Pipeline()
+p.probe_all_throughput()
 p.setup_schedules()
 ```
 
+## (8) 資料爬取狀況監測網頁
+
+```bash
+source .venv/bin/activate
+uvicorn db_demo.main:app --host 0.0.0.0 --port 5100
+```
+
 > **新增 seed 上線前的檢查**：新的 `_list.sql`（例如 v0.0.11 新增的 8 個）第一次要正式讓 cronjob
-> 大量拉資料前，務必先跑過 step (5) 的 `probe_all_throughput()`（或針對單一新 seed 呼叫
+> 大量拉資料前，務必先跑過 step (7) 的 `probe_all_throughput()`（或針對單一新 seed 呼叫
 > `p.probe_seed_insert_throughput(table=<seed_name>)`），讓 `throughput_config.json` 有實測出的
 > `(period_seconds, row_cnt)`；否則 `setup_schedules()` 只會退回使用 `batch_size.json` 裡的保守猜測值
 > 或呼叫端傳入的預設值，長期跑下可能過度保守（回填太慢）或過度激進（觸發上游 rate limit）。
