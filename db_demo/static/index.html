@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>資料庫 DEMO · poc/pop schema 依賴與資料量監控</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>資料庫 DEMO</h1>
+    <p class="subtitle">poc → pop schema 依賴關聯圖、資料量成長估算、pipeline.py 操作面板</p>
+  </header>
+
+  <main>
+    <section class="panel" id="controls-panel">
+      <h2>Pipeline 操作</h2>
+      <div class="controls">
+        <button id="btn-probe" class="btn btn-primary">執行 probe_all_throughput (restart)</button>
+        <button id="btn-schedules" class="btn btn-primary">執行 setup_schedules</button>
+        <button id="btn-truncate" class="btn btn-danger">執行 truncate_cron_jobs（停止抓取）</button>
+        <button id="btn-refresh" class="btn">重新整理</button>
+      </div>
+      <div id="job-status" class="job-status hidden">
+        <div class="job-status-header">
+          <span id="job-name"></span>
+          <span id="job-badge" class="badge"></span>
+        </div>
+        <pre id="job-log"></pre>
+      </div>
+    </section>
+
+    <section class="panel" id="dag-panel">
+      <h2>poc schema 依賴關聯圖（單擊：highlight 上下游／雙擊：展開欄位）</h2>
+      <div class="legend">
+        <span class="legend-item"><span class="dot dot-seed"></span> seed (_list)</span>
+        <span class="legend-item"><span class="dot dot-raw"></span> raw_</span>
+        <span class="legend-item"><span class="dot dot-normal"></span> 正規化 view</span>
+        <span class="legend-item"><span class="dot dot-highlight"></span> highlight（上下游）</span>
+      </div>
+      <div id="dag-container"><svg id="dag-svg"></svg><div id="dag-nodes"></div></div>
+    </section>
+
+    <aside class="panel" id="columns-panel">
+      <h2>欄位內容</h2>
+      <div id="columns-content" class="muted">點擊左側任一節點查看欄位</div>
+    </aside>
+
+    <section class="panel" id="growth-panel">
+      <h2>pop schema 資料量與每日成長估算（每 15 分鐘採樣一次）</h2>
+      <table id="growth-table">
+        <thead>
+          <tr><th>Table</th><th>目前列數（估計）</th><th>採樣次數</th><th>觀察時數</th><th>估計每日新增列數</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section class="panel" id="schedules-panel">
+      <h2>pg_cron 排程狀態</h2>
+      <table id="schedules-table">
+        <thead>
+          <tr><th>Job Name</th><th>Schedule</th><th>Active</th><th>最近狀態</th><th>最近開始</th><th>最近結束</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
