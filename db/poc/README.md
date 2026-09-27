@@ -195,6 +195,461 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 37. [ohlcv_monthly_list](#ohlcv_monthly_list)
 38. [raw_ohlcv_monthly](#raw_ohlcv_monthly)
 39. [ohlcv_daily](#ohlcv_daily)
+40. [mops_quarterly_financials_quarter_list](#mops_quarterly_financials_quarter_list)
+41. [raw_mops_quarterly_financials](#raw_mops_quarterly_financials)
+42. [mops_quarterly_financials](#mops_quarterly_financials)
+43. [financial_analysis_year_list](#financial_analysis_year_list)
+44. [raw_financial_analysis](#raw_financial_analysis)
+45. [financial_analysis](#financial_analysis)
+46. [foreign_ownership_monthly_list](#foreign_ownership_monthly_list)
+47. [raw_foreign_ownership](#raw_foreign_ownership)
+48. [foreign_ownership](#foreign_ownership)
+49. [sbl_history_monthly_list](#sbl_history_monthly_list)
+50. [raw_sbl_history](#raw_sbl_history)
+51. [sbl_history](#sbl_history)
+52. [institutional_monthly_list](#institutional_monthly_list)
+53. [raw_institutional_net_buy_sell](#raw_institutional_net_buy_sell)
+54. [institutional_net_buy_sell](#institutional_net_buy_sell)
+55. [market_valuation_date_list](#market_valuation_date_list)
+56. [raw_market_valuation_summary](#raw_market_valuation_summary)
+57. [market_valuation_summary](#market_valuation_summary)
+58. [company_valuation_monthly_list](#company_valuation_monthly_list)
+59. [raw_company_valuation](#raw_company_valuation)
+60. [company_valuation](#company_valuation)
+61. [finmind_news_monthly_list](#finmind_news_monthly_list)
+62. [raw_finmind_news](#raw_finmind_news)
+63. [finmind_news](#finmind_news)
+
+---
+
+## v0.0.11 — 補齊 8 個先前未被 PoC SQL 覆蓋的 endpoint
+
+> 完全遵守「不動既有 sqls，僅新增」原則。以下 8 條新 chain 各自 `_list → raw_ → 正規化 view` 三段式，
+> 上游全部掛在既有 `company_basic_info_list`（或全新的最上層 `_list`，市場層級 endpoint）之下。
+
+| Endpoint | `_list.sql`（seed） | `raw_*.sql` | 正規化 view |
+| --- | --- | --- | --- |
+| `GET /company/{id}/quarterly-financials`（MOPS t163sb06+t163sb04） | [mops_quarterly_financials_quarter_list](#mops_quarterly_financials_quarter_list) | [raw_mops_quarterly_financials](#raw_mops_quarterly_financials) | [mops_quarterly_financials](#mops_quarterly_financials) |
+| `GET /v1/fundamentals/financial-analysis`（MOPS t51sb02，年報） | [financial_analysis_year_list](#financial_analysis_year_list) | [raw_financial_analysis](#raw_financial_analysis) | [financial_analysis](#financial_analysis) |
+| `GET /company/{id}/foreign-ownership`（TWSE MI_QFIIS） | [foreign_ownership_monthly_list](#foreign_ownership_monthly_list) | [raw_foreign_ownership](#raw_foreign_ownership) | [foreign_ownership](#foreign_ownership) |
+| `GET /company/{id}/sbl-history`（TWSE SBL t13sa870） | [sbl_history_monthly_list](#sbl_history_monthly_list) | [raw_sbl_history](#raw_sbl_history) | [sbl_history](#sbl_history) |
+| `GET /institutional-net-buy-sell`（TWSE T86 / TPEx dailyTrade） | [institutional_monthly_list](#institutional_monthly_list) | [raw_institutional_net_buy_sell](#raw_institutional_net_buy_sell) | [institutional_net_buy_sell](#institutional_net_buy_sell) |
+| `GET /market-valuation-summary`（TWSE BWIBBU_d，市場彙總） | [market_valuation_date_list](#market_valuation_date_list) | [raw_market_valuation_summary](#raw_market_valuation_summary) | [market_valuation_summary](#market_valuation_summary) |
+| `GET /company-valuation`（TWSE BWIBBU_d，單股展開） | [company_valuation_monthly_list](#company_valuation_monthly_list) | [raw_company_valuation](#raw_company_valuation) | [company_valuation](#company_valuation) |
+| `GET /company/{id}/news/finmind`（FinMind TaiwanStockNews） | [finmind_news_monthly_list](#finmind_news_monthly_list) | [raw_finmind_news](#raw_finmind_news) | [finmind_news](#finmind_news) |
+
+**設計取捨**：
+
+- 除 `mops_quarterly_financials_quarter_list`（季頻，rule 14）與 `financial_analysis_year_list`（年頻，rule 20 分流）外，
+  其餘 6 條皆是「交易日頻連續資料」或「無歷史母體 endpoint 的事件資料」，PoC 階段依 rule 11 精神以**每月一次**
+  as_of 取樣（而非逐日），對有 as_of 回溯 fallback 的 endpoint（foreign-ownership、sbl-history）此取樣完全不遺漏
+  代表性資料；對無 fallback 的 endpoint（institutional-net-buy-sell、market-valuation-summary、company-valuation、
+  news/finmind）則是 PoC 範圍內的代表性抽樣（未來如需提高密度，可額外新增「事件母體」endpoint 走完整 rule 15）。
+- **爬取效率（cronjob 大量拉資料前的重點）**：
+  - `company_valuation_monthly_list` 改為直接 `CROSS JOIN` [market_valuation_date_list](#market_valuation_date_list)
+    （而非各自獨立 `generate_series`），確保 `/api/company-valuation` 與 `/api/market-valuation-summary` 這兩個
+    共用同一份 TWSE `BWIBBU_d` 每日 payload（backend 磁碟 cache 以日期為 key）的 endpoint，**在同一天觸發**，
+    讓 cron 排程實際只需對上游打 1 次（backend cache hit），而非兩個 seed 各自取樣到不同日期造成雙倍上游成本。
+  - `foreign_ownership_monthly_list` / `sbl_history_monthly_list` / `institutional_monthly_list` /
+    `finmind_news_monthly_list` 的取樣錨點日一律從「每月 1 日」改為「每月 5 日」，與 `market_valuation_date_list`
+    對齊慣例；對沒有 as_of 回溯 fallback 的 endpoint（institutional-net-buy-sell、news/finmind）可降低命中元旦等
+    連續假期、白白浪費一次 API 呼叫卻拿到空結果的機率，長期大量 cron 拉取時可省下的無效呼叫比例更明顯。
+- `market_valuation_date_list` 是本次唯一「不依賴 `company_basic_info_list`」的新 `_list`，因為
+  `/api/market-valuation-summary` 是市場層級彙總（無 `stock_id` 參數）；`company_valuation_monthly_list` 反過來
+  依賴它取得日期集合（見上方爬取效率說明）。
+- `sbl_history` / `finmind_news` 的正規化 view 需攤平陣列（`records[]` / `items[]`），依 rule 16 使用
+  `CROSS JOIN LATERAL` + `COALESCE(..., '[]'::jsonb)`，found=false 或空陣列的月份自然攤平 0 列。
+- 所有新增正規化 view 的 JSON 存取一律使用 `->>`（text 抽取）再視需要 `::NUMERIC` / `custom.parse_iso_date`，
+  對齊既有 `financial_yearly_yfinance` / `financial_quarterly_yfinance` 已確立的型別安全慣例（避免
+  `cannot cast jsonb null to type numeric`）。
+- `market_valuation_summary` 未攤平 `sample_constituents` 明細陣列（PoC 範圍聚焦市場彙總指標）；
+  需要成分股層級明細請改用逐股 `company_valuation`。
+
+---
+
+## mops_quarterly_financials_quarter_list
+
+- **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
+- **HTTP API endpoint**：無（純 SQL 展開，每月末篩出季末月）
+- 對應 [`/api/company/{stock_id}/quarterly-financials`](../../app/main.py) MOPS t163sb06 + t163sb04。
+- 設計理念（rule 14, 20）：季頻獨立 `_list`，不與既有 FinMind/yfinance 版季度母體混用（不同資料源分流）。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
+| `quarter_end` | DATE | 該季最後一日（僅保留 3/6/9/12 月月末） | 逐月展開後篩選季末月 |
+
+---
+
+## raw_mops_quarterly_financials
+
+- **上游 SQL**：[mops_quarterly_financials_quarter_list](#mops_quarterly_financials_quarter_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/quarterly-financials?as_of={quarter_end}`
+  - 上游：MOPS `ajax_t163sb06`（營益分析彙總）+ `ajax_t163sb04`（綜合損益表）
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `mops_quarterly_financials_quarter_list.stk_code` |
+| `quarterly_financials` | JSONB | endpoint 回傳整包 JSON | `custom.http_get_content(url)` |
+| `as_of` | DATE | 查詢基準日（= `quarter_end`） | `mops_quarterly_financials_quarter_list.quarter_end` |
+
+---
+
+## mops_quarterly_financials
+
+- **上游 SQL**：[raw_mops_quarterly_financials](#raw_mops_quarterly_financials)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位 align `MopsQuarterlyFinancialsResponse` + `MopsQuarterlyFinancialsData`。
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_mops_quarterly_financials.stk_code` |
+| `as_of` | DATE | 查詢基準日 | `quarterly_financials.as_of` |
+| `stock_id` | TEXT | 股票代號 | `quarterly_financials.stock_id` |
+| `company_name` | TEXT | 公司名稱 | `quarterly_financials.company_name` |
+| `market` | TEXT | `sii` / `otc` | `quarterly_financials.market` |
+| `data_date` | DATE | 實際季度結束日 | `quarterly_financials.data_date` |
+| `fiscal_year` | NUMERIC | 財報西元年度 | `quarterly_financials.fiscal_year` |
+| `quarter` | NUMERIC | 財報季度 1~4 | `quarterly_financials.quarter` |
+| `revenue_millions` | NUMERIC | 營業收入（百萬元） | `quarterly_financials.data.revenue_millions` |
+| `gross_margin_pct` | NUMERIC | 毛利率 (%) | `quarterly_financials.data.gross_margin_pct` |
+| `operating_margin_pct` | NUMERIC | 營業利益率 (%) | `quarterly_financials.data.operating_margin_pct` |
+| `pretax_margin_pct` | NUMERIC | 稅前純益率 (%) | `quarterly_financials.data.pretax_margin_pct` |
+| `net_margin_pct` | NUMERIC | 稅後純益率 (%) | `quarterly_financials.data.net_margin_pct` |
+| `eps` | NUMERIC | 基本每股盈餘（元） | `quarterly_financials.data.eps` |
+
+---
+
+## financial_analysis_year_list
+
+- **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
+- **HTTP API endpoint**：無（純 SQL `generate_series` 整數年）
+- 對應 [`/api/v1/fundamentals/financial-analysis`](../../app/main.py) MOPS t51sb02。
+- 設計理念（rule 20）：年頻但資料源為 MOPS（非 FinMind/yfinance），獨立分流，避免與
+  `financial_year_list` / `financial_year_yfinance_list` 混用同一 seed。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
+| `year` | INT | 查詢西元年（≥ 2012） | `generate_series(GREATEST(incorporation_year, 2012), 今年)` |
+
+---
+
+## raw_financial_analysis
+
+- **上游 SQL**：[financial_analysis_year_list](#financial_analysis_year_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/v1/fundamentals/financial-analysis?stock_id={stk_code}&year={year}`
+  - 上游：MOPS 財務分析彙整表 `t51sb02`
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `financial_analysis_year_list.stk_code` |
+| `year` | INT | 查詢西元年 | `financial_analysis_year_list.year` |
+| `financial_analysis` | JSONB | endpoint 回傳整包 JSON | `custom.http_get_content(url)` |
+
+---
+
+## financial_analysis
+
+- **上游 SQL**：[raw_financial_analysis](#raw_financial_analysis)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位 align `FinancialAnalysisResponse` + `FinancialAnalysisData`（t51sb02 21 欄財務比率）。
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_financial_analysis.stk_code` |
+| `year` | INT | 財報西元年度 | `raw_financial_analysis.year` |
+| `stock_id` | TEXT | 股票代號 | `financial_analysis.stock_id` |
+| `reason` | TEXT | `found=false` 原因 | `financial_analysis.reason` |
+| `company_name` | TEXT | 公司名稱 | `financial_analysis.data.company_name` |
+| `market` | TEXT | `sii` / `otc` | `financial_analysis.data.market` |
+| `debt_ratio` … `cash_reinvestment_ratio` | NUMERIC | t51sb02 其餘 19 個財務比率欄位 | `financial_analysis.data.*` |
+
+---
+
+## foreign_ownership_monthly_list
+
+- **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
+- **HTTP API endpoint**：無（純 SQL `generate_series`）
+- 對應 [`/api/company/{stock_id}/foreign-ownership`](../../app/main.py) TWSE MI_QFIIS。
+- 設計理念（rule 11, 15 退化特例）：交易日頻連續資料 + 有回溯 fallback，每月一次取樣即可。
+- 爬取效率：取樣錨點日固定在每月 5 日（而非 1 日），降低命中元旦等長假的機率。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
+| `month_start_date` | DATE | 每月 5 日（從 `GREATEST(listing_date, 2004-02-11)` 起） | `generate_series(...)` |
+
+---
+
+## raw_foreign_ownership
+
+- **上游 SQL**：[foreign_ownership_monthly_list](#foreign_ownership_monthly_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/foreign-ownership?as_of={month_start_date}`
+  - 上游：TWSE 外資及陸資投資持股統計 `MI_QFIIS`
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `foreign_ownership_monthly_list.stk_code` |
+| `foreign_ownership` | JSONB | endpoint 回傳整包 JSON | `custom.http_get_content(url)` |
+| `as_of` | DATE | 查詢基準日 | `foreign_ownership_monthly_list.month_start_date` |
+
+---
+
+## foreign_ownership
+
+- **上游 SQL**：[raw_foreign_ownership](#raw_foreign_ownership)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位 align `ForeignOwnershipResponse` + `ForeignOwnershipRow`。
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_foreign_ownership.stk_code` |
+| `as_of` | DATE | 查詢基準日 | `foreign_ownership.as_of` |
+| `stock_id` | TEXT | 股票代號 | `foreign_ownership.stock_id` |
+| `data_date` | DATE | 實際資料日期（可能早於 as_of） | `foreign_ownership.data_date` |
+| `stock_name` | TEXT | 證券名稱 | `foreign_ownership.row.stock_name` |
+| `issued_shares` … `china_investment_limit_ratio_pct` | NUMERIC | `ForeignOwnershipRow` 其餘數值欄位 | `foreign_ownership.row.*` |
+| `change_reason` | TEXT | 與前日異動原因 | `foreign_ownership.row.change_reason` |
+| `last_change_date` | DATE | 最近一次申報異動日期 | `foreign_ownership.row.last_change_date` |
+
+---
+
+## sbl_history_monthly_list
+
+- **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
+- **HTTP API endpoint**：無（純 SQL `generate_series`）
+- 對應 [`/api/company/{stock_id}/sbl-history`](../../app/main.py) TWSE SBL t13sa870。
+- 設計理念（rule 11, 15 退化特例）：backend 以 31 日視窗回溯，月度取樣視窗首尾相接、無重複打過密日期。
+- 爬取效率：取樣錨點日固定在每月 5 日，與其餘新增 monthly seed 慣例一致。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
+| `month_start_date` | DATE | 每月 5 日（從 `GREATEST(listing_date, 2005-01-28)` 起） | `generate_series(...)` |
+
+---
+
+## raw_sbl_history
+
+- **上游 SQL**：[sbl_history_monthly_list](#sbl_history_monthly_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/sbl-history?as_of={month_start_date}`
+  - 上游：TWSE 借券歷史還券明細 `t13sa870`
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `sbl_history_monthly_list.stk_code` |
+| `sbl_history` | JSONB | endpoint 回傳整包 JSON（含 `records[]`） | `custom.http_get_content(url)` |
+| `as_of` | DATE | 查詢基準日 | `sbl_history_monthly_list.month_start_date` |
+
+---
+
+## sbl_history
+
+- **上游 SQL**：[raw_sbl_history](#raw_sbl_history)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位 align `SblHistoryResponse` + `SblHistoryRecord`；`CROSS JOIN LATERAL` 攤平 `records[]`。
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_sbl_history.stk_code` |
+| `as_of` | DATE | 查詢基準日 | `sbl_history.as_of` |
+| `stock_id` | TEXT | 股票代號 | `sbl_history.stock_id` |
+| `data_date` | DATE | 實際找到的最近完成還券日期 | `sbl_history.data_date` |
+| `transaction_date` | DATE | 借券成交日期 | `sbl_history.records[].transaction_date` |
+| `stock_name` | TEXT | 證券名稱 | `sbl_history.records[].stock_name` |
+| `transaction_type` | TEXT | 交易方式 | `sbl_history.records[].transaction_type` |
+| `quantity_lots` | NUMERIC | 成交數量 | `sbl_history.records[].quantity_lots` |
+| `fee_rate_pct` | NUMERIC | 成交費率 (%) | `sbl_history.records[].fee_rate_pct` |
+| `completion_close_price` | NUMERIC | 完成還券日收盤價 | `sbl_history.records[].completion_close_price` |
+| `completion_date` | DATE | 完成還券日期 | `sbl_history.records[].completion_date` |
+| `lending_days` | NUMERIC | 借券天數 | `sbl_history.records[].lending_days` |
+
+---
+
+## institutional_monthly_list
+
+- **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
+- **HTTP API endpoint**：無（純 SQL `generate_series`）
+- 對應 [`/api/institutional-net-buy-sell`](../../app/main.py) TWSE T86 / TPEx dailyTrade。
+- 設計理念（rule 11）：交易日頻連續資料、無回溯 fallback，PoC 每月一次代表性取樣。
+- 爬取效率：本 endpoint 無 fallback，取樣錨點日固定在每月 5 日以降低命中假日、拿到空結果的機率。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
+| `month_start_date` | DATE | 每月 5 日（從 `GREATEST(listing_date, 2012-05-02)` 起） | `generate_series(...)` |
+
+---
+
+## raw_institutional_net_buy_sell
+
+- **上游 SQL**：[institutional_monthly_list](#institutional_monthly_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/institutional-net-buy-sell?stk_code={stk_code}&date={month_start_date}`
+  - 上游：TWSE 三大法人買賣超日報 `T86` / TPEx `dailyTrade`
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `institutional_monthly_list.stk_code` |
+| `institutional_net_buy_sell` | JSONB | endpoint 回傳整包 JSON | `custom.http_get_content(url)` |
+| `as_of` | DATE | 查詢基準日 | `institutional_monthly_list.month_start_date` |
+
+---
+
+## institutional_net_buy_sell
+
+- **上游 SQL**：[raw_institutional_net_buy_sell](#raw_institutional_net_buy_sell)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位 align `InstitutionalNetBuySellResponse` + `InstitutionalNetBuySellRow`。
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_institutional_net_buy_sell.stk_code` |
+| `as_of` | DATE | 查詢交易日 | `institutional_net_buy_sell.trade_date` |
+| `market` | TEXT | `上市` / `上櫃` | `institutional_net_buy_sell.market` |
+| `trade_date` | DATE | 明細所屬交易日 | `institutional_net_buy_sell.row.trade_date` |
+| `stock_name` | TEXT | 股票簡稱 | `institutional_net_buy_sell.row.stock_name` |
+| `foreign_investors_net_buy_sell` … `total_institutional_net_buy_sell` | NUMERIC | `InstitutionalNetBuySellRow` 其餘買賣超股數欄位 | `institutional_net_buy_sell.row.*` |
+
+---
+
+## market_valuation_date_list
+
+- **上游 SQL**：無（最上層 `_list`）
+- **HTTP API endpoint**：無（純 SQL `generate_series`）
+- 對應 [`/api/market-valuation-summary`](../../app/main.py) TWSE BWIBBU_d（市場層級彙總，無 stock_id 維度）。
+- 設計理念（rule 11）：單日全市場彙總、無回溯 fallback，PoC 每月一次（每月 5 日）代表性取樣。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `valuation_date` | DATE | 每月 5 日（從 2005-10-05 起） | `generate_series(...)` |
+
+---
+
+## raw_market_valuation_summary
+
+- **上游 SQL**：[market_valuation_date_list](#market_valuation_date_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/market-valuation-summary?date={valuation_date}&sample_size=5`
+  - 上游：TWSE 收盤後個股本益比、殖利率及股價淨值比 `BWIBBU_d`
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `valuation_date` | DATE | 查詢日 | `market_valuation_date_list.valuation_date` |
+| `market_valuation_summary` | JSONB | endpoint 回傳整包 JSON | `custom.http_get_content(url)` |
+
+---
+
+## market_valuation_summary
+
+- **上游 SQL**：[raw_market_valuation_summary](#raw_market_valuation_summary)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位 align `MarketValuationSummaryResponse` + `MarketValuationSummary`（彙總層級，未含 `sample_constituents` 明細）。
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `valuation_date` | DATE | 查詢日 | `raw_market_valuation_summary.valuation_date` |
+| `as_of` | DATE | endpoint 回傳的查詢日 | `market_valuation_summary.date` |
+| `market_scope` | TEXT | 市場範圍描述 | `market_valuation_summary.market_scope` |
+| `calculation_method` | TEXT | 計算方法標記 | `market_valuation_summary.calculation_method` |
+| `total_market_cap` … `excluded_no_shares` | NUMERIC | `MarketValuationSummary` 其餘 16 個彙總欄位 | `market_valuation_summary.summary.*` |
+
+---
+
+## company_valuation_monthly_list
+
+- **上游 SQL**：[company_basic_info_list](#company_basic_info_list) + [market_valuation_date_list](#market_valuation_date_list)
+- **HTTP API endpoint**：無（純 SQL `CROSS JOIN`）
+- 對應 [`/api/company-valuation`](../../app/main.py) TWSE BWIBBU_d（單股展開）。
+- **爬取效率**：不再各自 `generate_series`，改為直接 `CROSS JOIN market_valuation_date_list` 取得與
+  `/api/market-valuation-summary` **完全相同**的日期集合（`WHERE valuation_date >= listing_date` 排除掛牌前）。
+  兩個 endpoint 共用同一份 TWSE `BWIBBU_d` 每日 payload（backend 依日期磁碟 cache），對齊取樣日期後
+  同一天只會打上游 1 次，避免因為兩個 seed 各自取樣到不同日期而讓上游被打兩次。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
+| `valuation_date` | DATE | 與 `market_valuation_date_list` 完全相同的每月 5 日集合 | `market_valuation_date_list.valuation_date` |
+
+---
+
+## raw_company_valuation
+
+- **上游 SQL**：[company_valuation_monthly_list](#company_valuation_monthly_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company-valuation?stock_id={stk_code}&date={valuation_date}`
+  - 上游：TWSE `BWIBBU_d`
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `company_valuation_monthly_list.stk_code` |
+| `company_valuation` | JSONB | endpoint 回傳整包 JSON | `custom.http_get_content(url)` |
+| `as_of` | DATE | 查詢基準日 | `company_valuation_monthly_list.valuation_date` |
+
+---
+
+## company_valuation
+
+- **上游 SQL**：[raw_company_valuation](#raw_company_valuation)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位 align `CompanyValuationResponse` + `MarketValuationConstituent`。
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_company_valuation.stk_code` |
+| `as_of` | DATE | 查詢日 | `company_valuation.date` |
+| `stock_id` | TEXT | 股票代號 | `company_valuation.stock_id` |
+| `reason` | TEXT | `found=false` 原因 | `company_valuation.reason` |
+| `calculation_method` | TEXT | 計算方法標記 | `company_valuation.calculation_method` |
+| `stock_name` | TEXT | 股票名稱 | `company_valuation.constituent.stock_name` |
+| `close_price` … `dps` | NUMERIC | `MarketValuationConstituent` 其餘反推數值欄位 | `company_valuation.constituent.*` |
+
+---
+
+## finmind_news_monthly_list
+
+- **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
+- **HTTP API endpoint**：無（純 SQL `generate_series`）
+- 對應 [`/api/company/{stock_id}/news/finmind`](../../app/main.py) FinMind `TaiwanStockNews`。
+- 設計理念（rule 15 附註）：新聞為事件/文字資料且無 interpolation、無歷史母體 endpoint，
+  PoC 階段每月一次代表性取樣（已知會漏掉大部分無新聞月份，未來可補「新聞歷史」事件母體 endpoint）。
+- 爬取效率：本 endpoint 無回溯 fallback，取樣錨點日固定在每月 5 日以降低命中元旦等連續假期的機率。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
+| `month_start_date` | DATE | 每月 5 日（從 `GREATEST(listing_date, 2019-01-01)` 起） | `generate_series(...)` |
+
+---
+
+## raw_finmind_news
+
+- **上游 SQL**：[finmind_news_monthly_list](#finmind_news_monthly_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/news/finmind?as_of={month_start_date}`
+  - 上游：FinMind v4 `TaiwanStockNews`
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `finmind_news_monthly_list.stk_code` |
+| `finmind_news` | JSONB | endpoint 回傳整包 JSON（含 `items[]`） | `custom.http_get_content(url)` |
+| `as_of` | DATE | 查詢基準日 | `finmind_news_monthly_list.month_start_date` |
+
+---
+
+## finmind_news
+
+- **上游 SQL**：[raw_finmind_news](#raw_finmind_news)
+- **HTTP API endpoint**：無（純 JSON 攤平）
+- 欄位 align `FinMindNewsResponse` + `FinMindNewsItem`；`CROSS JOIN LATERAL` 攤平 `items[]`。
+
+| 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `raw_finmind_news.stk_code` |
+| `as_of` | DATE | 查詢基準日 | `finmind_news.as_of` |
+| `stock_id` | TEXT | 股票代號 | `finmind_news.stock_id` |
+| `data_date` | DATE | 實際回傳新聞日期 | `finmind_news.data_date` |
+| `news_date` | DATE | 該則新聞發布日期 | `finmind_news.items[].date` |
+| `title` | TEXT | 新聞標題 | `finmind_news.items[].title` |
+| `source` | TEXT | 新聞來源媒體 | `finmind_news.items[].source` |
+| `link` | TEXT | 原始新聞連結 | `finmind_news.items[].link` |
 
 ---
 
