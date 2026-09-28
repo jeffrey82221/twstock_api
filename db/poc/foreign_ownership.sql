@@ -17,5 +17,5 @@ SELECT
     (foreign_ownership->'row'->>'foreign_investment_limit_ratio_pct')::NUMERIC AS foreign_investment_limit_ratio_pct,
     (foreign_ownership->'row'->>'china_investment_limit_ratio_pct')::NUMERIC AS china_investment_limit_ratio_pct,
     foreign_ownership->'row'->>'change_reason' AS change_reason,
-    custom.parse_iso_date(foreign_ownership->'row'->>'last_change_date') AS last_change_date
+    custom.parse_iso_date((foreign_ownership->'row')->>'last_change_date') AS last_change_date
 FROM {{ schema }}.raw_foreign_ownership
