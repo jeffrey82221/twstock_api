@@ -29,8 +29,11 @@ class Pipeline:
         self.poc_tables = ['poc.' + s.split('.sql')[0] for s in self._sql_paths]
         self.dag = self._create_dag()
         self._db_tool = PostgreSQLTool()
-        self._db_tool.setup()  # Ensure the database is set up with necessary extensions and schemas
-    
+        try:
+            self._db_tool.setup()  # Ensure the database is set up with necessary extensions and schemas
+        except OperationalError as e:
+            pass
+        
     def _create_dag(self):
         dag = DAG()
         for sql_path in self._sql_paths:
