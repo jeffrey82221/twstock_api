@@ -74,6 +74,67 @@ RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
 - 若資料具有歷史性質，已測試不同年份與 `as_of` 邊界。
 - 若驗證發現程式錯誤，必須從 `main` 建立 `fix/<name>` branch，修正後重新執行相同測試，並提供完整 PR 指令與驗證結果。
 
+# 測試開發規範：新增 SQLs
+
+未來 AI 新增或修改 `db/poc/*.sql` 時，開發與測試都要遵守以下規範，不可只寫完 SQL 就算完成。
+
+## 開發規範
+
+- 開發前必讀 [`db/poc/README.md`](db/poc/README.md) 的「規則」章節（語法層、`_list.sql` 角色、資料邊界與事件母體、正規化與欄位處理、執行環境相容性），新 SQL 必須遵守已列出的所有規則。
+- 命名與角色判斷依 `db/poc/README.md` rule 8：先確認新 SQL 是 `_list`（seed）、`raw_`（抓 API），還是正規化 view，再套用對應規則。
+- 新 SQL 完成後，在 `db/poc/README.md` 補上對應View表說明章節（參照-章節索引-可以看到列出每個View的HTTP API endpoint、設計理念、欄位來源等），保持文件與程式碼同步。
+
+## 測試規範
+
+新增或修改 `db/poc/*.sql` 後，必須依序執行以下三層 pytest 驗證，不可只跑其中一種就回報完成：
+
+1. **View 可建立性**（`tests/test_sql_view_creation.py`）：確認新 SQL 在 pgserver-backed 的 mock 資料庫中能被建立成 view，語法正確、依賴的上游 view/table 都存在。
+
+   ```bash
+   pytest tests/test_sql_view_creation.py -v
+   ```
+
+2. **Table 級上游一致性**（`tests/test_sql_table_lineage_consistency.py`）：交叉比對 `pg_tool.get_dependent_views`（live catalog 反查）與 `tools/render_lineagex.py`（靜態 SQL 解析）算出的上游 view 是否一致。若不一致，代表 SQL 引用了 LineageX 認不出來的寫法或 pg_tool 抓不到的依賴，需要修正 SQL 直到兩者一致。
+
+   ```bash
+   pytest tests/test_sql_table_lineage_consistency.py -v
+   ```
+
+3. **欄位級 lineage 覆蓋度**（`tests/test_sql_column_lineage_coverage.py`）：對每個有上游 view 的新 view，檢查其每個欄位（依 `pg_tool.get_view_columns` 查詢 pg_server 建好的真實欄位清單）在 LineageX 的 `output.json` 中是否都能找到至少一個上游欄位。若有欄位被標記缺少上游，需要研究原因並調整 SQL 寫法（常見原因：巢狀 JSON 路徑 + 函式呼叫誤判，見 rule 22），或在 SQL 註解說明此欄位本質上是常數/計算值。
+
+   ```bash
+   pytest tests/test_sql_column_lineage_coverage.py -v
+   ```
+
+也可以一次跑完三個檔案：
+
+```bash
+pytest tests/test_sql_view_creation.py tests/test_sql_table_lineage_consistency.py tests/test_sql_column_lineage_coverage.py -v
+```
+
+4. **（opt-in）單行 SELECT 端到端驗證**（`tests/test_poc_view_select_one_row.py`）：對每個 `poc.*` view 實際執行 `SELECT * FROM poc.<view> LIMIT 1`，確認整條 HTTP 呼叫鏈（`custom.http_get_content` → app/main.py → 上游 TWSE/TPEx/MOPS/FinMind/yfinance）真的能跑出一筆真實資料，而不只是 SQL 語法正確。預設 `pytest -q` 不會執行此檔案（避免一般開發流程被外部網路速度與穩定度拖累），需要另外指定環境變數才會跑：
+
+   ```bash
+   RUN_POC_VIEW_SELECT_TESTS=1 pytest -m poc_view_select tests/test_poc_view_select_one_row.py -v
+   ```
+
+   執行前需要（詳見該檔案 module docstring）：(a) 編譯好的 `http` Postgres extension（`pgsql-http`，會在 pgserver 自帶的 Postgres 上自動編譯安裝一次，需要 `gcc`/`make`/`libcurl` 開發套件）、(b) `host.docker.internal` 能解析到本機（`sudo sh -c 'echo "127.0.0.1 host.docker.internal" >> /etc/hosts'`）、(c) `app/main.py` 有在背景服務 port 5002（測試會自動幫你背景啟動，若已手動啟動則沿用）。新增 `raw_*.sql` 或會呼叫 HTTP 的 view 時，建議額外跑一次這個檔案確認真實資料流真的通。
+
+## 測試完成條件
+
+AI 新增或修改 `db/poc/*.sql` 後必須執行並回報：
+
+```bash
+pytest tests/ -m "not upstream_contract" -q
+```
+
+並確認：
+
+- 三層測試（view 建立、table 級上游一致性、欄位級 lineage 覆蓋度）全部針對新/改動的 SQL 執行過，結果附在回報中（passed/failed/skipped 數量與具體 view/欄位名稱）。
+- 若 table 或欄位 lineage 測試失敗，請研究根因並修正 SQL（而非略過測試或壓制錯誤訊息）。
+- 若因 SQL 本質限制（如常數欄位、LineageX 已知解析限制）導致某項檢查必然無法通過，需在 SQL 註解與 PR 說明中明確記錄原因，不可靜默忽略。
+- 若涉及新增規則或修正既有 SQL 的通用寫法問題，請同步更新 `db/poc/README.md`裡面的規則。
+
 # Data Pipeline 串接測試方式
 
 ## (1) 啟動資料庫
@@ -100,32 +161,55 @@ p = Pipeline()
 p.create_views()
 ```
 
-## (4) 啟動資料抓取 API
+透過 create views 確認 SQL 語法皆正確且可運行。
+
+## (4) 欄位血緣分析
+
+```bash
+python tools/render_lineagex.py
+```
+
+使用血緣分析工具，觀察產出的column level lineage (`data/lineagex/output.json`) 是否有新增的 SQL 沒有上，或 column 沒有上游 column 的狀況，有的話請剖析原因並調整 SQL 寫法來避免。
+
+這能幫助資料庫內容的理解。
+
+
+## (5) 啟動資料抓取 API
 
 ```bash
 source .venv/bin/activate
 uvicorn app.main:app --host 0.0.0.0 --port 5002
 ```
 
-## (5) 實測 pop 實體資料流 爬取速度 
+## (6) 實測 pop 實體資料流 爬取速度 
+
+建立 incrementally 更新的 materialized view 並開始嘗試 insert 資料
 
 ```python
 from pipeline import Pipeline
 p = Pipeline()
 p.create_mat_views()
-p.probe_all_throughput()
+p.probe_all()
 ```
 
-## (6) 建立資料爬取 Cronjobs
+## (7) 建立資料爬取 Cronjobs
 
 ```python
 from pipeline import Pipeline
 p = Pipeline()
+p.probe_all_throughput()
 p.setup_schedules()
 ```
 
+## (8) 資料爬取狀況監測網頁
+
+```bash
+source .venv/bin/activate
+uvicorn db_demo.main:app --host 0.0.0.0 --port 5100
+```
+
 > **新增 seed 上線前的檢查**：新的 `_list.sql`（例如 v0.0.11 新增的 8 個）第一次要正式讓 cronjob
-> 大量拉資料前，務必先跑過 step (5) 的 `probe_all_throughput()`（或針對單一新 seed 呼叫
+> 大量拉資料前，務必先跑過 step (7) 的 `probe_all_throughput()`（或針對單一新 seed 呼叫
 > `p.probe_seed_insert_throughput(table=<seed_name>)`），讓 `throughput_config.json` 有實測出的
 > `(period_seconds, row_cnt)`；否則 `setup_schedules()` 只會退回使用 `batch_size.json` 裡的保守猜測值
 > 或呼叫端傳入的預設值，長期跑下可能過度保守（回填太慢）或過度激進（觸發上游 rate limit）。
