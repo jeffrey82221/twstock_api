@@ -75,10 +75,24 @@ query was slow/timed out against the real backend:
   for the last 5 years (~120 calls). Each call is fast on its own
   (~0.01-2s observed directly against the real MOPS-backed endpoint) but
   120 of them add up past a short timeout, and `raw_product_revenue` /
-  `product_revenue` both sit downstream of that same `DISTINCT`. There is
-  no column to filter by that would let Postgres skip the `DISTINCT`
-  entirely, so these three views get a longer `statement_timeout`
-  (`_SLOW_DISTINCT_TIMEOUT_S`) instead of a targeted `WHERE`.
+  `product_revenue` both sit downstream of that same `DISTINCT`.
+
+  All three views *do* expose `ym` (year-month) as a plain pass-through
+  column, though, and `EXPLAIN (VERBOSE, COSTS OFF)` against the live
+  backend confirms Postgres pushes a `WHERE ym = '...'` predicate all the
+  way down through the `DISTINCT`/`HashAggregate`/`Unique` node into the
+  `months` CTE that drives the HTTP fan-out -- because restricting which
+  months get deduplicated doesn't change the result of deduplication,
+  Postgres doesn't need `DISTINCT`'s correctness guarantee to see all rows
+  first. That collapses ~120 HTTP calls down to 2 (one per market) before
+  any grouping happens. `_recent_ym()` computes a `ym` two months before
+  today (Republic-of-China year+month, e.g. `'11507'`) at test-collection
+  time instead of hard-coding one, since a fixed literal would eventually
+  age out of the 5-year rolling window `months.sql`-shaped CTEs generate
+  from `CURRENT_DATE`; two months back stays safely clear of MOPS's ~10
+  day monthly filing lag. Measured against the live backend: 0.06s /
+  1.79s / 1.66s respectively -- comfortably inside `DEFAULT_TIMEOUT_S`,
+  so none of the three need a longer timeout at all.
 
 - `sbl_history`: `CROSS JOIN LATERAL jsonb_array_elements(records)` drops
   any (company, month) row whose SBL (借券/還券) history is empty that
@@ -129,25 +143,48 @@ pytestmark = [
 
 # Observed ceiling for a view needing exactly one real HTTP call to a slow
 # upstream (e.g. `foreign_ownership` ~23.5s) plus network-variance margin.
+# Applies uniformly to all 61 views -- once product_revenue_filer_list /
+# raw_product_revenue / product_revenue are given a `WHERE ym = ...` that
+# Postgres can push down through their `DISTINCT` (see module docstring),
+# none of the 61 views need a longer timeout than this.
 DEFAULT_TIMEOUT_S = 60
+
+
+def _recent_ym(months_ago: int = 2) -> str:
+    """Republic-of-China `ym` string (e.g. `'11507'`) for `months_ago`
+    months before today. Computed at test-collection time rather than
+    hard-coded, so it always lands inside the 5-year rolling window
+    `months.sql`-shaped CTEs generate from `CURRENT_DATE` (a fixed literal
+    would eventually age out) and stays safely clear of MOPS's ~10 day
+    monthly product-revenue filing lag.
+    """
+    from datetime import date
+
+    today = date.today()
+    year, month = today.year, today.month - months_ago
+    while month <= 0:
+        month += 12
+        year -= 1
+    return f"{year - 1911:03d}{month:02d}"
+
 
 # product_revenue_filer_list / raw_product_revenue / product_revenue all sit
 # downstream of a `SELECT DISTINCT` that forces Postgres to materialize
 # ~120 HTTP calls (5 years x 12 months x 2 markets) before a LIMIT can
-# apply -- see module docstring. Observed per-call latency tops out around
-# ~2s against the real backend; 150s covers ~120 calls with ample margin.
-_SLOW_DISTINCT_TIMEOUT_S = 150
-_SLOW_VIEWS_TIMEOUT_S = {
-    "product_revenue_filer_list": _SLOW_DISTINCT_TIMEOUT_S,
-    "raw_product_revenue": _SLOW_DISTINCT_TIMEOUT_S,
-    "product_revenue": _SLOW_DISTINCT_TIMEOUT_S,
-}
-
+# apply -- but all three expose `ym` as a plain pass-through column, and
+# `EXPLAIN` confirms Postgres pushes a `WHERE ym = ...` filter down through
+# the `DISTINCT` into the underlying `months` CTE, cutting ~120 HTTP calls
+# to 2. See module docstring for the measured timings (all well under
+# DEFAULT_TIMEOUT_S, no elevated timeout needed).
+#
 # sbl_history's natural (unfiltered) first row can stall indefinitely on
 # sparse SBL activity -- see module docstring. Target a company confirmed
 # (by direct inspection) to reliably have SBL history instead of relying
 # on row order.
 _VIEW_WHERE_OVERRIDES = {
+    "product_revenue_filer_list": f"ym = '{_recent_ym()}'",
+    "raw_product_revenue": f"ym = '{_recent_ym()}'",
+    "product_revenue": f"ym = '{_recent_ym()}'",
     "sbl_history": "stk_code = '2330'",
 }
 
@@ -427,13 +464,15 @@ def test_view_select_one_row_succeeds(live_poc_schema, sql_path):
 
     Uses the same SQL shape as `Pipeline.check_view_run_speed()`
     (`SELECT * FROM poc.{table} LIMIT 1`), with a per-view `WHERE`
-    override / extended timeout for the handful of views whose natural
-    first row is unreliable -- see the module docstring for how each was
-    found via direct inspection against the live backend.
+    override for the handful of views whose natural first row is
+    unreliable -- see the module docstring for how each was found via
+    direct inspection against the live backend. A single 60s
+    `DEFAULT_TIMEOUT_S` applies to every view; none need more once the
+    `WHERE` overrides are in place.
     """
     view = sql_path[: -len(".sql")]
     where_clause = _VIEW_WHERE_OVERRIDES.get(view)
-    timeout_s = _SLOW_VIEWS_TIMEOUT_S.get(view, DEFAULT_TIMEOUT_S)
+    timeout_s = DEFAULT_TIMEOUT_S
 
     select_sql = f"SELECT * FROM poc.{view}"
     if where_clause:
