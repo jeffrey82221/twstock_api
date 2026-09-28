@@ -112,6 +112,14 @@ RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
 pytest tests/test_sql_view_creation.py tests/test_sql_table_lineage_consistency.py tests/test_sql_column_lineage_coverage.py -v
 ```
 
+4. **（opt-in）單行 SELECT 端到端驗證**（`tests/test_poc_view_select_one_row.py`）：對每個 `poc.*` view 實際執行 `SELECT * FROM poc.<view> LIMIT 1`，確認整條 HTTP 呼叫鏈（`custom.http_get_content` → app/main.py → 上游 TWSE/TPEx/MOPS/FinMind/yfinance）真的能跑出一筆真實資料，而不只是 SQL 語法正確。預設 `pytest -q` 不會執行此檔案（避免一般開發流程被外部網路速度與穩定度拖累），需要另外指定環境變數才會跑：
+
+   ```bash
+   RUN_POC_VIEW_SELECT_TESTS=1 pytest -m poc_view_select tests/test_poc_view_select_one_row.py -v
+   ```
+
+   執行前需要（詳見該檔案 module docstring）：(a) 編譯好的 `http` Postgres extension（`pgsql-http`，會在 pgserver 自帶的 Postgres 上自動編譯安裝一次，需要 `gcc`/`make`/`libcurl` 開發套件）、(b) `host.docker.internal` 能解析到本機（`sudo sh -c 'echo "127.0.0.1 host.docker.internal" >> /etc/hosts'`）、(c) `app/main.py` 有在背景服務 port 5002（測試會自動幫你背景啟動，若已手動啟動則沿用）。新增 `raw_*.sql` 或會呼叫 HTTP 的 view 時，建議額外跑一次這個檔案確認真實資料流真的通。
+
 ## 測試完成條件
 
 AI 新增或修改 `db/poc/*.sql` 後必須執行並回報：
