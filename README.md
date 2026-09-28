@@ -80,10 +80,9 @@ RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
 
 ## 開發規範
 
-- 開發前必讀 [`db/poc/README.md`](db/poc/README.md) 的「規則」章節（語法層、`_list.sql` 角色、資料邊界與事件母體、正規化與欄位處理、執行環境相容性），新 SQL 必須遵守已列出的所有規則（目前到 rule 22）。
+- 開發前必讀 [`db/poc/README.md`](db/poc/README.md) 的「規則」章節（語法層、`_list.sql` 角色、資料邊界與事件母體、正規化與欄位處理、執行環境相容性），新 SQL 必須遵守已列出的所有規則。
 - 命名與角色判斷依 `db/poc/README.md` rule 8：先確認新 SQL 是 `_list`（seed）、`raw_`（抓 API），還是正規化 view，再套用對應規則。
-- 若新 SQL 用到 JSON 路徑運算子（`->`/`->>`）且外層包函式呼叫，注意 `db/poc/README.md` rule 22 的巢狀路徑加括號規範，避免 LineageX 靜態解析漏抓上游欄位。
-- 新 SQL 完成後，在 `db/poc/README.md` 補上對應章節（HTTP API endpoint、設計理念、欄位來源等），保持文件與程式碼同步。
+- 新 SQL 完成後，在 `db/poc/README.md` 補上對應View表說明章節（參照-章節索引-可以看到列出每個View的HTTP API endpoint、設計理念、欄位來源等），保持文件與程式碼同步。
 
 ## 測試規範
 
@@ -124,9 +123,9 @@ pytest tests/ -m "not upstream_contract" -q
 並確認：
 
 - 三層測試（view 建立、table 級上游一致性、欄位級 lineage 覆蓋度）全部針對新/改動的 SQL 執行過，結果附在回報中（passed/failed/skipped 數量與具體 view/欄位名稱）。
-- 若 table 或欄位 lineage 測試失敗，已研究根因並修正 SQL（而非略過測試或壓制錯誤訊息）。
+- 若 table 或欄位 lineage 測試失敗，請研究根因並修正 SQL（而非略過測試或壓制錯誤訊息）。
 - 若因 SQL 本質限制（如常數欄位、LineageX 已知解析限制）導致某項檢查必然無法通過，需在 SQL 註解與 PR 說明中明確記錄原因，不可靜默忽略。
-- 若涉及新增規則或修正既有 SQL 的通用寫法問題，已同步更新 `db/poc/README.md`。
+- 若涉及新增規則或修正既有 SQL 的通用寫法問題，請同步更新 `db/poc/README.md`裡面的規則。
 
 # Data Pipeline 串接測試方式
 
