@@ -134,6 +134,42 @@ class PostgreSQLTool:
             for row in rows
         ]
 
+    def get_view_columns(self, view_name: str, schema: str = "poc") -> list:
+        """Column names of a table or view, in schema-declaration order.
+
+        Reads PostgreSQL's own catalog (`information_schema.columns`), so
+        the result reflects the object's *actual* columns as it currently
+        exists in the database -- independent of, and a ground truth for
+        cross-checking against, any static SQL text parsing (e.g. by
+        LineageX).
+
+        Args:
+            view_name: name of the view/table to inspect. May be
+                schema-qualified (e.g. "poc.ohlcv_daily") or bare (e.g.
+                "ohlcv_daily"), in which case `schema` is used to qualify
+                it.
+            schema: schema used to qualify `view_name` when it isn't
+                already schema-qualified (contains no "."). Defaults to
+                "poc".
+
+        Returns:
+            A list of column names (str), ordered by `ordinal_position`.
+            Returns an empty list if the view/table does not exist or has
+            no columns.
+        """
+        if "." in view_name:
+            resolved_schema, name = view_name.split(".", 1)
+        else:
+            resolved_schema, name = schema, view_name
+        query = """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = %s
+            ORDER BY ordinal_position;
+        """
+        rows = self.fetch_all(query, (resolved_schema, name))
+        return [row[0] for row in rows]
+
     def setup(self):
         """Set up the database with necessary extensions and schemas."""
         try:

@@ -74,6 +74,59 @@ RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
 - 若資料具有歷史性質，已測試不同年份與 `as_of` 邊界。
 - 若驗證發現程式錯誤，必須從 `main` 建立 `fix/<name>` branch，修正後重新執行相同測試，並提供完整 PR 指令與驗證結果。
 
+# 測試開發規範：新增 SQLs
+
+未來 AI 新增或修改 `db/poc/*.sql` 時，開發與測試都要遵守以下規範，不可只寫完 SQL 就算完成。
+
+## 開發規範
+
+- 開發前必讀 [`db/poc/README.md`](db/poc/README.md) 的「規則」章節（語法層、`_list.sql` 角色、資料邊界與事件母體、正規化與欄位處理、執行環境相容性），新 SQL 必須遵守已列出的所有規則。
+- 命名與角色判斷依 `db/poc/README.md` rule 8：先確認新 SQL 是 `_list`（seed）、`raw_`（抓 API），還是正規化 view，再套用對應規則。
+- 新 SQL 完成後，在 `db/poc/README.md` 補上對應View表說明章節（參照-章節索引-可以看到列出每個View的HTTP API endpoint、設計理念、欄位來源等），保持文件與程式碼同步。
+
+## 測試規範
+
+新增或修改 `db/poc/*.sql` 後，必須依序執行以下三層 pytest 驗證，不可只跑其中一種就回報完成：
+
+1. **View 可建立性**（`tests/test_sql_view_creation.py`）：確認新 SQL 在 pgserver-backed 的 mock 資料庫中能被建立成 view，語法正確、依賴的上游 view/table 都存在。
+
+   ```bash
+   pytest tests/test_sql_view_creation.py -v
+   ```
+
+2. **Table 級上游一致性**（`tests/test_sql_table_lineage_consistency.py`）：交叉比對 `pg_tool.get_dependent_views`（live catalog 反查）與 `tools/render_lineagex.py`（靜態 SQL 解析）算出的上游 view 是否一致。若不一致，代表 SQL 引用了 LineageX 認不出來的寫法或 pg_tool 抓不到的依賴，需要修正 SQL 直到兩者一致。
+
+   ```bash
+   pytest tests/test_sql_table_lineage_consistency.py -v
+   ```
+
+3. **欄位級 lineage 覆蓋度**（`tests/test_sql_column_lineage_coverage.py`）：對每個有上游 view 的新 view，檢查其每個欄位（依 `pg_tool.get_view_columns` 查詢 pg_server 建好的真實欄位清單）在 LineageX 的 `output.json` 中是否都能找到至少一個上游欄位。若有欄位被標記缺少上游，需要研究原因並調整 SQL 寫法（常見原因：巢狀 JSON 路徑 + 函式呼叫誤判，見 rule 22），或在 SQL 註解說明此欄位本質上是常數/計算值。
+
+   ```bash
+   pytest tests/test_sql_column_lineage_coverage.py -v
+   ```
+
+也可以一次跑完三個檔案：
+
+```bash
+pytest tests/test_sql_view_creation.py tests/test_sql_table_lineage_consistency.py tests/test_sql_column_lineage_coverage.py -v
+```
+
+## 測試完成條件
+
+AI 新增或修改 `db/poc/*.sql` 後必須執行並回報：
+
+```bash
+pytest tests/ -m "not upstream_contract" -q
+```
+
+並確認：
+
+- 三層測試（view 建立、table 級上游一致性、欄位級 lineage 覆蓋度）全部針對新/改動的 SQL 執行過，結果附在回報中（passed/failed/skipped 數量與具體 view/欄位名稱）。
+- 若 table 或欄位 lineage 測試失敗，請研究根因並修正 SQL（而非略過測試或壓制錯誤訊息）。
+- 若因 SQL 本質限制（如常數欄位、LineageX 已知解析限制）導致某項檢查必然無法通過，需在 SQL 註解與 PR 說明中明確記錄原因，不可靜默忽略。
+- 若涉及新增規則或修正既有 SQL 的通用寫法問題，請同步更新 `db/poc/README.md`裡面的規則。
+
 # Data Pipeline 串接測試方式
 
 ## (1) 啟動資料庫
