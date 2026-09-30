@@ -12,6 +12,10 @@ paradag==1.2.0
 fastmcp[tasks]
 pytest==9.1.1
 pytest-asyncio==1.4.0
+# Pinned to 0.1.6: the only published pgembed wheel that bundles pg_duckdb.so
+# (0.1.7+ dropped it). Used to mock Postgres in tests/test_pg_tool.py without
+# a local Postgres install.
+pgembed==0.1.6
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.14.2
