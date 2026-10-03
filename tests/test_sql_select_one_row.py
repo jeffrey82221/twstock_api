@@ -111,20 +111,13 @@ query was slow/timed out against the real backend:
 from __future__ import annotations
 
 import os
-import re
-import shutil
-import socket
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
-from contextlib import contextmanager
-from pathlib import Path
 from typing import Iterator
 
-import pgserver
 import psycopg
 import pytest
 
@@ -189,102 +182,6 @@ _VIEW_WHERE_OVERRIDES = {
 }
 
 
-# ---------------------------------------------------------------------------
-# 1. http extension -- compiled on demand into pgserver's own Postgres build
-# ---------------------------------------------------------------------------
-
-
-def _pgserver_pginstall_dir() -> Path:
-    return Path(pgserver.__file__).resolve().parent / "pginstall"
-
-
-def _ensure_http_extension() -> None:
-    """Compile github.com/pramsey/pgsql-http against pgserver's own bundled
-    Postgres build (via that build's own `pg_config`) and install it into
-    pgserver's own `pginstall/` tree, if not already present there. Keeps
-    development "pgserver-only" per this task's explicit direction -- no
-    Docker, no system Postgres deploy.
-
-    Idempotent: skips the compile step entirely if `http.control` is
-    already installed (e.g. from an earlier test run in the same
-    environment/venv).
-    """
-    pginstall = _pgserver_pginstall_dir()
-    http_control = pginstall / "share" / "postgresql" / "extension" / "http.control"
-    if http_control.exists():
-        return
-
-    pg_config = pginstall / "bin" / "pg_config"
-    if not pg_config.exists():
-        pytest.skip(f"pgserver 的 pg_config 不存在（{pg_config}），無法編譯 http extension，略過此測試模組")
-
-    if shutil.which("gcc") is None or shutil.which("make") is None:
-        pytest.skip("編譯 pgsql-http 需要 gcc/make，本機未安裝，略過此測試模組")
-
-    build_dir = tempfile.mkdtemp(prefix="pgsql_http_build_")
-    try:
-        clone = subprocess.run(
-            ["git", "clone", "--depth", "1", PGSQL_HTTP_REPO, build_dir],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if clone.returncode != 0:
-            pytest.skip(f"無法下載 pgsql-http 原始碼（需要網路存取 GitHub）：{clone.stderr.strip()[-500:]}")
-
-        make = subprocess.run(
-            ["make", f"PG_CONFIG={pg_config}"],
-            cwd=build_dir,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if make.returncode != 0:
-            pytest.skip(
-                "編譯 pgsql-http 失敗（可能缺少 libcurl 開發套件，"
-                "Debian/Ubuntu 上為 libcurl4-openssl-dev）："
-                f"{make.stderr.strip()[-1500:]}"
-            )
-
-        make_install = subprocess.run(
-            ["make", "install", f"PG_CONFIG={pg_config}"],
-            cwd=build_dir,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if make_install.returncode != 0:
-            pytest.skip(f"安裝 pgsql-http 到 pgserver 失敗：{make_install.stderr.strip()[-1500:]}")
-    finally:
-        shutil.rmtree(build_dir, ignore_errors=True)
-
-    if not http_control.exists():
-        pytest.skip("pgsql-http 編譯/安裝流程執行完畢，但 http.control 仍不存在，略過此測試模組")
-
-
-# ---------------------------------------------------------------------------
-# 2. host.docker.internal -- must resolve to this machine (one-time /etc/hosts
-#    setup outside Docker; a test must not edit system files itself)
-# ---------------------------------------------------------------------------
-
-
-def _ensure_host_docker_internal() -> None:
-    try:
-        socket.gethostbyname("host.docker.internal")
-    except OSError:
-        pytest.skip(
-            "host.docker.internal 無法解析（db/poc/raw_*.sql 皆呼叫此 host）。"
-            "請先執行一次："
-            "sudo sh -c 'echo \"127.0.0.1 host.docker.internal\" >> /etc/hosts'"
-        )
-
-
-# ---------------------------------------------------------------------------
-# 3. app/main.py -- start it in the background if not already serving
-#    (development direction 1: 把 endpoint API 起在背景)
-# ---------------------------------------------------------------------------
-
-
 def _app_server_alive() -> bool:
     try:
         with urllib.request.urlopen(APP_HEALTH_URL, timeout=3) as resp:
@@ -333,114 +230,18 @@ def live_app_server() -> Iterator[None]:
                 proc.kill()
 
 
-# ---------------------------------------------------------------------------
-# Live (http-enabled) pgserver database + poc schema build
-# ---------------------------------------------------------------------------
-
-# (regex pattern, expected match count) -- unlike tests/conftest.py's
-# _SKIPPED_PATTERNS, `http`/`http_set_curlopt` are NOT skipped here: the
-# http extension is actually installed (see _ensure_http_extension above),
-# so those statements run for real. pg_ivm/pg_cron stay skipped -- neither
-# is needed to build or query plain poc.* views (they only matter for the
-# pop schema's incremental materialized views and cron scheduling).
-_LIVE_SKIP_PATTERNS: list[tuple[str, int]] = [
-    (r"CREATE EXTENSION IF NOT EXISTS\s+pg_ivm\s*;", 1),
-    (r"CREATE EXTENSION IF NOT EXISTS\s+pg_cron\s*;", 1),
-    (
-        r"CREATE\s+or\s+REPLACE\s+VIEW\s+public\.(job_run_details|job)\b.*?"
-        r"GRANT SELECT ON public\.\1 TO mcp_reader;",
-        2,
-    ),
-]
-
-_LIVE_SKIP_REPLACEMENT = "-- [pytest live http] skipped: pg_ivm/pg_cron unavailable in pgserver, not needed for poc.* plain views"
-
-
-def _sanitize_setting_sql_keep_http(sql: str) -> str:
-    """Like `tests/conftest.py`'s `_sanitize_setting_sql`, but keeps the
-    `http` extension + `http_set_curlopt()` calls intact. Raises
-    AssertionError if db/setting.sql has drifted from what this function
-    expects to find/skip."""
-    sanitized = sql
-    for pattern, expected_count in _LIVE_SKIP_PATTERNS:
-        matches = re.findall(pattern, sanitized, flags=re.IGNORECASE | re.DOTALL)
-        if len(matches) != expected_count:
-            raise AssertionError(
-                "db/setting.sql 的內容與此測試假設的片段不符："
-                f"pattern={pattern!r} 預期符合 {expected_count} 次，實際符合 {len(matches)} 次。"
-                "請更新 tests/test_poc_view_select_one_row.py 的 _LIVE_SKIP_PATTERNS。"
-            )
-        sanitized = re.sub(pattern, _LIVE_SKIP_REPLACEMENT, sanitized, flags=re.IGNORECASE | re.DOTALL)
-    return sanitized
-
-
-@contextmanager
-def _pg_tool_setup_noop() -> Iterator[None]:
-    """Patch `pg_tool.PostgreSQLTool.setup` to a no-op for the duration of
-    the `with` block -- `Pipeline.__init__` unconditionally calls it, which
-    would otherwise re-run the *unmodified* `db/setting.sql` against the
-    hard-coded `localhost:5432` DSN. See `tests/conftest.py` for the same
-    trick."""
-    import pg_tool
-
-    original_setup = pg_tool.PostgreSQLTool.setup
-    pg_tool.PostgreSQLTool.setup = lambda self: None
-    try:
-        yield
-    finally:
-        pg_tool.PostgreSQLTool.setup = original_setup
-
-
 @pytest.fixture(scope="module")
-def live_pg_server():
-    """Module-scoped throw-away Postgres instance backed by `pgserver`,
-    separate from `tests/conftest.py`'s mock instance -- this one actually
-    has a working `http` extension, so it is kept isolated rather than
-    shared with the tests that deliberately avoid live network calls."""
-    _ensure_http_extension()
-    pgdata = tempfile.mkdtemp(prefix="twstock_live_pgserver_")
-    server = pgserver.get_server(pgdata)
-    try:
-        yield server
-    finally:
-        server.cleanup()
-        shutil.rmtree(pgdata, ignore_errors=True)
-
-
-@pytest.fixture(scope="module")
-def live_pg_dsn(live_pg_server) -> str:
-    """DSN for an `app_db` database with `db/setting.sql` applied
-    (pg_ivm/pg_cron skipped, http extension live) and enabled."""
-    live_pg_server.psql("CREATE DATABASE app_db;")
-    dsn = live_pg_server.get_uri(database="app_db")
-
-    with open(SETTING_SQL_PATH, "r", encoding="utf-8") as f:
-        setting_sql = _sanitize_setting_sql_keep_http(f.read())
-
-    conn = psycopg.connect(dsn, autocommit=True)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(setting_sql)
-            cur.execute("CREATE EXTENSION IF NOT EXISTS http;")
-            cur.execute("SELECT http_set_curlopt('CURLOPT_CONNECTTIMEOUT', '15000');")
-            cur.execute("SELECT http_set_curlopt('CURLOPT_TIMEOUT', '12000');")
-    finally:
-        conn.close()
-    return dsn
-
-
-@pytest.fixture(scope="module")
-def live_poc_schema(live_pg_dsn, live_app_server):
+def live_poc_schema():
     """Build every `db/poc/*.sql` view, once per module, against the live
     (http-enabled) database with `app/main.py` actually serving -- mirrors
     `Pipeline.create_views()`, in DAG order."""
-    _ensure_host_docker_internal()
+    # _ensure_host_docker_internal()
 
-    with _pg_tool_setup_noop():
-        import pipeline as pipeline_module
+    # with _pg_tool_setup_noop():
+    import pipeline as pipeline_module
 
-        p = pipeline_module.Pipeline()
-    p._db_tool._dsn = live_pg_dsn
+    p = pipeline_module.Pipeline()
+    # p._db_tool._dsn = live_pg_dsn
 
     p._db_tool.execute_query("DROP SCHEMA IF EXISTS poc CASCADE;")
     p._db_tool.execute_query("CREATE SCHEMA poc;")
@@ -456,7 +257,7 @@ def live_poc_schema(live_pg_dsn, live_app_server):
 # ---------------------------------------------------------------------------
 
 
-def test_view_select_one_row_succeeds(live_poc_schema, sql_path):
+def test_view_select_one_row_succeeds(live_app_server, live_poc_schema, sql_path):
     """`SELECT * FROM poc.<view> LIMIT 1` must succeed and return one real
     (not entirely-NULL) row -- confirming the full HTTP-backed pipeline
     actually works end to end for this view, not just that its SQL is
@@ -470,6 +271,7 @@ def test_view_select_one_row_succeeds(live_poc_schema, sql_path):
     `DEFAULT_TIMEOUT_S` applies to every view; none need more once the
     `WHERE` overrides are in place.
     """
+    _ = live_app_server
     view = sql_path[: -len(".sql")]
     where_clause = _VIEW_WHERE_OVERRIDES.get(view)
     timeout_s = DEFAULT_TIMEOUT_S

@@ -11,7 +11,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/Users/jeffreylin/invest_db
+      - ./my_local_pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d app_db"]
       interval: 10s
@@ -28,5 +28,3 @@ services:
     depends_on:
       - postgres
 
-volumes:
-  postgres_data:

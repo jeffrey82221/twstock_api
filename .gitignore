@@ -1,3 +1,4 @@
+db_start/my_local_pgdata/
 .venv
 __pycache__
 data/
