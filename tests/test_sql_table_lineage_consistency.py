@@ -1,15 +1,15 @@
 """Cross-validate `db/poc/*.sql` upstream lineage between two independent
 sources of truth:
 
-1. `pg_tool.PostgreSQLTool.get_dependent_views` -- walks PostgreSQL's own
+1. `pg_tool.PostgreSQLTool.get_direct_dependent_views` -- walks PostgreSQL's own
    catalog dependency graph (`pg_depend` -> `pg_rewrite` -> `pg_class`) on a
    *live* database that has every `db/poc/*.sql` view actually created.
-   This function reports *downstream* dependents of a given view/table, so
-   this test inverts it once (looping over every candidate `poc` view) to
-   build a full "who is my direct upstream" map.
+   This function reports direct *downstream* dependents of a given
+   view/table, so this test inverts it once (looping over every candidate
+   `poc` view) to build a full "who is my direct upstream" map.
 2. `tools/render_lineagex.build_lineage` -- runs LineageX's static SQL text
    parser (no live database involved) over the same 61 files and reports
-   each view's direct ("level 1") upstream tables in its `output.json`.
+   each view's direct upstream tables in its `output.json`.
 
 If a SQL file's upstream set differs between the two methods, that is a
 strong signal something in the SQL is written in a way one of the two
@@ -78,7 +78,7 @@ def poc_schema_build_errors(pipeline) -> Dict[str, Optional[str]]:
     Returns `{sql_path: None}` for a view that built successfully, or
     `{sql_path: "<error message>"}` for one that didn't -- a view that
     failed to build has no catalog entry, so it cannot be inspected by
-    `pg_tool.get_dependent_views()` and is skipped (not failed) by the
+    `pg_tool.get_direct_dependent_views()` and is skipped (not failed) by the
     comparison test with a pointer back to `tests/test_sql_view_creation.py`,
     which already covers pure view-creation failures.
     """
@@ -100,14 +100,13 @@ def poc_schema_build_errors(pipeline) -> Dict[str, Optional[str]]:
 def pgtool_upstream_map(
     pipeline, db_tool, poc_schema_build_errors
 ) -> Dict[str, Set[str]]:
-    """Direct ("level 1") upstream map derived from
-    `pg_tool.PostgreSQLTool.get_dependent_views`, built by inverting it once
+    """Direct upstream map derived from
+    `pg_tool.PostgreSQLTool.get_direct_dependent_views`, built by inverting it once
     per successfully-built `poc` view.
 
-    `get_dependent_views("poc.<T>")` lists views that *depend on* `T`; a
-    dependent `D` at `level == 1` means `D` directly references `T`. Calling
-    this once per candidate `T` (61 calls total) and collecting the `level
-    == 1` hits gives, for every view `D`, the full set of views/tables it
+    `get_direct_dependent_views("poc.<T>")` lists views that directly
+    reference `T`. Calling this once per candidate `T` (61 calls total) and
+    collecting the results gives, for every view `D`, the full set of views/tables it
     directly references -- i.e. `D`'s upstream set.
     """
     upstream: Dict[str, Set[str]] = {}
@@ -115,10 +114,8 @@ def pgtool_upstream_map(
         if poc_schema_build_errors.get(sql_path) is not None:
             continue  # view doesn't exist in the catalog; can't be inspected
         candidate = _view_name(sql_path)
-        dependents = db_tool.get_dependent_views(f"poc.{candidate}")
+        dependents = db_tool.get_direct_dependent_views(f"poc.{candidate}")
         for dependent in dependents:
-            if dependent["level"] != 1:
-                continue
             dependent_view = _strip_poc_prefix(dependent["view"])
             upstream.setdefault(dependent_view, set()).add(candidate)
     return upstream
@@ -128,8 +125,8 @@ def test_view_lineage_upstream_matches_pgtool(
     poc_schema_build_errors, lineage_json, pgtool_upstream_map, sql_path
 ):
     """`db/poc/{sql_path}`'s direct upstream must agree between LineageX's
-    static SQL parse and PostgreSQL's own catalog dependency graph (via
-    `pg_tool.get_dependent_views`).
+    static SQL parse and PostgreSQL's own direct catalog dependency graph
+    (via `pg_tool.get_direct_dependent_views`).
 
     A mismatch names the exact file, both upstream sets, and which tables
     are missing on which side, so the SQL can be inspected and fixed
@@ -179,7 +176,7 @@ def test_view_lineage_upstream_matches_pgtool(
         pytest.fail(
             f"db/poc/{sql_path} 的上游偵測不一致（view: {qualified}）\n\n"
             f"LineageX（靜態語法解析）判斷的上游：{sorted(lineagex_upstream) or '(無)'}\n"
-            f"pg_tool.get_dependent_views（實際資料庫相依關係）判斷的上游："
+            f"pg_tool.get_direct_dependent_views（實際資料庫相依關係）判斷的上游："
             f"{sorted(pgtool_upstream) or '(無)'}\n\n"
             f"只在 LineageX 出現、pg_tool 沒有（可能是 LineageX 誤判/多算）："
             f"{only_in_lineagex or '(無)'}\n"

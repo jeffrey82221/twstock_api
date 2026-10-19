@@ -2,10 +2,10 @@
 an upstream view.
 
 `tests/test_sql_table_lineage_consistency.py` already cross-validates a
-view's *table-level* upstream between `pg_tool.get_dependent_views` (live
+view's *table-level* upstream between `pg_tool.get_direct_dependent_views` (live
 database catalog) and `tools/render_lineagex.py` (static SQL text parse).
 This test goes one level deeper: for a view that DOES have at least one
-upstream view (per `get_dependent_views`), every one of its *columns* should
+upstream view (per `get_direct_dependent_views`), every one of its *columns* should
 also have at least one upstream *column* in LineageX's column-level lineage
 (`output.json`'s `columns` field). A column with an empty (or entirely
 missing) direct-source list means LineageX's static parser could not trace
@@ -123,8 +123,8 @@ def pgtool_view_columns(
 def pgtool_upstream_map(
     pipeline, db_tool, poc_schema_build_errors
 ) -> Dict[str, Set[str]]:
-    """Direct ("level 1") upstream map derived from
-    `pg_tool.PostgreSQLTool.get_dependent_views`, built by inverting it once
+    """Direct upstream map derived from
+    `pg_tool.PostgreSQLTool.get_direct_dependent_views`, built by inverting it once
     per successfully-built `poc` view. See
     `tests/test_sql_table_lineage_consistency.py` for the identical helper
     this mirrors -- used here only to decide whether a view has *any*
@@ -135,10 +135,8 @@ def pgtool_upstream_map(
         if poc_schema_build_errors.get(sql_path) is not None:
             continue  # view doesn't exist in the catalog; can't be inspected
         candidate = _view_name(sql_path)
-        dependents = db_tool.get_dependent_views(f"poc.{candidate}")
+        dependents = db_tool.get_direct_dependent_views(f"poc.{candidate}")
         for dependent in dependents:
-            if dependent["level"] != 1:
-                continue
             dependent_view = _strip_poc_prefix(dependent["view"])
             upstream.setdefault(dependent_view, set()).add(candidate)
     return upstream
@@ -186,7 +184,7 @@ def test_view_columns_have_upstream_column(
 ):
     """Every column of `db/poc/{sql_path}` must have at least one upstream
     column in LineageX's lineage, provided the view itself has at least one
-    upstream *view* (per `pg_tool.get_dependent_views`).
+    upstream *view* (per `pg_tool.get_direct_dependent_views`).
 
     The set of columns actually checked comes from `pgtool_view_columns` --
     i.e. `pg_tool.PostgreSQLTool.get_view_columns` querying the real view
@@ -224,7 +222,7 @@ def test_view_columns_have_upstream_column(
     if not upstream_views:
         pytest.skip(
             f"db/poc/{sql_path}（{qualified}）沒有任何上游 view"
-            "（get_dependent_views 反查結果為空），不屬於本測試的檢查範圍。"
+            "（get_direct_dependent_views 反查結果為空），不屬於本測試的檢查範圍。"
         )
 
     lineage_entry = lineage_json.get(qualified)
@@ -243,7 +241,7 @@ def test_view_columns_have_upstream_column(
         all_columns = sorted(actual_columns)
         pytest.fail(
             f"db/poc/{sql_path}（{qualified}）有欄位在 LineageX 的欄位 lineage 中"
-            "找不到任何上游欄位，但此 view 依 pg_tool.get_dependent_views 確實"
+            "找不到任何上游欄位，但此 view 依 pg_tool.get_direct_dependent_views 確實"
             f"有上游 view：{sorted(upstream_views)}\n\n"
             f"缺少上游欄位的 column（共 {len(missing_columns)} 個，需要 AI/工程師"
             f"研究原因）：{sorted(missing_columns)}\n\n"

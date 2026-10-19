@@ -134,6 +134,35 @@ class PostgreSQLTool:
             for row in rows
         ]
 
+    def get_direct_dependent_views(
+        self, view_name: str, schema: str = "poc"
+    ) -> list:
+        """Find views/materialized views that directly reference a relation.
+
+        Unlike `get_dependent_views`, this does not recurse through
+        dependencies or collapse diamond paths to their deepest level.
+        """
+        qualified = view_name if "." in view_name else f"{schema}.{view_name}"
+        query = """
+            SELECT DISTINCT n.nspname || '.' || v.relname AS view,
+                   v.relkind = 'm' AS is_materialized
+            FROM pg_depend AS d
+            JOIN pg_rewrite AS r ON r.oid = d.objid
+            JOIN pg_class AS v ON v.oid = r.ev_class
+            JOIN pg_namespace AS n ON n.oid = v.relnamespace
+            WHERE v.relkind IN ('v', 'm')
+              AND d.classid = 'pg_rewrite'::regclass
+              AND d.refclassid = 'pg_class'::regclass
+              AND d.deptype = 'n'
+              AND d.refobjid = %s::regclass
+            ORDER BY view;
+        """
+        rows = self.fetch_all(query, (qualified,))
+        return [
+            {"view": row[0], "is_materialized": row[1]}
+            for row in rows
+        ]
+
     def get_view_columns(self, view_name: str, schema: str = "poc") -> list:
         """Column names of a table or view, in schema-declaration order.
 

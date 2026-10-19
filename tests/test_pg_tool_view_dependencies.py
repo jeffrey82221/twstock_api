@@ -102,6 +102,15 @@ def test_diamond_dependency_reports_deepest_level(tests_schema):
     assert by_view["tests.v_diamond"]["level"] == 2
 
 
+def test_direct_dependents_include_diamond_edge(tests_schema):
+    """Direct dependency lookup retains the edge hidden by deepest-level
+    reporting in `get_dependent_views`."""
+    dependents = tests_schema.get_direct_dependent_views("tests.t1")
+    by_view = _by_view(dependents)
+    assert set(by_view) == {"tests.v1", "tests.v_diamond"}
+    assert by_view["tests.v_diamond"]["is_materialized"] is False
+
+
 def test_dependents_of_intermediate_view(tests_schema):
     """`v1` sits in the middle of the chain: v2, mv1, and v_diamond all
     depend on it directly (level 1), v3 depends on it transitively
