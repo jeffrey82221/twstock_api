@@ -22,17 +22,15 @@ class ViewExecutor:
         self.results.append(param)
 
 class Pipeline:
-    def __init__(self):
+    def __init__(self, setup_db: bool = True):
         self._sql_paths = list(filter(lambda x: x.endswith('.sql'), 
                             os.listdir(os.path.join(os.path.dirname(__file__), 'db', 'poc'))   ))
         
         self.poc_tables = ['poc.' + s.split('.sql')[0] for s in self._sql_paths]
         self.dag = self._create_dag()
         self._db_tool = PostgreSQLTool()
-        try:
+        if setup_db:
             self._db_tool.setup()  # Ensure the database is set up with necessary extensions and schemas
-        except OperationalError as e:
-            pass
         
     def _create_dag(self):
         dag = DAG()
