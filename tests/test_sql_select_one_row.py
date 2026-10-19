@@ -306,18 +306,9 @@ def live_poc_schema(live_pg_dsn):
     (http-enabled) database with `app/main.py` actually serving -- mirrors
     `Pipeline.create_views()`, in DAG order."""
 
-    # with _pg_tool_setup_noop():
-    import pg_tool
     import pipeline as pipeline_module
 
-    # Pipeline.__init__ calls PostgreSQLTool().setup() against the default
-    # DSN; skip it (the live_pg_dsn fixture already applied setting.sql).
-    original_setup = pg_tool.PostgreSQLTool.setup
-    pg_tool.PostgreSQLTool.setup = lambda self: None
-    try:
-        p = pipeline_module.Pipeline()
-    finally:
-        pg_tool.PostgreSQLTool.setup = original_setup
+    p = pipeline_module.Pipeline(setup_db=False)
     p._db_tool._dsn = live_pg_dsn
 
     p._db_tool.execute_query("DROP SCHEMA IF EXISTS poc CASCADE;")

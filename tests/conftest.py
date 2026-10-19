@@ -37,8 +37,7 @@ import os
 import re
 import shutil
 import tempfile
-from contextlib import contextmanager
-from typing import Iterator, List, Tuple
+from typing import List, Tuple
 
 import psycopg
 import pgserver
@@ -82,28 +81,6 @@ def _sanitize_setting_sql(sql: str) -> str:
             pattern, _SKIP_REPLACEMENT, sanitized, flags=re.IGNORECASE | re.DOTALL
         )
     return sanitized
-
-
-@contextmanager
-def _pg_tool_setup_noop() -> Iterator[None]:
-    """Patch `pg_tool.PostgreSQLTool.setup` to a no-op for the duration of
-    the `with` block.
-
-    `Pipeline.__init__` unconditionally calls `PostgreSQLTool().setup()`,
-    which re-runs the *unmodified* `db/setting.sql` -- including the
-    extension-dependent statements the pgserver mock can't run. The
-    sanitized setup is applied once (per test session) by the `pg_dsn`
-    fixture instead, so `Pipeline()` construction should skip re-running
-    the real file.
-    """
-    import pg_tool
-
-    original_setup = pg_tool.PostgreSQLTool.setup
-    pg_tool.PostgreSQLTool.setup = lambda self: None
-    try:
-        yield
-    finally:
-        pg_tool.PostgreSQLTool.setup = original_setup
 
 
 @pytest.fixture(scope="session")
@@ -156,10 +133,9 @@ def db_tool(pg_dsn):
 def pipeline(pg_dsn):
     """A real `pipeline.Pipeline` instance wired to the pgserver-backed
     mock database instead of the hard-coded `localhost:5432` DSN."""
-    with _pg_tool_setup_noop():
-        import pipeline as pipeline_module
+    import pipeline as pipeline_module
 
-        p = pipeline_module.Pipeline()
+    p = pipeline_module.Pipeline(setup_db=False)
     p._db_tool._dsn = pg_dsn
     return p
 
@@ -172,9 +148,8 @@ def pytest_generate_tests(metafunc):
     if "sql_path" not in metafunc.fixturenames:
         return
 
-    with _pg_tool_setup_noop():
-        import pipeline as pipeline_module
+    import pipeline as pipeline_module
 
-        ordered_paths = pipeline_module.Pipeline().ordered_sql_paths
+    ordered_paths = pipeline_module.Pipeline(setup_db=False).ordered_sql_paths
 
     metafunc.parametrize("sql_path", ordered_paths, ids=ordered_paths)
