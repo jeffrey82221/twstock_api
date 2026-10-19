@@ -65,8 +65,50 @@ def tests_schema(db_tool):
     return db_tool
 
 
+@pytest.fixture(scope="module")
+def visible_schema_dependency(db_tool):
+    """Create a dependency in `public`, which is normally on `search_path`."""
+    db_tool.execute_query(
+        "DROP VIEW IF EXISTS public.tests_visible_dependent CASCADE;"
+    )
+    db_tool.execute_query(
+        "DROP TABLE IF EXISTS public.tests_visible_base CASCADE;"
+    )
+    db_tool.execute_query(
+        "CREATE TABLE public.tests_visible_base (id int);"
+    )
+    db_tool.execute_query(
+        "CREATE VIEW public.tests_visible_dependent AS "
+        "SELECT id FROM public.tests_visible_base;"
+    )
+
+    yield db_tool
+
+    db_tool.execute_query(
+        "DROP VIEW public.tests_visible_dependent;"
+    )
+    db_tool.execute_query(
+        "DROP TABLE public.tests_visible_base;"
+    )
+
+
 def _by_view(dependents: list) -> dict:
     return {row["view"]: row for row in dependents}
+
+
+def test_visible_schema_dependents_are_schema_qualified(
+    visible_schema_dependency,
+):
+    dependents = visible_schema_dependency.get_dependent_views(
+        "public.tests_visible_base"
+    )
+    assert _by_view(dependents) == {
+        "public.tests_visible_dependent": {
+            "view": "public.tests_visible_dependent",
+            "is_materialized": False,
+            "level": 1,
+        }
+    }
 
 
 def test_dependents_of_base_table(tests_schema):

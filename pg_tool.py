@@ -93,12 +93,14 @@ class PostgreSQLTool:
         query = """
             WITH RECURSIVE dependent_views AS (
                 -- views/materialized views directly depending on the target
-                SELECT DISTINCT v.oid::regclass AS view,
+                SELECT DISTINCT n.nspname || '.' || v.relname AS view,
+                       v.oid AS view_oid,
                        v.relkind = 'm' AS is_materialized,
                        1 AS level
                 FROM pg_depend AS d
                 JOIN pg_rewrite AS r ON r.oid = d.objid
                 JOIN pg_class AS v ON v.oid = r.ev_class
+                JOIN pg_namespace AS n ON n.oid = v.relnamespace
                 WHERE v.relkind IN ('v', 'm')
                   AND d.classid = 'pg_rewrite'::regclass
                   AND d.refclassid = 'pg_class'::regclass
@@ -108,25 +110,27 @@ class PostgreSQLTool:
                 UNION
 
                 -- views/materialized views depending on those, recursively
-                SELECT v.oid::regclass,
+                SELECT n.nspname || '.' || v.relname,
+                       v.oid,
                        v.relkind = 'm',
                        dependent_views.level + 1
                 FROM dependent_views
-                JOIN pg_depend AS d ON d.refobjid = dependent_views.view
+                JOIN pg_depend AS d ON d.refobjid = dependent_views.view_oid
                 JOIN pg_rewrite AS r ON r.oid = d.objid
                 JOIN pg_class AS v ON v.oid = r.ev_class
+                JOIN pg_namespace AS n ON n.oid = v.relnamespace
                 WHERE v.relkind IN ('v', 'm')
                   AND d.classid = 'pg_rewrite'::regclass
                   AND d.refclassid = 'pg_class'::regclass
                   AND d.deptype = 'n'
-                  AND v.oid <> dependent_views.view  -- avoid infinite loops
+                  AND v.oid <> dependent_views.view_oid  -- avoid infinite loops
             )
-            SELECT view::text AS view,
+            SELECT view,
                    bool_or(is_materialized) AS is_materialized,
                    max(level) AS level
             FROM dependent_views
             GROUP BY view
-            ORDER BY max(level), view::text;
+            ORDER BY max(level), view;
         """
         rows = self.fetch_all(query, (qualified,))
         return [
