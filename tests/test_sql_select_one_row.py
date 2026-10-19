@@ -196,6 +196,15 @@ _VIEW_WHERE_OVERRIDES = {
     "financial_analysis": ["stk_code = '2330'"],
 }
 
+_VIEW_REQUIRED_DATA_COLUMNS = {
+    "foreign_ownership": (
+        "stock_name",
+        "issued_shares",
+        "foreign_investment_shares",
+        "foreign_investment_ratio_pct",
+    ),
+}
+
 
 def _icchain_loaded() -> bool:
     try:
@@ -379,3 +388,17 @@ def test_view_select_one_row_succeeds(live_app_server, live_poc_schema, sql_path
         f"poc.{view} 回傳的單行所有欄位皆為 NULL，可能代表上游呼叫實際上沒有取得任何資料："
         f"{dict(zip(columns, row))}"
     )
+    if "found" in columns:
+        assert row[columns.index("found")] is True, (
+            f"poc.{view} 回傳 found=false，表示上游沒有取得資料："
+            f"{dict(zip(columns, row))}"
+        )
+    required_data_columns = _VIEW_REQUIRED_DATA_COLUMNS.get(view)
+    if required_data_columns:
+        row_data = dict(zip(columns, row))
+        assert row_data.get("data_date") is not None and any(
+            row_data.get(column) is not None for column in required_data_columns
+        ), (
+            f"poc.{view} 缺少外資持股 payload 資料，可能代表 HTTP 呼叫失敗："
+            f"{row_data}"
+        )
