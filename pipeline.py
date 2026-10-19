@@ -29,8 +29,11 @@ class Pipeline:
         self.poc_tables = ['poc.' + s.split('.sql')[0] for s in self._sql_paths]
         self.dag = self._create_dag()
         self._db_tool = PostgreSQLTool()
-        self._db_tool.setup()  # Ensure the database is set up with necessary extensions and schemas
-    
+        try:
+            self._db_tool.setup()  # Ensure the database is set up with necessary extensions and schemas
+        except OperationalError as e:
+            pass
+        
     def _create_dag(self):
         dag = DAG()
         for sql_path in self._sql_paths:
@@ -280,7 +283,7 @@ class Pipeline:
         result = self._db_tool.fetch_all(check_sql)
         return result[0][0] # Assuming the result is a list of tuples
 
-    def create_mat_views(self, recreate: bool = False, test_insert: bool=True):
+    def create_mat_views(self, recreate: bool = False, test_insert: bool=False):
         """
         從 seed tables 往後接 materialized view 
         (建立 materialized view ，如果已經存在就建立到 hidden schema)

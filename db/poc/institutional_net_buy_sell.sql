@@ -7,7 +7,7 @@ SELECT
     stk_code,
     custom.parse_iso_date(institutional_net_buy_sell->>'trade_date') AS as_of,
     institutional_net_buy_sell->>'market' AS market,
-    custom.parse_iso_date(institutional_net_buy_sell->'row'->>'trade_date') AS trade_date,
+    custom.parse_iso_date((institutional_net_buy_sell->'row')->>'trade_date') AS trade_date,
     institutional_net_buy_sell->'row'->>'stock_name' AS stock_name,
     (institutional_net_buy_sell->'row'->>'foreign_investors_net_buy_sell')::NUMERIC AS foreign_investors_net_buy_sell,
     (institutional_net_buy_sell->'row'->>'foreign_dealers_net_buy_sell')::NUMERIC AS foreign_dealers_net_buy_sell,

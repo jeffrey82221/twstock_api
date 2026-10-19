@@ -1,0 +1,6 @@
+set -e
+
+pytest tests/test_sql_view_creation.py
+pytest tests/test_sql_table_lineage_consistency.py
+pytest tests/test_sql_column_lineage_coverage.py
+RUN_POC_VIEW_SELECT_TESTS=1 pytest tests/test_sql_select_one_row.py -vv
