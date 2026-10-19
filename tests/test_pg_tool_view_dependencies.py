@@ -174,6 +174,11 @@ def test_leaf_view_has_no_dependents(tests_schema):
     assert tests_schema.get_dependent_views("tests.v3") == []
 
 
+def test_leaf_view_has_no_direct_dependents(tests_schema):
+    """A view's own rewrite-rule dependency is not a dependent view."""
+    assert tests_schema.get_direct_dependent_views("tests.v3") == []
+
+
 def test_materialized_view_has_no_dependents(tests_schema):
     """`mv1` is also a leaf in this chain."""
     assert tests_schema.get_dependent_views("tests.mv1") == []

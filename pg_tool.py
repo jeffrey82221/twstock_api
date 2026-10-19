@@ -106,6 +106,7 @@ class PostgreSQLTool:
                   AND d.refclassid = 'pg_class'::regclass
                   AND d.deptype = 'n'
                   AND d.refobjid = %s::regclass
+                  AND v.oid <> d.refobjid
 
                 UNION
 
@@ -159,6 +160,7 @@ class PostgreSQLTool:
               AND d.refclassid = 'pg_class'::regclass
               AND d.deptype = 'n'
               AND d.refobjid = %s::regclass
+              AND v.oid <> d.refobjid
             ORDER BY view;
         """
         rows = self.fetch_all(query, (qualified,))
