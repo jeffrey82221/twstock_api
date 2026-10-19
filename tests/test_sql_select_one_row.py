@@ -139,6 +139,7 @@ DEFAULT_TIMEOUT_S = 60
 _VIEW_TIMEOUT_OVERRIDES_S = {
     "raw_product_revenue": 300,
     "product_revenue": 300,
+    "financial_analysis": 180,
 }
 
 # `app/main.py` loads the 47 value-chain pages (ic.tpex.org.tw) in the
@@ -179,11 +180,20 @@ def _recent_ym(months_ago: int = 2) -> str:
 # sparse SBL activity -- see module docstring. Target a company confirmed
 # (by direct inspection) to reliably have SBL history instead of relying
 # on row order.
+#
+# The `ym` views get several candidate months: `get_product_revenue_filers`
+# swallows MOPS failures (rate limit / transient errors from CI IPs) and
+# returns `[]`, which surfaces as 0 rows. Try successive months until one
+# yields a row.
+_YM_CANDIDATES = [f"ym = '{_recent_ym(n)}'" for n in (2, 3, 4)]
 _VIEW_WHERE_OVERRIDES = {
-    "product_revenue_filer_list": f"ym = '{_recent_ym()}'",
-    "raw_product_revenue": f"ym = '{_recent_ym()}'",
-    "product_revenue": f"ym = '{_recent_ym()}'",
-    "sbl_history": "stk_code = '2330'",
+    "product_revenue_filer_list": _YM_CANDIDATES,
+    "raw_product_revenue": _YM_CANDIDATES,
+    "product_revenue": _YM_CANDIDATES,
+    "sbl_history": ["stk_code = '2330'"],
+    # Natural first row is (first company, year 2012..) -> one slow MOPS
+    # call; pin to a company that reliably has data.
+    "financial_analysis": ["stk_code = '2330'"],
 }
 
 
@@ -340,31 +350,37 @@ def test_view_select_one_row_succeeds(live_app_server, live_poc_schema, sql_path
     """
     _ = live_app_server
     view = sql_path[: -len(".sql")]
-    where_clause = _VIEW_WHERE_OVERRIDES.get(view)
+    where_clauses = _VIEW_WHERE_OVERRIDES.get(view) or [None]
     timeout_s = _VIEW_TIMEOUT_OVERRIDES_S.get(view, DEFAULT_TIMEOUT_S)
 
-    select_sql = f"SELECT * FROM poc.{view}"
-    if where_clause:
-        select_sql += f" WHERE {where_clause}"
-    select_sql += " LIMIT 1;"
+    row = None
+    columns: list = []
+    select_sql = ""
+    for where_clause in where_clauses:
+        select_sql = f"SELECT * FROM poc.{view}"
+        if where_clause:
+            select_sql += f" WHERE {where_clause}"
+        select_sql += " LIMIT 1;"
 
-    conn = psycopg.connect(live_poc_schema._db_tool._dsn, autocommit=True)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(f"SET statement_timeout = '{timeout_s}s';")
-            try:
-                cur.execute(select_sql)
-            except Exception as exc:  # noqa: BLE001 - surface exact SQL + DB error per view
-                pytest.fail(
-                    f"poc.{view} 無法成功 SELECT 單行：{type(exc).__name__}: {exc}\n\n"
-                    f"執行的 SQL：\n{select_sql}",
-                    pytrace=False,
-                )
-            row = cur.fetchone()
-            columns = [d.name for d in cur.description]
-            cur.execute("RESET statement_timeout;")
-    finally:
-        conn.close()
+        conn = psycopg.connect(live_poc_schema._db_tool._dsn, autocommit=True)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET statement_timeout = '{timeout_s}s';")
+                try:
+                    cur.execute(select_sql)
+                except Exception as exc:  # noqa: BLE001 - surface exact SQL + DB error per view
+                    pytest.fail(
+                        f"poc.{view} 無法成功 SELECT 單行：{type(exc).__name__}: {exc}\n\n"
+                        f"執行的 SQL：\n{select_sql}",
+                        pytrace=False,
+                    )
+                row = cur.fetchone()
+                columns = [d.name for d in cur.description]
+                cur.execute("RESET statement_timeout;")
+        finally:
+            conn.close()
+        if row is not None:
+            break
 
     assert row is not None, f"poc.{view} 回傳 0 列，預期至少 1 列（{select_sql}）"
     assert len(row) == len(columns)
