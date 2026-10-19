@@ -29,6 +29,19 @@ def poc_schema(pipeline):
     return pipeline
 
 
+
+def test_create_view_all(poc_schema):
+    """`db/poc/{sql_path}` must produce a valid `CREATE VIEW` statement.
+
+    Views are created in the same dependency order `Pipeline.create_views()`
+    uses. If an upstream view already failed in an earlier test case, a
+    downstream view referencing it will fail too (e.g. "relation ... does
+    not exist") -- when several consecutive test IDs fail, check the first
+    one for the actual root cause.
+    """
+    poc_schema.create_views()
+    
+
 def test_view_can_be_created(poc_schema, sql_path):
     """`db/poc/{sql_path}` must produce a valid `CREATE VIEW` statement.
 

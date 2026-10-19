@@ -14,7 +14,7 @@ paradag==1.2.0
 fastmcp[tasks]
 pytest==9.1.1
 pytest-asyncio==1.4.0
-pgserver==0.1.4
+pgserver-extend==0.0.3
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.14.2
@@ -118,8 +118,7 @@ MarkupSafe==3.0.3
 mcp==1.29.1
 mdurl==0.1.2
 more-itertools==11.1.0
-multitasking==0.0.13
-numpy==2.5.2
+multitasking
 openapi-pydantic==0.5.1
 opentelemetry-api==1.44.0
 packaging==26.3
