@@ -12,7 +12,9 @@
 -- rule 13 例外：`listing_date IS NOT NULL` 為技術性 guard（generate_series 起點不能是 NULL）。
 SELECT
     stk_code,
-    generate_series(
+    GREATEST(monthly_dates.month_start_date::DATE, DATE '2004-02-11') AS month_start_date
+FROM {{ schema }}.company_basic_info_list
+CROSS JOIN LATERAL generate_series(
         make_date(
             EXTRACT(YEAR FROM GREATEST(listing_date, DATE '2004-02-11'))::INT,
             EXTRACT(MONTH FROM GREATEST(listing_date, DATE '2004-02-11'))::INT,
@@ -20,6 +22,5 @@ SELECT
         ),
         CURRENT_DATE,
         INTERVAL '1 month'
-    )::DATE AS month_start_date
-FROM {{ schema }}.company_basic_info_list
+    ) AS monthly_dates(month_start_date)
 WHERE listing_date IS NOT NULL
