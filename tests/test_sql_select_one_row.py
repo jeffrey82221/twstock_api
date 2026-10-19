@@ -8,24 +8,14 @@ Run with::
 
     RUN_POC_VIEW_SELECT_TESTS=1 pytest -m poc_view_select tests/test_poc_view_select_one_row.py -v
 
-Unlike the other `db/poc/*.sql` test modules, this one needs three things
-the sanitized pgserver mock in `tests/conftest.py` deliberately does NOT
-provide, because they need real infrastructure / real network access. Per
-the task's development direction, all three stay "pgserver-only" -- no
-Docker, no system Postgres deploy:
+Unlike the other `db/poc/*.sql` test modules, this one needs things the
+sanitized pgserver mock in `tests/conftest.py` does NOT provide:
 
-1. **A working `http` Postgres extension.** `custom.http_get_content`
-   (used by every `raw_*.sql` view) is a thin wrapper around the `http`
-   extension's `http_get()`. `pgserver`'s bundled Postgres 16.2 does not
-   ship it, but pgserver *does* ship that exact Postgres build's own dev
-   headers and `pg_config` (`pginstall/include/postgresql/server` +
-   `pginstall/bin/pg_config`) -- so `_ensure_http_extension()` below
-   compiles https://github.com/pramsey/pgsql-http against pgserver's own
-   Postgres build (once) and installs it straight into pgserver's own
-   `pginstall/` tree. Requires `gcc`/`make` and libcurl dev headers
-   (`libcurl4-openssl-dev` on Debian/Ubuntu) on the machine running the
-   tests -- if missing, the whole module is skipped with a clear reason
-   instead of failing.
+1. **A working `http` Postgres extension.** `pgserver-extend` v0.0.3
+   (a drop-in `pgserver` replacement) bundles the `pgsql-http` extension,
+   so this module runs on its own throw-away pgserver database -- no
+   Docker / `start-db.sh` needed. Only `pg_ivm` / `pg_cron` statements in
+   `db/setting.sql` are skipped.
 
 2. **`host.docker.internal` resolving to this machine.** Every
    `raw_*.sql` file hard-codes `http://host.docker.internal:5002/api/...`
@@ -126,7 +116,6 @@ SETTING_SQL_PATH = os.path.join(REPO_ROOT, "db", "setting.sql")
 
 APP_PORT = 5002
 APP_HEALTH_URL = f"http://127.0.0.1:{APP_PORT}/api/health"
-PGSQL_HTTP_REPO = "https://github.com/pramsey/pgsql-http.git"
 
 LIVE = os.getenv("RUN_POC_VIEW_SELECT_TESTS") == "1"
 pytestmark = [
@@ -231,17 +220,50 @@ def live_app_server() -> Iterator[None]:
 
 
 @pytest.fixture(scope="module")
-def live_poc_schema():
+def live_pg_dsn():
+    """Throw-away pgserver-extend database with `db/setting.sql` applied
+    (the `http` extension is bundled; `pg_ivm`/`pg_cron` are skipped)."""
+    import re
+    import shutil
+    import tempfile
+
+    import pgserver
+
+    pgdata = tempfile.mkdtemp(prefix="twstock_pgserver_live_")
+    server = pgserver.get_server(pgdata)
+    try:
+        server.psql("CREATE DATABASE app_db;")
+        dsn = server.get_uri(database="app_db")
+        with open(SETTING_SQL_PATH, "r", encoding="utf-8") as f:
+            setting_sql = f.read()
+        for pattern in (
+            r"CREATE EXTENSION IF NOT EXISTS\s+pg_ivm\s*;",
+            r"CREATE EXTENSION IF NOT EXISTS\s+pg_cron\s*;",
+            r"CREATE\s+or\s+REPLACE\s+VIEW\s+public\.(job_run_details|job)\b.*?"
+            r"GRANT SELECT ON public\.\1 TO mcp_reader;",
+        ):
+            setting_sql = re.sub(pattern, "", setting_sql, flags=re.IGNORECASE | re.DOTALL)
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            conn.execute(setting_sql)
+        yield dsn
+    finally:
+        server.cleanup()
+        shutil.rmtree(pgdata, ignore_errors=True)
+
+
+@pytest.fixture(scope="module")
+def live_poc_schema(live_pg_dsn):
     """Build every `db/poc/*.sql` view, once per module, against the live
     (http-enabled) database with `app/main.py` actually serving -- mirrors
     `Pipeline.create_views()`, in DAG order."""
-    # _ensure_host_docker_internal()
 
     # with _pg_tool_setup_noop():
+    from conftest import _pg_tool_setup_noop
     import pipeline as pipeline_module
 
-    p = pipeline_module.Pipeline()
-    # p._db_tool._dsn = live_pg_dsn
+    with _pg_tool_setup_noop():
+        p = pipeline_module.Pipeline()
+    p._db_tool._dsn = live_pg_dsn
 
     p._db_tool.execute_query("DROP SCHEMA IF EXISTS poc CASCADE;")
     p._db_tool.execute_query("CREATE SCHEMA poc;")
