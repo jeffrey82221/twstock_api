@@ -100,6 +100,7 @@ query was slow/timed out against the real backend:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -130,6 +131,21 @@ pytestmark = [
 # Postgres can push down through their `DISTINCT` (see module docstring),
 # none of the 61 views need a longer timeout than this.
 DEFAULT_TIMEOUT_S = 60
+
+# product_revenue_filer_list -> raw_product_revenue -> product_revenue walks
+# one MOPS call per filing company until a company with non-empty `items` is
+# found (INNER JOIN LATERAL drops empty filings), which routinely exceeds 60s
+# on a cold CI runner (observed: QueryCanceled at 60s for product_revenue).
+_VIEW_TIMEOUT_OVERRIDES_S = {
+    "raw_product_revenue": 300,
+    "product_revenue": 300,
+}
+
+# `app/main.py` loads the 47 value-chain pages (ic.tpex.org.tw) in the
+# background after /api/health already answers; `/api/chain/*` returns 503
+# until then, which silently turns `raw_chain_info` / `chain_info_list` into
+# 0 rows. Wait for it before running any test.
+ICCHAIN_READY_TIMEOUT_S = 180
 
 
 def _recent_ym(months_ago: int = 2) -> str:
@@ -171,6 +187,27 @@ _VIEW_WHERE_OVERRIDES = {
 }
 
 
+def _icchain_loaded() -> bool:
+    try:
+        with urllib.request.urlopen(APP_HEALTH_URL, timeout=3) as resp:
+            return bool(json.load(resp).get("icchain", {}).get("loaded"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
+def _wait_icchain_loaded() -> None:
+    deadline = time.time() + ICCHAIN_READY_TIMEOUT_S
+    while time.time() < deadline:
+        if _icchain_loaded():
+            return
+        time.sleep(2)
+    pytest.fail(
+        f"app/main.py 的產業價值鏈資料在 {ICCHAIN_READY_TIMEOUT_S} 秒內未載入完成 "
+        f"(GET {APP_HEALTH_URL} 的 icchain.loaded 仍為 false)",
+        pytrace=False,
+    )
+
+
 def _app_server_alive() -> bool:
     try:
         with urllib.request.urlopen(APP_HEALTH_URL, timeout=3) as resp:
@@ -187,6 +224,7 @@ def live_app_server() -> Iterator[None]:
     background subprocess for this module's duration and stops it
     afterwards."""
     if _app_server_alive():
+        _wait_icchain_loaded()
         yield
         return
 
@@ -209,6 +247,7 @@ def live_app_server() -> Iterator[None]:
         if not ready:
             proc.terminate()
             pytest.skip(f"app/main.py 在 20 秒內未能於 port {APP_PORT} 回應 /api/health")
+        _wait_icchain_loaded()
         yield
     finally:
         if proc.poll() is None:
@@ -302,7 +341,7 @@ def test_view_select_one_row_succeeds(live_app_server, live_poc_schema, sql_path
     _ = live_app_server
     view = sql_path[: -len(".sql")]
     where_clause = _VIEW_WHERE_OVERRIDES.get(view)
-    timeout_s = DEFAULT_TIMEOUT_S
+    timeout_s = _VIEW_TIMEOUT_OVERRIDES_S.get(view, DEFAULT_TIMEOUT_S)
 
     select_sql = f"SELECT * FROM poc.{view}"
     if where_clause:
