@@ -252,11 +252,11 @@ def live_app_server() -> Iterator[None]:
                 ready = True
                 break
             if proc.poll() is not None:
-                pytest.skip("app/main.py 背景啟動後立即結束，請先確認能以 `uvicorn app.main:app` 手動啟動")
+                pytest.fail("app/main.py 背景啟動後立即結束，請先確認能以 `uvicorn app.main:app` 手動啟動", pytrace=False)
             time.sleep(0.5)
         if not ready:
             proc.terminate()
-            pytest.skip(f"app/main.py 在 20 秒內未能於 port {APP_PORT} 回應 /api/health")
+            pytest.fail(f"app/main.py 在 20 秒內未能於 port {APP_PORT} 回應 /api/health", pytrace=False)
         _wait_icchain_loaded()
         yield
     finally:
