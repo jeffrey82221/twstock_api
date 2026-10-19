@@ -3,6 +3,9 @@ name: Test SQLs
 on:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test-sqls:
     runs-on: ubuntu-latest
