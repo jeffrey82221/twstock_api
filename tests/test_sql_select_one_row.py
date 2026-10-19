@@ -190,6 +190,14 @@ _VIEW_WHERE_OVERRIDES = {
     "product_revenue_filer_list": _YM_CANDIDATES,
     "raw_product_revenue": _YM_CANDIDATES,
     "product_revenue": _YM_CANDIDATES,
+    # The natural first company can be delisted or missing from the upstream
+    # basic-info endpoint; use a consistently listed company instead.
+    "company_basic_info_list": ["stk_code = '2330'"],
+    # Historical monthly samples can make the endpoint scan back through
+    # years of unavailable dates; use recent samples for an actively traded stock.
+    "foreign_ownership": [
+        "stk_code = '2330' AND as_of >= CURRENT_DATE - INTERVAL '3 months'"
+    ],
     "sbl_history": ["stk_code = '2330'"],
     # Natural first row is (first company, year 2012..) -> one slow MOPS
     # call; pin to a company that reliably has data.
