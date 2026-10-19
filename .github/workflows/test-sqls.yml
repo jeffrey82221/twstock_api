@@ -11,6 +11,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements-py311.txt
       - name: Resolve host.docker.internal (used by raw_*.sql views)
         run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
       - name: Run test-sqls.sh
