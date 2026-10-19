@@ -60,3 +60,38 @@ def test_view_can_be_created(poc_schema, sql_path):
             f"執行的 SQL：\n{create_sql}",
             pytrace=False,
         )
+
+
+def test_foreign_ownership_monthly_samples_respect_supported_date(pipeline):
+    schema = "test_foreign_ownership_monthly_list"
+    pipeline._db_tool.execute_query(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
+    pipeline._db_tool.execute_query(f"CREATE SCHEMA {schema};")
+
+    try:
+        pipeline._db_tool.execute_query(
+            f"CREATE TABLE {schema}.company_basic_info_list "
+            "(stk_code TEXT, listing_date DATE);"
+        )
+        pipeline._db_tool.execute_query(
+            f"INSERT INTO {schema}.company_basic_info_list "
+            "VALUES ('TEST', DATE '2000-01-01');"
+        )
+        pipeline._db_tool.execute_query(
+            pipeline._get_view_create_sql(
+                schema,
+                "foreign_ownership_monthly_list.sql",
+                target_schema=schema,
+            )
+        )
+
+        samples = pipeline._db_tool.fetch_all(
+            f"SELECT month_start_date FROM {schema}.foreign_ownership_monthly_list "
+            "WHERE stk_code = 'TEST' ORDER BY month_start_date LIMIT 2;"
+        )
+
+        assert [row[0].isoformat() for row in samples] == [
+            "2004-02-11",
+            "2004-03-05",
+        ]
+    finally:
+        pipeline._db_tool.execute_query(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
