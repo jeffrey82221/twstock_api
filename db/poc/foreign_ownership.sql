@@ -5,7 +5,7 @@
 -- 設計理念（rule 13）：不做 WHERE 過濾，保留 raw 母體的所有 rows（含 found=false 的列）。
 SELECT
     stk_code,
-    custom.parse_iso_date(foreign_ownership->>'as_of') AS as_of,
+    as_of,
     foreign_ownership->>'stock_id' AS stock_id,
     custom.parse_iso_date(foreign_ownership->>'data_date') AS data_date,
     foreign_ownership->'row'->>'stock_name' AS stock_name,
