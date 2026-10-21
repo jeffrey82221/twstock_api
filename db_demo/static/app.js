@@ -59,7 +59,6 @@ function renderDag(data) {
 
   const width = (maxLayer + 1) * colWidth + 60;
   const height = maxRows * rowHeight + 60;
-  container.style.width = width + 'px';
   container.style.height = Math.min(height, 560) + 'px';
   svg.setAttribute('width', width);
   svg.setAttribute('height', height);

@@ -31,10 +31,13 @@ def _get_openapi_spec() -> dict:
         return _openapi_cache
     try:
         with urllib.request.urlopen(f"{MAIN_API_BASE_URL}/openapi.json", timeout=3) as resp:
-            _openapi_cache = json.loads(resp.read())
+            spec = json.loads(resp.read())
+        if not isinstance(spec, dict) or not isinstance(spec.get("paths"), dict):
+            return {"paths": {}}
+        _openapi_cache = spec
     except (urllib.error.URLError, OSError, ValueError):
-        _openapi_cache = {"paths": {}}
-    return _openapi_cache
+        return {"paths": {}}
+    return spec
 
 
 def _path_skeleton(path: str) -> str:

@@ -2,7 +2,10 @@
 
 獨立於 ``app/main.py``（主要業務 API）之外的另一個 FastAPI app，啟動方式：
 
-    uvicorn db_demo.main:app --host 0.0.0.0 --port 5100
+    DB_DEMO_OPERATOR_USERNAME=operator DB_DEMO_OPERATOR_PASSWORD='replace-with-a-secret' \
+        uvicorn db_demo.main:app --host 127.0.0.1 --port 5100
+
+需要遠端操作時，請在 TLS 保護的反向代理後部署，並設定上述操作員帳密。
 
 功能：
 1. ``GET /api/dag``            poc schema 的 view 依賴關聯圖（airflow 風格節點/邊）
@@ -16,11 +19,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import secrets
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 
 from pg_tool import PostgreSQLTool
@@ -32,6 +38,26 @@ SNAPSHOT_INTERVAL_SECONDS = 15 * 60
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 app = FastAPI(title="資料庫 DEMO", version="0.1.0")
+_operator_auth = HTTPBasic()
+
+
+def require_operator(credentials: HTTPBasicCredentials = Depends(_operator_auth)) -> None:
+    username = os.environ.get("DB_DEMO_OPERATOR_USERNAME")
+    password = os.environ.get("DB_DEMO_OPERATOR_PASSWORD")
+    if not username or not password:
+        raise HTTPException(status_code=503, detail="Operator credentials are not configured")
+    username_matches = secrets.compare_digest(
+        credentials.username.encode("utf-8"), username.encode("utf-8")
+    )
+    password_matches = secrets.compare_digest(
+        credentials.password.encode("utf-8"), password.encode("utf-8")
+    )
+    if not (username_matches and password_matches):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid operator credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
 
 
 @app.on_event("startup")
@@ -59,7 +85,7 @@ async def _snapshot_loop() -> None:
 
 @app.get("/api/dag")
 async def api_dag():
-    pipeline = await asyncio.to_thread(Pipeline)
+    pipeline = await asyncio.to_thread(Pipeline, setup_db=False)
     graph = await asyncio.to_thread(dag_builder.build_dag, pipeline)
     counts = await asyncio.to_thread(row_counts.get_pop_row_counts, pipeline._db_tool)
     for node in graph["nodes"]:
@@ -106,7 +132,7 @@ async def api_pop_growth():
 
 
 @app.post("/api/pop/snapshot")
-async def api_pop_snapshot_now():
+async def api_pop_snapshot_now(_: None = Depends(require_operator)):
     """Manual trigger for a snapshot (in addition to the 15-min background loop)."""
     inserted = await asyncio.to_thread(row_counts.snapshot_once)
     return {"inserted": inserted}
@@ -167,36 +193,29 @@ async def api_jobs_current():
 
 
 @app.post("/api/jobs/probe_all_throughput")
-async def api_run_probe_all_throughput(restart: bool = Query(True)):
-    def _task() -> None:
-        Pipeline().probe_all_throughput(restart=restart)
-
+async def api_run_probe_all_throughput(
+    restart: bool = Query(True), _: None = Depends(require_operator)
+):
     try:
-        job = job_runner.start_job("probe_all_throughput", _task)
+        job = job_runner.start_job("probe_all_throughput", restart=restart)
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return {"job": _serialize_job(job)}
 
 
 @app.post("/api/jobs/setup_schedules")
-async def api_run_setup_schedules():
-    def _task() -> None:
-        Pipeline().setup_schedules()
-
+async def api_run_setup_schedules(_: None = Depends(require_operator)):
     try:
-        job = job_runner.start_job("setup_schedules", _task)
+        job = job_runner.start_job("setup_schedules")
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return {"job": _serialize_job(job)}
 
 
 @app.post("/api/jobs/truncate_cron_jobs")
-async def api_run_truncate_cron_jobs():
-    def _task() -> None:
-        Pipeline().truncate_cron_jobs()
-
+async def api_run_truncate_cron_jobs(_: None = Depends(require_operator)):
     try:
-        job = job_runner.start_job("truncate_cron_jobs", _task)
+        job = job_runner.start_job("truncate_cron_jobs")
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return {"job": _serialize_job(job)}
