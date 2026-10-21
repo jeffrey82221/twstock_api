@@ -54,7 +54,7 @@ def snapshot_once(db: Optional[PostgreSQLTool] = None) -> int:
     """Insert one row-count snapshot for every ``pop`` table. Returns rows inserted."""
     db = db or PostgreSQLTool()
     ensure_schema(db)
-    counts = get_pop_row_counts(db)
+    counts = _get_actual_pop_row_counts(db)
     if not counts:
         return 0
     values_sql = ", ".join("(%s, %s)" for _ in counts)
@@ -66,6 +66,30 @@ def snapshot_once(db: Optional[PostgreSQLTool] = None) -> int:
         tuple(params),
     )
     return len(counts)
+
+
+def _get_actual_pop_row_counts(db: PostgreSQLTool) -> Dict[str, int]:
+    """Count rows directly for snapshots, independent of stale planner statistics."""
+    tables = db.fetch_all(
+        """
+        SELECT c.relname
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'pop' AND c.relkind IN ('r', 'm')
+        ORDER BY c.relname;
+        """
+    )
+    if not tables:
+        return {}
+
+    queries = []
+    params: List = []
+    for (name,) in tables:
+        quoted_name = '"' + name.replace('"', '""') + '"'
+        queries.append(f'SELECT %s::TEXT AS table_name, COUNT(*)::BIGINT FROM "pop".{quoted_name}')
+        params.append(name)
+    rows = db.fetch_all(" UNION ALL ".join(queries), tuple(params))
+    return {name: int(count) for name, count in rows}
 
 
 def get_growth_estimates(db: Optional[PostgreSQLTool] = None) -> List[dict]:

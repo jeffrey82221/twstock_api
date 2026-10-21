@@ -31,7 +31,7 @@ main {
   padding: 16px 20px;
 }
 #controls-panel, #growth-panel, #schedules-panel { grid-column: 1 / -1; }
-#dag-panel { grid-column: 1; }
+#dag-panel { grid-column: 1; min-width: 0; }
 #columns-panel { grid-column: 2; }
 h2 { margin-top: 0; font-size: 16px; }
 .controls { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
