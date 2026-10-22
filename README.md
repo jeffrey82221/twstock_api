@@ -112,10 +112,10 @@ RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
 pytest tests/test_sql_view_creation.py tests/test_sql_table_lineage_consistency.py tests/test_sql_column_lineage_coverage.py -v
 ```
 
-4. **（opt-in）單行 SELECT 端到端驗證**（`tests/test_poc_view_select_one_row.py`）：對每個 `poc.*` view 實際執行 `SELECT * FROM poc.<view> LIMIT 1`，確認整條 HTTP 呼叫鏈（`custom.http_get_content` → app/main.py → 上游 TWSE/TPEx/MOPS/FinMind/yfinance）真的能跑出一筆真實資料，而不只是 SQL 語法正確。預設 `pytest -q` 不會執行此檔案（避免一般開發流程被外部網路速度與穩定度拖累），需要另外指定環境變數才會跑：
+4. **（opt-in）單行 SELECT 端到端驗證**（`tests/test_sql_select_one_row.py`）：對每個 `poc.*` view 實際執行 `SELECT * FROM poc.<view> LIMIT 1`，確認整條 HTTP 呼叫鏈（`custom.http_get_content` → app/main.py → 上游 TWSE/TPEx/MOPS/FinMind/yfinance）真的能跑出一筆真實資料，而不只是 SQL 語法正確。預設 `pytest -q` 不會執行此檔案（避免一般開發流程被外部網路速度與穩定度拖累），需要另外指定環境變數才會跑：
 
    ```bash
-   RUN_POC_VIEW_SELECT_TESTS=1 pytest -m poc_view_select tests/test_poc_view_select_one_row.py -v
+   RUN_POC_VIEW_SELECT_TESTS=1 pytest -m poc_view_select tests/test_sql_select_one_row.py -v
    ```
 
    執行前需要（詳見該檔案 module docstring）：(a) 編譯好的 `http` Postgres extension（`pgsql-http`，會在 pgserver 自帶的 Postgres 上自動編譯安裝一次，需要 `gcc`/`make`/`libcurl` 開發套件）、(b) `host.docker.internal` 能解析到本機（`sudo sh -c 'echo "127.0.0.1 host.docker.internal" >> /etc/hosts'`）、(c) `app/main.py` 有在背景服務 port 5002（測試會自動幫你背景啟動，若已手動啟動則沿用）。新增 `raw_*.sql` 或會呼叫 HTTP 的 view 時，建議額外跑一次這個檔案確認真實資料流真的通。
@@ -134,6 +134,22 @@ pytest tests/ -m "not upstream_contract" -q
 - 若 table 或欄位 lineage 測試失敗，請研究根因並修正 SQL（而非略過測試或壓制錯誤訊息）。
 - 若因 SQL 本質限制（如常數欄位、LineageX 已知解析限制）導致某項檢查必然無法通過，需在 SQL 註解與 PR 說明中明確記錄原因，不可靜默忽略。
 - 若涉及新增規則或修正既有 SQL 的通用寫法問題，請同步更新 `db/poc/README.md`裡面的規則。
+
+## 其他測試檔案
+
+以下測試尚未在前述 SQL 與上游 contract 測試說明中逐一介紹。一般 `pytest` 執行這些不依賴即時上游服務的測試；Postgres 測試使用 `pgserver` fixture。
+
+- `tests/test_main_endpoints.py`：以 FastAPI TestClient 和 mock 資料源測試主要 API endpoint 家族、成功回應、參數驗證及 not-found 行為。
+- `tests/test_db_demo_review_fixes.py`：測試 db-demo 管理端點認證、DAG metadata 不初始化資料庫、OpenAPI 讀取重試、資料表列數快照，以及 job subprocess 輸出。
+- `tests/test_pipeline_setup.py`：確認 Pipeline 的資料庫初始化錯誤會向外傳遞，並可選擇略過初始化。
+- `tests/test_pg_tool_view_columns.py`：測試 PostgreSQL table/view 欄位順序、schema 參數及不存在物件的處理。
+- `tests/test_pg_tool_view_dependencies.py`：測試 PostgreSQL view 相依關係的直接／遞迴結果、層級、materialized view、schema qualification 與無關物件隔離。
+- `tests/test_mops_financial_analysis.py`：測試 MOPS 年度財務分析資料的數值與 HTML 解析、資料查詢及磁碟 cache 行為。
+- `tests/test_mops_quarterly_financials.py`：測試 MOPS 季度財務 HTML 解析、季度日期邊界、來源資料合併及前季 fallback。
+- `tests/test_foreign_ownership_source.py`：測試外資持股 CSV 解析（含民國日期與數值轉換）、單日查詢及前一可用日 fallback。
+- `tests/test_finmind_news_source.py`：測試 FinMind 新聞僅查詢指定日期、不回溯補資料，以及無資料時 endpoint 回傳 404。
+- `tests/test_twse_sbl_source.py`：測試 TWSE 借券資料解析與日期／數值正規化、完成還券日查詢及資料日期下限。
+- `tests/test_valuation.py`：測試估值資料解析、每股指標計算、市場摘要彙整、成分資料組建與公司估值查詢。
 
 # Data Pipeline 串接測試方式
 
@@ -572,4 +588,3 @@ twstock_api/
 3. Probe Limit Count `Pipeline().probe_all_throughput()`
 
 4. Setup 1 minute Schedules `Pipeline().setup_schedules()`
-
