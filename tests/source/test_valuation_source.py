@@ -9,7 +9,7 @@
 
 跑法（sandbox）：
     cd /path/to/twstock_api
-    python -m pytest tests/test_valuation.py -v
+    python -m pytest tests/source/test_valuation_source.py -v
 """
 from __future__ import annotations
 

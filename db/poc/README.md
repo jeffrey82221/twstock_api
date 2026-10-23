@@ -69,10 +69,10 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
     - **與 rule 8 的差別**：rule 8 的 `_list` 是「事件母體 seed」（chain_list / dividend_event_list…）；rule 21 的 `_list` 是「展開結果 seed」（原本是純正規化 view，只是因為多方消費 + 高 fan-out 而被升格）。命名慣例一致（都以 `_list.sql` 結尾）。
     - **與 rule 18 的關係**：rule 18 要求 SQL 演進時盡量「新增另一張」而非就地改寫；但 rename 是 schema-level 的 identity 變化，pop 表本來就要重建，屬於 rule 18 允許的「規格完全變」情境（此時舊 pop 表可安全 drop 因為它不對應任何 API 抽取成本，僅是 JSON 展開）。
 22. **JSON 路徑運算子 `->`/`->>` 若包在函式呼叫裡，巢狀路徑的第一步要加括號，確保 LineageX 血緣分析工具（`tools/render_lineagex.py`）能正確追蹤上游欄位。**
-    - **成因**：LineageX 底層用 `sqlglot` 把 SQL 解析成 AST，再抓出每個輸出欄位表達式裡的所有 `Column` 節點當作上游欄位。當一段巢狀 JSON 路徑（先 `->` 再 `->>`，例：`col->'row'->>'key'`）的**最外層（最左邊）運算子是單箭頭 `->`**，且整段表達式被包在**任何函式呼叫**的參數裡（不論是 `custom.parse_iso_date(...)` 這類自訂函式，還是任何 built-in 函式），`sqlglot` 的語法解析器會把 `col -> 'row'` 誤判成其他 SQL 方言的「lambda 參數箭頭」語法（例如 `list_transform` 之類高階函式的 `x -> expr`），導致 `col` 完全不會被解析成 `Column` 節點。LineageX 因此回報這個輸出欄位「沒有任何上游欄位」——即使該 view 透過 `pg_tool.get_dependent_views` 反查明顯有上游 view，也會被 `tests/test_sql_column_lineage_coverage.py` 標記出來。
+    - **成因**：LineageX 底層用 `sqlglot` 把 SQL 解析成 AST，再抓出每個輸出欄位表達式裡的所有 `Column` 節點當作上游欄位。當一段巢狀 JSON 路徑（先 `->` 再 `->>`，例：`col->'row'->>'key'`）的**最外層（最左邊）運算子是單箭頭 `->`**，且整段表達式被包在**任何函式呼叫**的參數裡（不論是 `custom.parse_iso_date(...)` 這類自訂函式，還是任何 built-in 函式），`sqlglot` 的語法解析器會把 `col -> 'row'` 誤判成其他 SQL 方言的「lambda 參數箭頭」語法（例如 `list_transform` 之類高階函式的 `x -> expr`），導致 `col` 完全不會被解析成 `Column` 節點。LineageX 因此回報這個輸出欄位「沒有任何上游欄位」——即使該 view 透過 `pg_tool.get_dependent_views` 反查明顯有上游 view，也會被     `tests/sql/test_sql_column_lineage_coverage.py` 標記出來。
     - **觸發條件**：只有「巢狀路徑最外層是單箭頭 `->`」+「整段包在函式呼叫參數裡」同時成立才會誤判。只用 `->>` 銜接（不論巢狀幾層）不會有此問題；不包在函式呼叫裡（例如直接 `col->'row'->>'key' AS x`，或包在 `(...)::NUMERIC` 型別轉換裡）也不會有此問題——這兩種都能被 `sqlglot` 正確解析。
     - **作法**：把巢狀路徑的第一步明確加括號，例如 `custom.parse_iso_date((col->'row')->>'key')`。PostgreSQL 的 `->`/`->>` 本身是左結合，加括號不會改變執行結果，純粹是幫助 `sqlglot` 的解析器正確辨識成 JSON 取值運算而非 lambda 語法。
-    - **驗證方式**：改完後執行 `python tools/render_lineagex.py`（或執行 `pytest tests/test_sql_column_lineage_coverage.py`），確認該欄位在 `output.json` 有非空的 direct source。
+    - **驗證方式**：改完後執行 `python tools/render_lineagex.py`    （或執行 `pytest tests/sql/test_sql_column_lineage_coverage.py`），確認該欄位在 `output.json` 有非空的 direct source。
     - **已知案例**：`institutional_net_buy_sell.sql` 的 `trade_date`、`foreign_ownership.sql` 的 `last_change_date`，兩者原寫法都是 `custom.parse_iso_date(col->'row'->>'key')`，改成 `custom.parse_iso_date((col->'row')->>'key')` 後修正。
 
 ## Seed 填滿時間 · 存放空間估算

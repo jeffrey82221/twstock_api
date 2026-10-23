@@ -1,7 +1,7 @@
 """Check column-level lineage coverage for every `db/poc/*.sql` view that has
 an upstream view.
 
-`tests/test_sql_table_lineage_consistency.py` already cross-validates a
+`tests/sql/test_sql_table_lineage_consistency.py` already cross-validates a
 view's *table-level* upstream between `pg_tool.get_direct_dependent_views` (live
 database catalog) and `tools/render_lineagex.py` (static SQL text parse).
 This test goes one level deeper: for a view that DOES have at least one
@@ -41,10 +41,10 @@ from typing import Dict, List, Optional, Set
 
 import pytest
 
-REPO_ROOT = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # `tools/` is a plain directory (no package __init__), same import trick
-# `tests/test_sql_table_lineage_consistency.py` uses.
+# `tests/sql/test_sql_table_lineage_consistency.py` uses.
 _TOOLS_DIR = str(REPO_ROOT / "tools")
 if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
@@ -80,7 +80,7 @@ def poc_schema_build_errors(pipeline) -> Dict[str, Optional[str]]:
     """Build every `db/poc/*.sql` view into a fresh `poc` schema, one by
     one, tolerating per-file failures (unlike `Pipeline.create_views()`,
     which aborts at the first error). See
-    `tests/test_sql_table_lineage_consistency.py` for the identical helper
+    `tests/sql/test_sql_table_lineage_consistency.py` for the identical helper
     this mirrors.
     """
     pipeline._db_tool.execute_query("DROP SCHEMA IF EXISTS poc CASCADE;")
@@ -126,7 +126,7 @@ def pgtool_upstream_map(
     """Direct upstream map derived from
     `pg_tool.PostgreSQLTool.get_direct_dependent_views`, built by inverting it once
     per successfully-built `poc` view. See
-    `tests/test_sql_table_lineage_consistency.py` for the identical helper
+    `tests/sql/test_sql_table_lineage_consistency.py` for the identical helper
     this mirrors -- used here only to decide whether a view has *any*
     upstream view at all, which gates the column-coverage check below.
     """
@@ -214,7 +214,7 @@ def test_view_columns_have_upstream_column(
     if build_error is not None:
         pytest.skip(
             f"db/poc/{sql_path} 無法建立 view，略過欄位 lineage 覆蓋檢查"
-            f"（view 建立失敗屬於 tests/test_sql_view_creation.py 的檢查範圍）："
+            f"（view 建立失敗屬於 tests/sql/test_sql_view_creation.py 的檢查範圍）："
             f"{build_error}"
         )
 

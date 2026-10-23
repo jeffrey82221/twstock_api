@@ -5,7 +5,7 @@ schema (on the same `pgserver`-backed mock database used by the other
 tests -- see `tests/conftest.py`) so this test suite is fully self-contained
 and does not depend on the real `db/poc/*.sql` views.
 
-This method backs `tests/test_sql_column_lineage_coverage.py`, which uses it
+This method backs `tests/sql/test_sql_column_lineage_coverage.py`, which uses it
 to get the *real*, pg_server-built column list of a `poc.*` view (rather
 than trusting whichever keys happen to exist in LineageX's own
 `output.json`) before checking column-level lineage coverage.
