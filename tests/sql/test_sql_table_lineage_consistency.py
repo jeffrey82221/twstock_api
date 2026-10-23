@@ -33,7 +33,7 @@ from typing import Dict, Optional, Set
 
 import pytest
 
-REPO_ROOT = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # `tools/` is a plain directory (no package __init__), so make it importable
 # the same way `tools/render_lineagex.py`'s own CLI usage expects.

@@ -41,7 +41,7 @@ from typing import Dict, List, Optional, Set
 
 import pytest
 
-REPO_ROOT = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # `tools/` is a plain directory (no package __init__), same import trick
 # `tests/sql/test_sql_table_lineage_consistency.py` uses.

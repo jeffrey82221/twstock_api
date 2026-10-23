@@ -112,7 +112,7 @@ from typing import Iterator
 import psycopg
 import pytest
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SETTING_SQL_PATH = os.path.join(REPO_ROOT, "db", "setting.sql")
 
 APP_PORT = 5002
