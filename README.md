@@ -10,24 +10,26 @@ The suite checks TWSE, TPEx, FinMind, GCIS, MOPS, IC Chain, yfinance, foreign ow
 
 # 測試開發規範：新增 `app/main.py` 資料源 endpoint
 
-未來 AI 新增資料源 endpoint 時，必須同時更新 `tests/`，不可只修改 `app/main.py` 或只測試 happy path。請依照以下規範實作與回報。
+新增資料源 endpoint 時，必須分別測試資料源邏輯與 HTTP route，不可只修改 `app/main.py` 或只測試 happy path。兩種測試依照測試對象分別放入 `tests/source/` 和 `tests/endpoint/`。
 
 ## 測試檔案
 
 新增資料源至少建立兩個測試層：
 
-1. `tests/test_<source>_source.py`
-  - 測試 JSON、CSV、HTML parser 與資料清洗。
+1. `tests/source/test_<source>_source.py` — **資料源層**
+  - 直接測試 source adapter／service 的 parser、資料清洗、日期規則、cache 與查詢／fallback 邏輯；不呼叫 FastAPI route。
   - 使用固定 fixture，不連外部網路。
   - 覆蓋正常 payload、空資料、缺欄位、非法數值、日期格式錯誤與上游 schema 變更。
   - 驗證民國日期轉西元日期、單位換算、欄位名稱、排序、去重與資料型別。
   - 使用 `monkeypatch` mock HTTP，測試 retry、cache、timeout、HTTP error 與 rate limit。
 
-2. `tests/test_<source>_endpoint.py`
-  - 使用 FastAPI `TestClient` 或 `httpx.AsyncClient` 呼叫實際 route。
-  - mock source adapter，不要直接 mock endpoint handler。
+2. `tests/endpoint/test_<source>_endpoint.py` — **API endpoint 層**
+  - 使用 FastAPI `TestClient` 或 `httpx.AsyncClient` 呼叫實際 route，驗證 route 到 response 的整合行為。
+  - mock source adapter／service 邊界，不要直接 mock endpoint handler；資料解析與來源規則應在 source 層測試。
   - 驗證 HTTP status、response JSON、Pydantic response model、OpenAPI 欄位與 `source`。
   - 至少覆蓋：成功、股票不存在、缺少參數、非法日期、超出歷史下限、空資料、timeout、HTTP error、rate limit、缺少必要欄位。
+
+同一檔測試若同時涵蓋 source 邏輯與 HTTP route，應拆成上述兩個測試檔，各自只驗證所屬層級。
 
 ## `as_of` 與資料日期
 
@@ -137,19 +139,27 @@ pytest tests/ -m "not upstream_contract" -q
 
 ## 其他測試檔案
 
-以下測試尚未在前述 SQL 與上游 contract 測試說明中逐一介紹。一般 `pytest` 執行這些不依賴即時上游服務的測試；Postgres 測試使用 `pgserver` fixture。
+以下測試尚未在前述 SQL 與上游 contract 測試說明中逐一介紹。source 與 endpoint 兩類測試分別由 workflow 獨立執行；其他一般 `pytest` 測試不依賴即時上游服務，Postgres 測試使用 `pgserver` fixture。
 
-- `tests/test_main_endpoints.py`：以 FastAPI TestClient 和 mock 資料源測試主要 API endpoint 家族、成功回應、參數驗證及 not-found 行為。
+- `tests/endpoint/test_main_endpoints.py`：以 FastAPI TestClient 和 mock 資料源測試主要 API endpoint 家族、成功回應、參數驗證及 not-found 行為。
+- `tests/endpoint/test_finmind_news_endpoint.py`：測試 FinMind 新聞 endpoint 在指定日期無資料時回傳 404。
 - `tests/test_db_demo_review_fixes.py`：測試 db-demo 管理端點認證、DAG metadata 不初始化資料庫、OpenAPI 讀取重試、資料表列數快照，以及 job subprocess 輸出。
 - `tests/test_pipeline_setup.py`：確認 Pipeline 的資料庫初始化錯誤會向外傳遞，並可選擇略過初始化。
 - `tests/test_pg_tool_view_columns.py`：測試 PostgreSQL table/view 欄位順序、schema 參數及不存在物件的處理。
 - `tests/test_pg_tool_view_dependencies.py`：測試 PostgreSQL view 相依關係的直接／遞迴結果、層級、materialized view、schema qualification 與無關物件隔離。
-- `tests/test_mops_financial_analysis.py`：測試 MOPS 年度財務分析資料的數值與 HTML 解析、資料查詢及磁碟 cache 行為。
-- `tests/test_mops_quarterly_financials.py`：測試 MOPS 季度財務 HTML 解析、季度日期邊界、來源資料合併及前季 fallback。
-- `tests/test_foreign_ownership_source.py`：測試外資持股 CSV 解析（含民國日期與數值轉換）、單日查詢及前一可用日 fallback。
-- `tests/test_finmind_news_source.py`：測試 FinMind 新聞僅查詢指定日期、不回溯補資料，以及無資料時 endpoint 回傳 404。
-- `tests/test_twse_sbl_source.py`：測試 TWSE 借券資料解析與日期／數值正規化、完成還券日查詢及資料日期下限。
-- `tests/test_valuation.py`：測試估值資料解析、每股指標計算、市場摘要彙整、成分資料組建與公司估值查詢。
+
+### Source 與 endpoint 測試分類
+
+本次盤點的六個測試檔，五個只測 source/service 行為，FinMind 新聞檔則同時包含 source 測試與一個實際 route 測試。已將 route 測試拆出，因此 source 測試不再啟動 FastAPI `TestClient`：
+
+- `tests/source/test_mops_financial_analysis_source.py`：MOPS 年度財務數值與 HTML 解析、market fallback、查詢結果及磁碟 cache。
+- `tests/source/test_mops_quarterly_financials_source.py`：MOPS 季度財務 HTML 解析、季度日期邊界、來源資料合併及前季 fallback。
+- `tests/source/test_foreign_ownership_source.py`：外資持股 CSV 解析、民國日期與數值轉換、單日查詢及前一可用日 fallback。
+- `tests/source/test_finmind_news_source.py`：FinMind 新聞僅查詢指定日期，無資料時不回溯補資料。
+- `tests/source/test_twse_sbl_source.py`：TWSE 借券資料解析、日期／數值正規化、完成還券日查詢及資料日期下限。
+- `tests/source/test_valuation_source.py`：估值資料解析、每股指標計算、市場摘要彙整、成分資料組建與公司估值查詢。
+
+`tests/endpoint/test_finmind_news_endpoint.py` 和 `tests/endpoint/test_main_endpoints.py` 則透過 FastAPI `TestClient` 驗證實際 route。這些既有測試按測試行為歸為 endpoint 層；新增資料源時仍應為該資料源建立可辨識的 endpoint 測試。
 
 # Data Pipeline 串接測試方式
 
