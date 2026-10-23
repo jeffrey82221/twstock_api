@@ -13,7 +13,7 @@
 | `tests/pg_tool/` | PostgreSQL 欄位及 view dependency 工具 | `test-pg-tool` |
 | `tests/sql/` | POC view 建立與 SQL lineage 驗證 | `test-sql` |
 | `tests/live_sql/` | POC view 對真實上游資料的端到端測試 | `test-live-sql` |
-| `tests/upstream/` | 官方上游 HTTP response contract | `test-upstream`（預設略過） |
+| `tests/upstream/` | 官方上游 HTTP response contract（即時連線） | `test-upstream`（每次 PR 執行） |
 
 在本機可用 `pytest tests/<folder>/ -q` 執行單一資料夾。全套非即時測試可執行：
 
@@ -48,7 +48,7 @@ pytest tests/ -m "not upstream_contract and not poc_view_select" -q
 
 ## 上游 contract 測試
 
-`tests/upstream/test_upstream_contracts.py` 驗證 TWSE、TPEx、FinMind、GCIS、MOPS、IC Chain、yfinance、外資持股、法人買賣、OHLCV 與 valuation 的官方 response shape。由於上游服務可能 rate limit 或暫時故障，workflow job 預設不執行。若要在 PR workflow 啟用，請設定 repository variable `RUN_UPSTREAM_CONTRACT_TESTS=true`；本機執行方式：
+`tests/upstream/test_upstream_contracts.py` 驗證 TWSE、TPEx、FinMind、GCIS、MOPS、IC Chain、yfinance、外資持股、法人買賣、OHLCV 與 valuation 的官方 response shape。此測試會連線至上游服務，可能受 rate limit、暫時 outage 或上游資料變動影響；`test-upstream` workflow job 會在每次 PR 自動執行。本機執行方式：
 
 ```bash
 RUN_UPSTREAM_CONTRACT_TESTS=1 pytest tests/upstream/ -m upstream_contract -q

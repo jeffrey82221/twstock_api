@@ -96,7 +96,6 @@ jobs:
         run: RUN_POC_VIEW_SELECT_TESTS=1 pytest tests/live_sql/ -vv
 
   test-upstream:
-    if: vars.RUN_UPSTREAM_CONTRACT_TESTS == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
