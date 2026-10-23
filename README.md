@@ -1,19 +1,19 @@
 # 測試指南
 
-測試依模組與執行需求分資料夾；`.github/workflows/test-all.yml` 對每個測試資料夾設有獨立 job。除了 `upstream/` 的即時上游合約測試（需 repository variable 啟用），其餘資料夾都會在 pull request 執行。`tests/conftest.py` 提供共用 fixture，`pytest.ini` 註冊全域 marker。
+測試依模組與執行需求分資料夾；`.github/workflows/test-all.yml` 對每個測試資料夾設有獨立 job，pull request 時都會執行。`tests/conftest.py` 提供共用 fixture，`pytest.ini` 註冊全域 marker。
 
 ## 測試資料夾與 workflow jobs
 
-| 資料夾 | 範圍 | PR workflow |
-| --- | --- | --- |
-| `tests/source/` | 資料源 adapter／service 的解析、轉換、查詢與 cache | `test-source` |
-| `tests/endpoint/` | FastAPI route 與 HTTP response 行為 | `test-endpoint` |
-| `tests/db_demo/` | db-demo 管理端點及其輔助功能 | `test-db-demo` |
-| `tests/pipeline/` | Pipeline 初始化行為 | `test-pipeline` |
-| `tests/pg_tool/` | PostgreSQL 欄位及 view dependency 工具 | `test-pg-tool` |
-| `tests/sql/` | POC view 建立與 SQL lineage 驗證 | `test-sql` |
-| `tests/live_sql/` | POC view 對真實上游資料的端到端測試 | `test-live-sql` |
-| `tests/upstream/` | 官方上游 HTTP response contract（即時連線） | `test-upstream`（每次 PR 執行） |
+| 資料夾 | 範圍 | PR workflow | 潛在失敗原因（程式碼） | 排障方針 |
+| --- | --- | --- | --- | --- |
+| `tests/source/` | 資料源解析、轉換、查詢與 cache | `test-source` | parser、欄位映射、日期／單位轉換或 fallback/cache 邏輯錯誤 | 對照 fixture 與來源模組，修正解析或資料處理規則 |
+| `tests/endpoint/` | FastAPI route 與 HTTP response | `test-endpoint` | route、參數驗證、錯誤映射或 response schema 不符 | 檢查 `app/main.py` 的 route 和 schema，修正狀態碼或回應欄位 |
+| `tests/db_demo/` | db-demo 管理端點及輔助功能 | `test-db-demo` | 認證、OpenAPI 重試、資料庫統計或 job 執行邏輯錯誤 | 沿失敗功能檢查 `db_demo/` 對應模組與依賴邊界 |
+| `tests/pipeline/` | Pipeline 初始化行為 | `test-pipeline` | 初始化例外被吞掉，或略過初始化的選項失效 | 檢查 `Pipeline.__init__` 的 `setup_db` 分支與例外傳遞 |
+| `tests/pg_tool/` | PostgreSQL 欄位及 view dependency 工具 | `test-pg-tool` | catalog 查詢、schema 選擇、欄位順序或依賴遞迴錯誤 | 檢查 `pg_tool.py` 的 catalog SQL、schema 條件及遞迴計算 |
+| `tests/sql/` | POC view 建立與 SQL lineage 驗證 | `test-sql` | view SQL 語法／依賴錯誤，或靜態 lineage 與資料庫結果不一致 | 先修正 view 與上游依賴，再依 lineage 失敗欄位檢查 SQL 寫法 |
+| `tests/live_sql/` | POC view 真實資料端到端測試 | `test-live-sql` | SQL HTTP 呼叫鏈、API route 或 view 資料轉換錯誤 | 從失敗 view 追查 `custom.http_get_content`、`app/main.py` 與來源解析 |
+| `tests/upstream/` | 官方上游 HTTP response contract | `test-upstream` | 上游格式變更未被 parser／欄位映射支援 | 查看失敗 URL 與實際 schema，確認是上游變更後再更新 adapter 與測試 |
 
 在本機可用 `pytest tests/<folder>/ -q` 執行單一資料夾。全套非即時測試可執行：
 
