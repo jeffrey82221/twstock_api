@@ -1,6 +1,6 @@
 """Shared pytest fixtures for db/poc SQL view tests.
 
-These fixtures back `tests/test_sql_view_creation.py`, which verifies that
+These fixtures back `tests/sql/test_sql_view_creation.py`, which verifies that
 every `db/poc/*.sql` file used by `pipeline.Pipeline.create_views()` is
 syntactically valid and can be turned into a working `CREATE VIEW ...`
 statement.

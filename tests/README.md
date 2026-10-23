@@ -2,7 +2,7 @@
 
 Pytest test suite for the project.
 
-## `test_sql_view_creation.py` — db/poc SQL 語法檢查
+## `sql/test_sql_view_creation.py` — db/poc SQL 語法檢查
 
 驗證 `db/poc/*.sql` 是否都能被 `pipeline.Pipeline.create_views()` 正確轉換成
 `CREATE VIEW` 並建立成功。與直接呼叫 `Pipeline.create_views()` 不同的地方是：
@@ -38,7 +38,7 @@ extension（這些無法單靠 `pip install` 取得）。`db/setting.sql` 原本
 
 ```bash
 pip install -r requirements.txt   # 內含 pgserver、pytest
-pytest tests/test_sql_view_creation.py -v
+pytest tests/sql/test_sql_view_creation.py -v
 ```
 
 第一次執行時 `pgserver` 會在暫存目錄初始化一份 Postgres data 目錄，之後同一
