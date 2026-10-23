@@ -79,7 +79,7 @@ def poc_schema_build_errors(pipeline) -> Dict[str, Optional[str]]:
     `{sql_path: "<error message>"}` for one that didn't -- a view that
     failed to build has no catalog entry, so it cannot be inspected by
     `pg_tool.get_direct_dependent_views()` and is skipped (not failed) by the
-    comparison test with a pointer back to `tests/test_sql_view_creation.py`,
+    comparison test with a pointer back to `tests/sql/test_sql_view_creation.py`,
     which already covers pure view-creation failures.
     """
     pipeline._db_tool.execute_query("DROP SCHEMA IF EXISTS poc CASCADE;")
@@ -152,7 +152,7 @@ def test_view_lineage_upstream_matches_pgtool(
     if build_error is not None:
         pytest.skip(
             f"db/poc/{sql_path} 無法建立 view，略過上游一致性比對"
-            f"（view 建立失敗屬於 tests/test_sql_view_creation.py 的檢查範圍）："
+            f"（view 建立失敗屬於 tests/sql/test_sql_view_creation.py 的檢查範圍）："
             f"{build_error}"
         )
 

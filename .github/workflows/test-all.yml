@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 jobs:
-  test-offline:
+  test-db-demo:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,8 +16,8 @@ jobs:
           python-version: "3.11"
       - name: Install Python dependencies
         run: python -m pip install -r requirements-py311.txt
-      - name: Run offline pytest suite
-        run: pytest tests/ -m "not upstream_contract and not poc_view_select" --ignore=tests/source --ignore=tests/endpoint -q
+      - name: Test db-demo
+        run: pytest tests/db_demo/ -q
 
   test-source:
     runs-on: ubuntu-latest
@@ -43,7 +43,7 @@ jobs:
       - name: Test API endpoints
         run: pytest tests/endpoint/ -q
 
-  test-sql-view-creation:
+  test-pipeline:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,12 +52,10 @@ jobs:
           python-version: "3.11"
       - name: Install Python dependencies
         run: python -m pip install -r requirements-py311.txt
-      - name: Resolve host.docker.internal
-        run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
-      - name: Test SQL view creation
-        run: pytest tests/test_sql_view_creation.py
+      - name: Test pipeline
+        run: pytest tests/pipeline/ -q
 
-  test-sql-table-lineage:
+  test-pg-tool:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,12 +64,10 @@ jobs:
           python-version: "3.11"
       - name: Install Python dependencies
         run: python -m pip install -r requirements-py311.txt
-      - name: Resolve host.docker.internal
-        run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
-      - name: Test SQL table lineage consistency
-        run: pytest tests/test_sql_table_lineage_consistency.py
+      - name: Test PostgreSQL tool
+        run: pytest tests/pg_tool/ -q
 
-  test-sql-column-lineage:
+  test-sql:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -82,10 +78,10 @@ jobs:
         run: python -m pip install -r requirements-py311.txt
       - name: Resolve host.docker.internal
         run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
-      - name: Test SQL column lineage coverage
-        run: pytest tests/test_sql_column_lineage_coverage.py
+      - name: Test SQL suite
+        run: pytest tests/sql/ -q
 
-  test-poc-view-select:
+  test-live-sql:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,5 +92,20 @@ jobs:
         run: python -m pip install -r requirements-py311.txt
       - name: Resolve host.docker.internal
         run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
-      - name: Test selecting one row from each POC view
-        run: RUN_POC_VIEW_SELECT_TESTS=1 pytest tests/test_sql_select_one_row.py -vv
+      - name: Test live POC views
+        run: RUN_POC_VIEW_SELECT_TESTS=1 pytest tests/live_sql/ -vv
+
+  test-upstream:
+    if: vars.RUN_UPSTREAM_CONTRACT_TESTS == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements-py311.txt
+      - name: Test live upstream contracts
+        env:
+          RUN_UPSTREAM_CONTRACT_TESTS: "1"
+        run: pytest tests/upstream/ -m upstream_contract -q

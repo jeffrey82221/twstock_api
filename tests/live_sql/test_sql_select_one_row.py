@@ -2,11 +2,11 @@
 `SELECT * FROM poc.<view> LIMIT 1` actually succeeds and returns a real
 (not entirely-NULL) row -- i.e. the full HTTP-backed data pipeline works
 end to end, not just that the view's SQL is syntactically valid (that is
-`tests/test_sql_view_creation.py`'s job).
+`tests/sql/test_sql_view_creation.py`'s job).
 
 Run with::
 
-    RUN_POC_VIEW_SELECT_TESTS=1 pytest -m poc_view_select tests/test_poc_view_select_one_row.py -v
+    RUN_POC_VIEW_SELECT_TESTS=1 pytest -m poc_view_select tests/live_sql/test_sql_select_one_row.py -v
 
 Unlike the other `db/poc/*.sql` test modules, this one needs things the
 sanitized pgserver mock in `tests/conftest.py` does NOT provide:
@@ -39,7 +39,7 @@ sanitized pgserver mock in `tests/conftest.py` does NOT provide:
 Because this test walks the *entire* real dependency chain -- 61 views,
 several of which fan out through TWSE/TPEx/MOPS/FinMind/yfinance -- it is
 opt-in and excluded from the default `pytest -q` run, for the same reason
-`tests/test_upstream_contracts.py` is: live upstream data is slow, rate
+`tests/upstream/test_upstream_contracts.py` is: live upstream data is slow, rate
 limited, and occasionally flaky, and ordinary contributors should not be
 coupled to that when running the fast local suite.
 

@@ -1,165 +1,83 @@
-# Upstream contract tests
+# 測試指南
 
-The default `pytest` run uses local unit tests and does not call external services. To check whether official upstream URLs changed their response contracts, run the opt-in live suite:
+測試依模組與執行需求分資料夾；`.github/workflows/test-all.yml` 對每個測試資料夾設有獨立 job。除了 `upstream/` 的即時上游合約測試（需 repository variable 啟用），其餘資料夾都會在 pull request 執行。`tests/conftest.py` 提供共用 fixture，`pytest.ini` 註冊全域 marker。
 
-```bash
-RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
-```
+## 測試資料夾與 workflow jobs
 
-The suite checks TWSE, TPEx, FinMind, GCIS, MOPS, IC Chain, yfinance, foreign ownership, institutional trading, OHLCV, and valuation response shapes. It is intentionally opt-in because upstream services have rate limits and occasional outages.
+| 資料夾 | 範圍 | PR workflow |
+| --- | --- | --- |
+| `tests/source/` | 資料源 adapter／service 的解析、轉換、查詢與 cache | `test-source` |
+| `tests/endpoint/` | FastAPI route 與 HTTP response 行為 | `test-endpoint` |
+| `tests/db_demo/` | db-demo 管理端點及其輔助功能 | `test-db-demo` |
+| `tests/pipeline/` | Pipeline 初始化行為 | `test-pipeline` |
+| `tests/pg_tool/` | PostgreSQL 欄位及 view dependency 工具 | `test-pg-tool` |
+| `tests/sql/` | POC view 建立與 SQL lineage 驗證 | `test-sql` |
+| `tests/live_sql/` | POC view 對真實上游資料的端到端測試 | `test-live-sql` |
+| `tests/upstream/` | 官方上游 HTTP response contract | `test-upstream`（預設略過） |
 
-# 測試開發規範：新增 `app/main.py` 資料源 endpoint
-
-新增資料源 endpoint 時，必須分別測試資料源邏輯與 HTTP route，不可只修改 `app/main.py` 或只測試 happy path。兩種測試依照測試對象分別放入 `tests/source/` 和 `tests/endpoint/`。
-
-## 測試檔案
-
-新增資料源至少建立兩個測試層：
-
-1. `tests/source/test_<source>_source.py` — **資料源層**
-  - 直接測試 source adapter／service 的 parser、資料清洗、日期規則、cache 與查詢／fallback 邏輯；不呼叫 FastAPI route。
-  - 使用固定 fixture，不連外部網路。
-  - 覆蓋正常 payload、空資料、缺欄位、非法數值、日期格式錯誤與上游 schema 變更。
-  - 驗證民國日期轉西元日期、單位換算、欄位名稱、排序、去重與資料型別。
-  - 使用 `monkeypatch` mock HTTP，測試 retry、cache、timeout、HTTP error 與 rate limit。
-
-2. `tests/endpoint/test_<source>_endpoint.py` — **API endpoint 層**
-  - 使用 FastAPI `TestClient` 或 `httpx.AsyncClient` 呼叫實際 route，驗證 route 到 response 的整合行為。
-  - mock source adapter／service 邊界，不要直接 mock endpoint handler；資料解析與來源規則應在 source 層測試。
-  - 驗證 HTTP status、response JSON、Pydantic response model、OpenAPI 欄位與 `source`。
-  - 至少覆蓋：成功、股票不存在、缺少參數、非法日期、超出歷史下限、空資料、timeout、HTTP error、rate limit、缺少必要欄位。
-
-同一檔測試若同時涵蓋 source 邏輯與 HTTP route，應拆成上述兩個測試檔，各自只驗證所屬層級。
-
-## `as_of` 與資料日期
-
-- 數值型或交易日資料：測試交易日、週末、國定假日與無資料日期；若產品規則要求 interpolation，必須向前找到最近資料，並回傳 `as_of` 與實際 `data_date`。
-- 新聞、公告等事件／文字資料：不可 interpolation 或日期回溯，只查詢指定 `as_of`；當日無資料回 HTTP 404，成功時 `data_date == as_of`。
-- API description 必須寫明資料源最早可查日期，並測試早於該日期的 HTTP 400。
-
-## 資料正確性
-
-- 至少使用 5 檔代表性股票：`2330`、`2317`、`2454`、`1101`、`2882`。
-- 至少使用 5 個不同年份或日期。
-- 驗證股票代號、日期與來源欄位沒有錯置。
-- 計算型 endpoint 必須測試至少一組手算結果，例如 EPS / TTM、YoY、PER、PBR、殖利率、market cap 與單位換算。
-- 明確測試 `None`、空字串、`-`、零值、負值與缺欄位。
-- 來源錯誤應遵守專案既有 `source_errors` 與 `found=False` 行為，不可吞掉錯誤或回傳看似正常的假資料。
-
-## 上游 contract test
-
-- 更新 `tests/test_upstream_contracts.py`，並標記 `@pytest.mark.upstream_contract`。
-- 一般 `pytest` 不可依賴外部服務；live check 必須 opt-in：
+在本機可用 `pytest tests/<folder>/ -q` 執行單一資料夾。全套非即時測試可執行：
 
 ```bash
-RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
+pytest tests/ -m "not upstream_contract and not poc_view_select" -q
 ```
 
-- live check 必須驗證官方 URL 的 HTTP status、JSON / CSV / HTML 類型、頂層結構、至少一筆資料與 endpoint 使用的必要欄位。
-- 測試失敗時，錯誤訊息要包含 URL、dataset／參數、缺少欄位與實際收到的 schema。
-- 不可把暫時 outage、空交易日或 rate limit 誤判為 spec change；需分別標示原因。
+## 新增資料源與 endpoint 測試
 
-## 測試完成條件
+新增資料源 endpoint 時，必須分別測試資料源邏輯與 HTTP route，不可只修改 `app/main.py` 或只測 happy path。兩種測試依測試對象分別放入 `tests/source/` 和 `tests/endpoint/`；同一檔若同時涵蓋兩層，應拆成兩個測試檔。
 
-AI 完成 endpoint 後必須執行並回報：
+### 資料源層：`tests/source/test_<source>_source.py`
+
+- 直接測試 source adapter／service 的 parser、資料清洗、日期規則、cache 與查詢／fallback 邏輯；不呼叫 FastAPI route。
+- 使用固定 fixture，不連外部網路；以 `monkeypatch` mock HTTP。
+- 覆蓋正常、空資料、缺欄位、非法數值、日期錯誤、上游 schema 變更，以及 retry、cache、timeout、HTTP error、rate limit。
+- 驗證民國日期轉西元日期、單位換算、欄位、排序、去重與資料型別。
+
+### API endpoint 層：`tests/endpoint/test_<source>_endpoint.py`
+
+- 使用 FastAPI `TestClient` 或 `httpx.AsyncClient` 呼叫實際 route；mock source adapter／service 邊界，不直接 mock endpoint handler。
+- 驗證 HTTP status、response JSON、Pydantic response model、OpenAPI 欄位與 `source`。
+- 覆蓋成功、股票不存在、缺少參數、非法日期、超出歷史下限、空資料及主要來源錯誤。
+
+### 日期與資料正確性
+
+- 數值型或交易日資料：測試交易日、週末、國定假日與無資料日期；若規則要求 interpolation，向前找到最近資料，並回傳 `as_of` 與實際 `data_date`。
+- 新聞、公告等事件／文字資料：不可 interpolation 或回溯，只查指定 `as_of`；當日無資料回 HTTP 404，成功時 `data_date == as_of`。
+- API description 應標示資料源最早可查日期，並測試早於該日期的 HTTP 400。
+- 至少使用 `2330`、`2317`、`2454`、`1101`、`2882` 等代表性股票及多個日期；驗證股票代號、日期、來源欄位及計算結果。
+- 明確測試 `None`、空字串、`-`、零、負值及缺欄位；來源錯誤遵守 `source_errors` 與 `found=False` 行為，不可吞掉錯誤或回傳假資料。
+
+## 上游 contract 測試
+
+`tests/upstream/test_upstream_contracts.py` 驗證 TWSE、TPEx、FinMind、GCIS、MOPS、IC Chain、yfinance、外資持股、法人買賣、OHLCV 與 valuation 的官方 response shape。由於上游服務可能 rate limit 或暫時故障，workflow job 預設不執行。若要在 PR workflow 啟用，請設定 repository variable `RUN_UPSTREAM_CONTRACT_TESTS=true`；本機執行方式：
 
 ```bash
-pytest -q
-RUN_UPSTREAM_CONTRACT_TESTS=1 pytest -m upstream_contract -q
+RUN_UPSTREAM_CONTRACT_TESTS=1 pytest tests/upstream/ -m upstream_contract -q
 ```
 
-並確認：
+Live contract 應驗證 HTTP status、JSON／CSV／HTML 類型、頂層結構、至少一筆資料及 endpoint 必要欄位；錯誤訊息應包含 URL、dataset／參數、缺少欄位與實際 schema，且不可把 outage、空交易日或 rate limit 誤判為 spec change。
 
-- source unit tests 與 API integration tests 都已新增。
-- response model 與 Swagger/OpenAPI 可成功產生。
-- 至少有一個成功案例與所有主要錯誤分支。
-- 若資料具有歷史性質，已測試不同年份與 `as_of` 邊界。
-- 若驗證發現程式錯誤，必須從 `main` 建立 `fix/<name>` branch，修正後重新執行相同測試，並提供完整 PR 指令與驗證結果。
+## SQL 測試
 
-# 測試開發規範：新增 SQLs
+新增或修改 `db/poc/*.sql` 前，先閱讀 [`db/poc/README.md`](db/poc/README.md) 的規則；完成後同步更新對應 view 說明。SQL 測試位於 `tests/sql/`，workflow 的 `test-sql` job 會執行整個資料夾：
 
-未來 AI 新增或修改 `db/poc/*.sql` 時，開發與測試都要遵守以下規範，不可只寫完 SQL 就算完成。
+1. **View 可建立性**（`test_sql_view_creation.py`）：在 pgserver mock database 建立每個 view，確認 SQL 語法與依賴物件。
+2. **Table 級 lineage**（`test_sql_table_lineage_consistency.py`）：比對 `pg_tool.get_dependent_views` 的 catalog 結果與 `tools/render_lineagex.py` 的靜態分析結果。
+3. **欄位級 lineage**（`test_sql_column_lineage_coverage.py`）：檢查有上游 view 的欄位是否在 LineageX output 中有上游欄位來源。若失敗，調整 SQL 或清楚說明常數／計算欄位等限制，不要壓制錯誤。
 
-## 開發規範
-
-- 開發前必讀 [`db/poc/README.md`](db/poc/README.md) 的「規則」章節（語法層、`_list.sql` 角色、資料邊界與事件母體、正規化與欄位處理、執行環境相容性），新 SQL 必須遵守已列出的所有規則。
-- 命名與角色判斷依 `db/poc/README.md` rule 8：先確認新 SQL 是 `_list`（seed）、`raw_`（抓 API），還是正規化 view，再套用對應規則。
-- 新 SQL 完成後，在 `db/poc/README.md` 補上對應View表說明章節（參照-章節索引-可以看到列出每個View的HTTP API endpoint、設計理念、欄位來源等），保持文件與程式碼同步。
-
-## 測試規範
-
-新增或修改 `db/poc/*.sql` 後，必須依序執行以下三層 pytest 驗證，不可只跑其中一種就回報完成：
-
-1. **View 可建立性**（`tests/test_sql_view_creation.py`）：確認新 SQL 在 pgserver-backed 的 mock 資料庫中能被建立成 view，語法正確、依賴的上游 view/table 都存在。
-
-   ```bash
-   pytest tests/test_sql_view_creation.py -v
-   ```
-
-2. **Table 級上游一致性**（`tests/test_sql_table_lineage_consistency.py`）：交叉比對 `pg_tool.get_dependent_views`（live catalog 反查）與 `tools/render_lineagex.py`（靜態 SQL 解析）算出的上游 view 是否一致。若不一致，代表 SQL 引用了 LineageX 認不出來的寫法或 pg_tool 抓不到的依賴，需要修正 SQL 直到兩者一致。
-
-   ```bash
-   pytest tests/test_sql_table_lineage_consistency.py -v
-   ```
-
-3. **欄位級 lineage 覆蓋度**（`tests/test_sql_column_lineage_coverage.py`）：對每個有上游 view 的新 view，檢查其每個欄位（依 `pg_tool.get_view_columns` 查詢 pg_server 建好的真實欄位清單）在 LineageX 的 `output.json` 中是否都能找到至少一個上游欄位。若有欄位被標記缺少上游，需要研究原因並調整 SQL 寫法（常見原因：巢狀 JSON 路徑 + 函式呼叫誤判，見 rule 22），或在 SQL 註解說明此欄位本質上是常數/計算值。
-
-   ```bash
-   pytest tests/test_sql_column_lineage_coverage.py -v
-   ```
-
-也可以一次跑完三個檔案：
+可在本機執行全部 SQL 檢查：`pytest tests/sql/ -v`。`tests/live_sql/test_sql_select_one_row.py` 則逐一對 `poc.*` view 執行 `SELECT ... LIMIT 1`，驗證 HTTP 呼叫鏈能取得真實資料；此測試需要 pgsql-http、`host.docker.internal` 指向本機，以及可啟動的 `app/main.py`。workflow 的 `test-live-sql` job 會執行它。
 
 ```bash
-pytest tests/test_sql_view_creation.py tests/test_sql_table_lineage_consistency.py tests/test_sql_column_lineage_coverage.py -v
+RUN_POC_VIEW_SELECT_TESTS=1 pytest -m poc_view_select tests/live_sql/ -v
 ```
 
-4. **（opt-in）單行 SELECT 端到端驗證**（`tests/test_sql_select_one_row.py`）：對每個 `poc.*` view 實際執行 `SELECT * FROM poc.<view> LIMIT 1`，確認整條 HTTP 呼叫鏈（`custom.http_get_content` → app/main.py → 上游 TWSE/TPEx/MOPS/FinMind/yfinance）真的能跑出一筆真實資料，而不只是 SQL 語法正確。預設 `pytest -q` 不會執行此檔案（避免一般開發流程被外部網路速度與穩定度拖累），需要另外指定環境變數才會跑：
+新增或修改 SQL 後，需回報三項靜態／mock SQL 檢查的結果與具體 view／欄位；若 SQL 規則有通用變更，請同步更新 `db/poc/README.md`。
 
-   ```bash
-   RUN_POC_VIEW_SELECT_TESTS=1 pytest -m poc_view_select tests/test_sql_select_one_row.py -v
-   ```
+## 其他測試模組
 
-   執行前需要（詳見該檔案 module docstring）：(a) 編譯好的 `http` Postgres extension（`pgsql-http`，會在 pgserver 自帶的 Postgres 上自動編譯安裝一次，需要 `gcc`/`make`/`libcurl` 開發套件）、(b) `host.docker.internal` 能解析到本機（`sudo sh -c 'echo "127.0.0.1 host.docker.internal" >> /etc/hosts'`）、(c) `app/main.py` 有在背景服務 port 5002（測試會自動幫你背景啟動，若已手動啟動則沿用）。新增 `raw_*.sql` 或會呼叫 HTTP 的 view 時，建議額外跑一次這個檔案確認真實資料流真的通。
-
-## 測試完成條件
-
-AI 新增或修改 `db/poc/*.sql` 後必須執行並回報：
-
-```bash
-pytest tests/ -m "not upstream_contract" -q
-```
-
-並確認：
-
-- 三層測試（view 建立、table 級上游一致性、欄位級 lineage 覆蓋度）全部針對新/改動的 SQL 執行過，結果附在回報中（passed/failed/skipped 數量與具體 view/欄位名稱）。
-- 若 table 或欄位 lineage 測試失敗，請研究根因並修正 SQL（而非略過測試或壓制錯誤訊息）。
-- 若因 SQL 本質限制（如常數欄位、LineageX 已知解析限制）導致某項檢查必然無法通過，需在 SQL 註解與 PR 說明中明確記錄原因，不可靜默忽略。
-- 若涉及新增規則或修正既有 SQL 的通用寫法問題，請同步更新 `db/poc/README.md`裡面的規則。
-
-## 其他測試檔案
-
-以下測試尚未在前述 SQL 與上游 contract 測試說明中逐一介紹。source 與 endpoint 兩類測試分別由 workflow 獨立執行；其他一般 `pytest` 測試不依賴即時上游服務，Postgres 測試使用 `pgserver` fixture。
-
-- `tests/endpoint/test_main_endpoints.py`：以 FastAPI TestClient 和 mock 資料源測試主要 API endpoint 家族、成功回應、參數驗證及 not-found 行為。
-- `tests/endpoint/test_finmind_news_endpoint.py`：測試 FinMind 新聞 endpoint 在指定日期無資料時回傳 404。
-- `tests/test_db_demo_review_fixes.py`：測試 db-demo 管理端點認證、DAG metadata 不初始化資料庫、OpenAPI 讀取重試、資料表列數快照，以及 job subprocess 輸出。
-- `tests/test_pipeline_setup.py`：確認 Pipeline 的資料庫初始化錯誤會向外傳遞，並可選擇略過初始化。
-- `tests/test_pg_tool_view_columns.py`：測試 PostgreSQL table/view 欄位順序、schema 參數及不存在物件的處理。
-- `tests/test_pg_tool_view_dependencies.py`：測試 PostgreSQL view 相依關係的直接／遞迴結果、層級、materialized view、schema qualification 與無關物件隔離。
-
-### Source 與 endpoint 測試分類
-
-本次盤點的六個測試檔，五個只測 source/service 行為，FinMind 新聞檔則同時包含 source 測試與一個實際 route 測試。已將 route 測試拆出，因此 source 測試不再啟動 FastAPI `TestClient`：
-
-- `tests/source/test_mops_financial_analysis_source.py`：MOPS 年度財務數值與 HTML 解析、market fallback、查詢結果及磁碟 cache。
-- `tests/source/test_mops_quarterly_financials_source.py`：MOPS 季度財務 HTML 解析、季度日期邊界、來源資料合併及前季 fallback。
-- `tests/source/test_foreign_ownership_source.py`：外資持股 CSV 解析、民國日期與數值轉換、單日查詢及前一可用日 fallback。
-- `tests/source/test_finmind_news_source.py`：FinMind 新聞僅查詢指定日期，無資料時不回溯補資料。
-- `tests/source/test_twse_sbl_source.py`：TWSE 借券資料解析、日期／數值正規化、完成還券日查詢及資料日期下限。
-- `tests/source/test_valuation_source.py`：估值資料解析、每股指標計算、市場摘要彙整、成分資料組建與公司估值查詢。
-
-`tests/endpoint/test_finmind_news_endpoint.py` 和 `tests/endpoint/test_main_endpoints.py` 則透過 FastAPI `TestClient` 驗證實際 route。這些既有測試按測試行為歸為 endpoint 層；新增資料源時仍應為該資料源建立可辨識的 endpoint 測試。
+- `tests/db_demo/test_db_demo_review_fixes.py`：db-demo 認證、DAG metadata、OpenAPI 重試、row-count snapshot 與 job subprocess 輸出。
+- `tests/pipeline/test_pipeline_setup.py`：Pipeline 初始化錯誤傳遞與略過資料庫初始化。
+- `tests/pg_tool/test_pg_tool_view_columns.py`：table/view 欄位順序、schema 參數及不存在物件。
+- `tests/pg_tool/test_pg_tool_view_dependencies.py`：view 相依關係、遞迴層級、materialized view 與無關物件隔離。
 
 # Data Pipeline 串接測試方式
 
