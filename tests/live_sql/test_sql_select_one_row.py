@@ -214,6 +214,33 @@ _VIEW_REQUIRED_DATA_COLUMNS = {
 }
 
 
+_API_LOG_PATH = None
+_API_LOG_TAIL_LINES = 80
+
+
+def _api_log_tail() -> str:
+    """Tail of the uvicorn log of the API this module started (empty note if
+    the server was started externally and its log is not captured)."""
+    if not _API_LOG_PATH or not os.path.exists(_API_LOG_PATH):
+        return "(API 為外部啟動，無法取得其 running log)"
+    with open(_API_LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
+        lines = f.read().splitlines()[-_API_LOG_TAIL_LINES:]
+    return "\n".join(lines) or "(API log 為空)"
+
+
+def _timeout_hint(view: str, where_clause) -> str:
+    where_arg = f", where={where_clause!r}" if where_clause else ""
+    return (
+        "\n\n[提示] SELECT 逾時 (statement_timeout)。請用 pipeline 的函式研究並改善 db/poc/"
+        f"{view}.sql：\n"
+        "  p = Pipeline(setup_db=False, in_memory_db=True); p.create_views()\n"
+        f"  p.select_poc_view({view!r}, limit=5{where_arg})            # 取得實際結果\n"
+        f"  p.explain_select_poc_view({view!r}, limit=1{where_arg})    # 讀 query plan，找出慢的原因\n"
+        "  (加 analyze=True, timeout_seconds=N 可取得實際執行時間)\n"
+        "常見原因：DISTINCT/聚合無法下推 LIMIT、大量 HTTP 呼叫 fan-out、缺少可下推的 WHERE 條件。"
+    )
+
+
 def _icchain_loaded() -> bool:
     try:
         with urllib.request.urlopen(APP_HEALTH_URL, timeout=3) as resp:
@@ -244,7 +271,7 @@ def _app_server_alive() -> bool:
 
 
 @pytest.fixture(scope="module")
-def live_app_server() -> Iterator[None]:
+def live_app_server(tmp_path_factory) -> Iterator[None]:
     """Ensure `app/main.py` is serving on port 5002. Reuses an already-
     running server (started manually, or by another test session) as-is;
     otherwise starts `uvicorn app.main:app --host 0.0.0.0 --port 5002` as a
@@ -255,11 +282,14 @@ def live_app_server() -> Iterator[None]:
         yield
         return
 
+    global _API_LOG_PATH
+    _API_LOG_PATH = str(tmp_path_factory.mktemp("api") / "uvicorn.log")
+    log_file = open(_API_LOG_PATH, "wb")
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", str(APP_PORT)],
         cwd=REPO_ROOT,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
     )
     try:
         deadline = time.time() + 20
@@ -283,6 +313,7 @@ def live_app_server() -> Iterator[None]:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
+        log_file.close()
 
 
 @pytest.fixture(scope="module")
@@ -377,9 +408,15 @@ def test_view_select_one_row_succeeds(live_app_server, live_poc_schema, sql_path
                 try:
                     cur.execute(select_sql)
                 except Exception as exc:  # noqa: BLE001 - surface exact SQL + DB error per view
+                    hint = (
+                        _timeout_hint(view, where_clause)
+                        if isinstance(exc, psycopg.errors.QueryCanceled)
+                        else ""
+                    )
                     pytest.fail(
                         f"poc.{view} 無法成功 SELECT 單行：{type(exc).__name__}: {exc}\n\n"
-                        f"執行的 SQL：\n{select_sql}",
+                        f"執行的 SQL：\n{select_sql}{hint}\n\n"
+                        f"--- API running log (最後 {_API_LOG_TAIL_LINES} 行) ---\n{_api_log_tail()}",
                         pytrace=False,
                     )
                 row = cur.fetchone()
