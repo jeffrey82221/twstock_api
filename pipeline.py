@@ -22,16 +22,95 @@ class ViewExecutor:
         self.results.append(param)
 
 class Pipeline:
-    def __init__(self, setup_db: bool = True):
+    def __init__(self, setup_db: bool = True, in_memory_db: bool = False):
+        """``in_memory_db=True`` switches the dependent DB to a throw-away
+        pgserver-extend instance (bundles the ``http`` extension) instead of
+        ``localhost:5432``; call ``close()`` to stop it."""
+        self._pg_server = None
+        self._pg_dir = None
         self._sql_paths = list(filter(lambda x: x.endswith('.sql'), 
                             os.listdir(os.path.join(os.path.dirname(__file__), 'db', 'poc'))   ))
         
         self.poc_tables = ['poc.' + s.split('.sql')[0] for s in self._sql_paths]
         self.dag = self._create_dag()
         self._db_tool = PostgreSQLTool()
-        if setup_db:
+        if in_memory_db:
+            self.use_in_memory_db()
+        elif setup_db:
             self._db_tool.setup()  # Ensure the database is set up with necessary extensions and schemas
         
+    def use_in_memory_db(self) -> str:
+        """Start a pgserver-extend DB, apply ``db/setting.sql`` (minus the
+        pg_ivm/pg_cron parts it cannot provide) and point the pipeline at it.
+        Returns the DSN."""
+        import re
+        import tempfile
+        import pgserver
+        import psycopg
+
+        if self._pg_server is not None:
+            return self._db_tool._dsn
+        self._pg_dir = tempfile.mkdtemp(prefix='twstock_pgserver_')
+        self._pg_server = pgserver.get_server(self._pg_dir)
+        self._pg_server.psql('CREATE DATABASE app_db;')
+        dsn = self._pg_server.get_uri(database='app_db')
+        with open(os.path.join(os.path.dirname(__file__), 'db', 'setting.sql'), 'r', encoding='utf-8') as f:
+            setting_sql = f.read()
+        for pattern in (
+            r"CREATE EXTENSION IF NOT EXISTS\s+pg_ivm\s*;",
+            r"CREATE EXTENSION IF NOT EXISTS\s+pg_cron\s*;",
+            r"CREATE\s+or\s+REPLACE\s+VIEW\s+public\.(job_run_details|job)\b.*?"
+            r"GRANT SELECT ON public\.\1 TO mcp_reader;",
+        ):
+            setting_sql = re.sub(pattern, '', setting_sql, flags=re.IGNORECASE | re.DOTALL)
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            conn.execute(setting_sql)
+        self._db_tool._dsn = dsn
+        return dsn
+
+    def close(self):
+        """Stop the in-memory DB started by ``use_in_memory_db``."""
+        import shutil
+        if self._pg_server is not None:
+            self._pg_server.cleanup()
+            shutil.rmtree(self._pg_dir, ignore_errors=True)
+            self._pg_server = self._pg_dir = None
+
+    def _poc_select_sql(self, view: str, limit: int, where: Optional[str]) -> str:
+        view = view[:-len('.sql')] if view.endswith('.sql') else view
+        view = view.split('.')[-1]
+        if view + '.sql' not in self._sql_paths:
+            raise ValueError(f'Unknown poc view: {view}')
+        sql = f'SELECT * FROM poc.{view}'
+        if where:
+            sql += f' WHERE {where}'
+        return sql + f' LIMIT {int(limit)}'
+
+    def select_poc_view(self, view: str, limit: int = 10, where: Optional[str] = None,
+                        timeout_seconds: Optional[int] = None) -> List[Dict]:
+        """``SELECT * FROM poc.<view> [WHERE ..] LIMIT n``; returns rows as dicts."""
+        sql = self._poc_select_sql(view, limit, where)
+        with self._db_tool.get_conn() as conn:
+            with conn.cursor() as cur:
+                if timeout_seconds:
+                    cur.execute(f"SET statement_timeout = '{int(timeout_seconds)}s'")
+                cur.execute(sql)
+                columns = [d.name for d in cur.description]
+                return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+    def explain_select_poc_view(self, view: str, limit: int = 1, where: Optional[str] = None,
+                                analyze: bool = False, timeout_seconds: Optional[int] = None) -> str:
+        """Query plan (``EXPLAIN (VERBOSE)``) of the select in ``select_poc_view``.
+        ``analyze=True`` also executes it (use ``timeout_seconds`` to bound it)."""
+        sql = self._poc_select_sql(view, limit, where)
+        options = 'ANALYZE, VERBOSE, BUFFERS' if analyze else 'VERBOSE'
+        with self._db_tool.get_conn() as conn:
+            with conn.cursor() as cur:
+                if timeout_seconds:
+                    cur.execute(f"SET statement_timeout = '{int(timeout_seconds)}s'")
+                cur.execute(f'EXPLAIN ({options}) {sql}')
+                return '\n'.join(row[0] for row in cur.fetchall())
+
     def _create_dag(self):
         dag = DAG()
         for sql_path in self._sql_paths:
