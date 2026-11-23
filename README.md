@@ -96,8 +96,34 @@ python3 -m virtualenv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+## (3) 執行單元測試
 
-## (3) 建立 poc 資料流
+與 CI（`.github/workflows/test-all.yml`）相同的測試項目：
+
+```bash
+source .venv/bin/activate
+
+# 離線測試（不需網路）
+pytest tests/db_demo/ -q
+pytest tests/source/ -q
+pytest tests/endpoint/ -q
+pytest tests/pipeline/ -q
+pytest tests/pg_tool/ -q
+
+# SQL 測試：需要 host.docker.internal 指向本機（只需設定一次）
+grep -q "host.docker.internal" /etc/hosts || \
+  sudo sh -c 'echo "127.0.0.1 host.docker.internal" >> /etc/hosts'
+pytest tests/sql/ -q
+
+# Live 端對端測試：會自動在背景啟動 app/main.py (port 5002) 並實際呼叫外部資料來源，較慢
+RUN_POC_VIEW_SELECT_TESTS=1 pytest tests/live_sql/ -vv
+
+# 上游官方 API 回應格式契約測試（需網路）
+RUN_UPSTREAM_CONTRACT_TESTS=1 pytest tests/upstream/ -m upstream_contract -q
+```
+
+
+## (4) 建立 poc 資料流
 
 ```python
 from pipeline import Pipeline
@@ -107,7 +133,7 @@ p.create_views()
 
 透過 create views 確認 SQL 語法皆正確且可運行。
 
-## (4) 欄位血緣分析
+## (5) 欄位血緣分析
 
 ```bash
 python tools/render_lineagex.py
@@ -118,14 +144,14 @@ python tools/render_lineagex.py
 這能幫助資料庫內容的理解。
 
 
-## (5) 啟動資料抓取 API
+## (6) 啟動資料抓取 API
 
 ```bash
 source .venv/bin/activate
 uvicorn app.main:app --host 0.0.0.0 --port 5002
 ```
 
-## (6) 實測 pop 實體資料流 爬取速度 
+## (7) 實測 pop 實體資料流 爬取速度 
 
 建立 incrementally 更新的 materialized view 並開始嘗試 insert 資料
 
@@ -136,7 +162,7 @@ p.create_mat_views()
 p.probe_all()
 ```
 
-## (7) 建立資料爬取 Cronjobs
+## (8) 建立資料爬取 Cronjobs
 
 ```python
 from pipeline import Pipeline
@@ -145,7 +171,7 @@ p.probe_all_throughput()
 p.setup_schedules()
 ```
 
-## (8) 資料爬取狀況監測網頁
+## (9) 資料爬取狀況監測網頁
 
 ```bash
 source .venv/bin/activate
