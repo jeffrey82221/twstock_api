@@ -12,15 +12,16 @@ CREATE EXTENSION IF NOT EXISTS pg_cron;
 -- HTTP timeouts are set per DATABASE, not per session: http_set_curlopt()
 -- only affects the session that runs this file, so every other connection
 -- (pg_cron workers, pipeline probes, MCP) fell back to pgsql-http's 5s
--- default and turned slow-but-healthy API calls into NULLs.
+-- default and turned slow-but-healthy API calls into NULLs. Keep this above
+-- the API's 30s upstream timeout so it can return its handled timeout response.
 -- Applies to sessions opened after this runs.
 DO $$
 BEGIN
-    EXECUTE format('ALTER DATABASE %I SET http.timeout_msec = 30000', current_database());
+    EXECUTE format('ALTER DATABASE %I SET http.timeout_msec = 45000', current_database());
     EXECUTE format('ALTER DATABASE %I SET http.curlopt_connecttimeout_ms = 15000', current_database());
 END
 $$;
-SET http.timeout_msec = 30000;
+SET http.timeout_msec = 45000;
 
 SET work_mem = '1GB';
 
