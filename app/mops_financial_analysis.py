@@ -38,8 +38,12 @@
 以整批市場資料為 cache 粒度（一次抓 ~1700 檔，適合放檔案），同一年重複查
 不同 stock_id 只會打上游一次。
 
-**Fallback 策略**：`get_annual_financial_analysis` 先試 `sii`（上市），
-找不到 stock_id 時再試 `otc`（上櫃）。客戶端不需知道股票是上市或上櫃。
+**Fallback 策略**：`get_annual_financial_analysis` 先依 TWSE/TPEx 基本資料
+判斷目前市場（上櫃 → 先試 `otc`，其餘先試 `sii`），找不到 stock_id 時再試另一個
+市場（公司可能曾轉換上市 / 上櫃）。客戶端不需知道股票是上市或上櫃。
+
+**總時限**：整個查詢受 `sources.UPSTREAM_TOTAL_BUDGET_S` 限制（低於 Postgres
+`http.timeout_msec`），逾時回 `reason="upstream_timeout"`，背景下載仍會完成並寫 cache。
 
 **資料起始年**：民國 101 (2012) — IFRSs 導入首年。早於此回 400。
 
@@ -59,8 +63,11 @@ from bs4 import BeautifulSoup
 
 from .sources import (
     SourceError,
+    UpstreamBudgetExceeded,
     _classify_http_exc,
     _record_source_error,
+    load_basic_table,
+    run_within_budget,
 )
 
 logger = logging.getLogger("twstock_api.mops_financial_analysis")
@@ -270,6 +277,39 @@ async def _fetch_mops_t51sb02(market: str, year_tw: int) -> dict[str, dict]:
 # 對外主函式
 # =============================================================================
 
+async def _market_order(stk: str) -> tuple[str, ...]:
+    """Markets to try, current listing market first.
+
+    Each t51sb02 fetch downloads a whole market (~10s from Taiwan, much
+    slower from overseas CI runners), so blindly trying `sii` first doubles
+    the cold-cache cost for every OTC stock. The other market stays as a
+    fallback because a company may have moved between 上櫃 / 上市 since
+    the requested year.
+    """
+    try:
+        basic = await load_basic_table()
+    except Exception:  # noqa: BLE001 - basic table is only an ordering hint
+        basic = {}
+    market = (basic.get(stk) or {}).get("market")
+    if market == "上櫃":
+        return ("otc", "sii")
+    return MARKETS_FALLBACK_ORDER
+
+
+async def _find_in_markets(
+    stk: str, year_tw: int
+) -> tuple[Optional[str], Optional[dict], bool]:
+    """Return (matched_market, matched_row, all_markets_empty)."""
+    all_empty = True
+    for market in await _market_order(stk):
+        payload = await _fetch_mops_t51sb02(market, year_tw)
+        if payload:
+            all_empty = False
+        if stk in payload:
+            return market, payload[stk], False
+    return None, None, all_empty
+
+
 async def get_annual_financial_analysis(
     stock_id: str,
     year: int,
@@ -288,22 +328,27 @@ async def get_annual_financial_analysis(
     Reason enum:
         - `no_market_data`：整個市場當年度 payload 為空（上游未申報 / 網路失敗）
         - `stock_id_not_listed`：sii + otc 都找不到該代號
+        - `upstream_timeout`：MOPS 未在 `UPSTREAM_TOTAL_BUDGET_S` 內回應
+          （背景下載會繼續並寫入 cache，下次呼叫可命中）
     """
     year_tw = year - 1911
     stk = str(stock_id).strip()
 
-    # 依序試 sii → otc
-    matched_market: Optional[str] = None
-    matched_row: Optional[dict] = None
-    all_empty = True
-    for market in MARKETS_FALLBACK_ORDER:
-        payload = await _fetch_mops_t51sb02(market, year_tw)
-        if payload:
-            all_empty = False
-        if stk in payload:
-            matched_market = market
-            matched_row = payload[stk]
-            break
+    try:
+        matched_market, matched_row, all_empty = await run_within_budget(
+            _find_in_markets(stk, year_tw)
+        )
+    except UpstreamBudgetExceeded:
+        return {
+            "found": False,
+            "year": year,
+            "stock_id": stk,
+            "reason": "upstream_timeout",
+            "data": None,
+            "source": (
+                "MOPS t51sb02 (https://mops.twse.com.tw/mops/web/t51sb02)"
+            ),
+        }
 
     if matched_row is None:
         if all_empty:

@@ -69,3 +69,81 @@ def test_get_quarterly_financials_falls_back_to_previous_available_quarter(monke
     monkeypatch.setattr(mqf, "_fetch", fake_fetch)
     result = asyncio.run(mqf.get_quarterly_financials("2330", date(2024, 8, 10)))
     assert result["data_date"] == "2024-03-31"
+
+def _patch_basic(monkeypatch, market="上市"):
+    async def fake_basic():
+        return {"2330": {"market": market}}
+
+    monkeypatch.setattr(mqf, "load_basic_table", fake_basic)
+
+
+def test_get_quarterly_financials_caps_lookback(monkeypatch):
+    """An unfiled / absent stock must not walk back to 2013 (two full-market
+    MOPS downloads per quarter)."""
+    _patch_basic(monkeypatch)
+    calls = []
+
+    async def fake_fetch(kind, market, year_tw, quarter):
+        calls.append((kind, year_tw, quarter))
+        return {}
+
+    monkeypatch.setattr(mqf, "_fetch", fake_fetch)
+    result = asyncio.run(mqf.get_quarterly_financials("2330", date(2024, 5, 10)))
+    assert result["found"] is False
+    assert result["reason"] == "not_found"
+    assert len({(y, q) for _, y, q in calls}) == mqf.MAX_LOOKBACK_QUARTERS
+
+
+def test_get_quarterly_financials_stops_on_upstream_failure(monkeypatch):
+    """A failed download (`None`) is not "stock absent": stop instead of
+    scanning further back."""
+    _patch_basic(monkeypatch)
+    calls = []
+
+    async def fake_fetch(kind, market, year_tw, quarter):
+        calls.append((year_tw, quarter))
+        return None
+
+    monkeypatch.setattr(mqf, "_fetch", fake_fetch)
+    result = asyncio.run(mqf.get_quarterly_financials("2330", date(2024, 5, 10)))
+    assert result["found"] is False
+    assert result["reason"] == "upstream_error"
+    assert set(calls) == {(113, 1)}
+
+
+def test_get_quarterly_financials_times_out_within_budget(monkeypatch):
+    import functools
+
+    _patch_basic(monkeypatch)
+
+    async def slow_fetch(kind, market, year_tw, quarter):
+        await asyncio.sleep(5)
+        return {}
+
+    monkeypatch.setattr(mqf, "_fetch", slow_fetch)
+    monkeypatch.setattr(mqf, "run_within_budget", functools.partial(mqf.run_within_budget, budget_s=0.05))
+    result = asyncio.run(mqf.get_quarterly_financials("2330", date(2024, 5, 10)))
+    assert result["found"] is False
+    assert result["reason"] == "upstream_timeout"
+    assert result["data_date"] == "2024-03-31"
+
+
+def test_fetch_failure_returns_none_and_is_not_cached(monkeypatch, tmp_path):
+    monkeypatch.setattr(mqf, "CACHE_ROOT", tmp_path)
+
+    class _FailingClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, *args, **kwargs):
+            raise mqf.httpx.ConnectTimeout("boom")
+
+    monkeypatch.setattr(mqf.httpx, "AsyncClient", _FailingClient)
+    assert asyncio.run(mqf._fetch("operating", "sii", 113, 1)) is None
+    assert not any(tmp_path.iterdir())

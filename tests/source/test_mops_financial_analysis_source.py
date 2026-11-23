@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+import functools
 import gzip
 import json
 from pathlib import Path
@@ -231,6 +233,13 @@ class TestGetAnnualFinancialAnalysis:
 
         monkeypatch.setattr(mfa, "_fetch_mops_t51sb02", _fake_fetch)
 
+        self._basic: dict[str, dict] = {}
+
+        async def _fake_basic() -> dict:
+            return self._basic
+
+        monkeypatch.setattr(mfa, "load_basic_table", _fake_basic)
+
     @pytest.mark.asyncio
     async def test_found_on_sii(self):
         self._sii_payloads[112] = {
@@ -338,6 +347,52 @@ class TestGetAnnualFinancialAnalysis:
         finally:
             mfa._fetch_mops_t51sb02 = original_fetch  # type: ignore[assignment]
         assert otc_called["count"] == 0
+
+
+    @pytest.mark.asyncio
+    async def test_otc_listed_stock_queries_otc_first(self):
+        """上櫃股先打 otc，不白打整個 sii 市場（CI 冷 cache 時多一次全市場下載會逾時）"""
+        self._basic["1593"] = {"market": "上櫃"}
+        self._otc_payloads[101] = {"1593": _make_row("1593", "測試")}
+        calls: list[str] = []
+        original_fetch = mfa._fetch_mops_t51sb02
+
+        async def _recording_fetch(market: str, year_tw: int) -> dict:
+            calls.append(market)
+            return await original_fetch(market, year_tw)
+
+        mfa._fetch_mops_t51sb02 = _recording_fetch  # type: ignore[assignment]
+        try:
+            result = await mfa.get_annual_financial_analysis("1593", 2012)
+        finally:
+            mfa._fetch_mops_t51sb02 = original_fetch  # type: ignore[assignment]
+        assert result["found"] is True
+        assert result["data"]["market"] == "otc"
+        assert calls == ["otc"]
+
+    @pytest.mark.asyncio
+    async def test_otc_listed_stock_falls_back_to_sii(self):
+        """目前上櫃、但該年度當時在上市的公司仍找得到"""
+        self._basic["1593"] = {"market": "上櫃"}
+        self._sii_payloads[101] = {"1593": _make_row("1593", "測試")}
+        result = await mfa.get_annual_financial_analysis("1593", 2012)
+        assert result["found"] is True
+        assert result["data"]["market"] == "sii"
+
+    @pytest.mark.asyncio
+    async def test_slow_upstream_returns_upstream_timeout(self, monkeypatch):
+        async def _slow_fetch(market: str, year_tw: int) -> dict:
+            await asyncio.sleep(5)
+            return {}
+
+        monkeypatch.setattr(mfa, "_fetch_mops_t51sb02", _slow_fetch)
+        monkeypatch.setattr(
+            mfa, "run_within_budget",
+            functools.partial(mfa.run_within_budget, budget_s=0.05),
+        )
+        result = await mfa.get_annual_financial_analysis("2330", 2023)
+        assert result["found"] is False
+        assert result["reason"] == "upstream_timeout"
 
 
 # =============================================================================

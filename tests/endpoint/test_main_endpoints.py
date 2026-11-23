@@ -179,3 +179,17 @@ def test_endpoint_validation_and_not_found(client, monkeypatch):
     assert client.get("/api/company/2330/foreign-ownership", params={"as_of": "2000-01-01"}).status_code == 400
     assert client.get("/api/company-valuation", params={"stock_id": "2330", "date": "2000-01-01"}).status_code == 400
     assert client.get("/api/v1/fundamentals/financial-analysis", params={"stock_id": "2330", "year": "2999"}).status_code == 400
+
+def test_mops_upstream_failures_are_5xx_not_cached_404(client, monkeypatch):
+    """db/setting.sql caches 4xx responses but retries 5xx, so a MOPS timeout
+    must surface as 504 (and a failed download as 502), never as 404."""
+    async def timed_out_analysis(*args, **kwargs):
+        return {"found": False, "year": 2024, "stock_id": "2330", "reason": "upstream_timeout", "data": None, "source": "test"}
+
+    async def failed_quarterly(*args, **kwargs):
+        return {"found": False, "stock_id": "2330", "reason": "upstream_error", "data": None, "source": "test"}
+
+    monkeypatch.setattr(main.mops_financial_analysis, "get_annual_financial_analysis", timed_out_analysis)
+    monkeypatch.setattr(main.mops_quarterly_financials, "get_quarterly_financials", failed_quarterly)
+    assert client.get("/api/v1/fundamentals/financial-analysis", params={"stock_id": "2330", "year": "2024"}).status_code == 504
+    assert client.get("/api/company/2330/quarterly-financials", params={"as_of": "2024-05-10"}).status_code == 502
