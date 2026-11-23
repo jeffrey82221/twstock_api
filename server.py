@@ -1,10 +1,21 @@
-"""FastMCP server exposing read-only access to the twstock_api Postgres.
+"""FastMCP server for the twstock_api Postgres.
 
-This is a deliberately simple wrapper: every tool calls
-``pg_tool.PostgreSQLTool.fetch_all`` (``execute_query`` is available too but
-none of the read-only tools below need it). Connection lifecycle -- opening,
-closing, DSN -- is entirely owned by ``pg_tool.py``; this file does not
-create or hold a ``psycopg`` connection or pool of its own.
+Two groups of tools:
+
+* Read-only data access (``list_schemas`` / ``list_tables`` /
+  ``describe_table`` / ``select``): every call goes through
+  ``pg_tool.PostgreSQLTool.fetch_all``.
+* Crawl control for the ``pop`` schema (``crawl_*``): each seed table
+  ``pop.<x>_list`` is filled by a pg_cron job that inserts ``row_cnt`` new
+  rows from ``hidden.<x>_list`` every ``period_seconds``; the IMMVs built on
+  it then call the API. These tools let an agent read crawl health and set
+  or pause each job. Scheduling reuses ``pipeline.Pipeline`` (same SQL and
+  job names as ``Pipeline.setup_schedules``) instead of duplicating it.
+  ``crawl_set_schedule`` and ``crawl_pause`` are the only tools that write.
+
+Connection lifecycle -- opening, closing, DSN -- is entirely owned by
+``pg_tool.py``; this file does not create or hold a ``psycopg`` connection
+or pool of its own.
 
 Known limitation (deferred on purpose): ``pg_tool.PostgreSQLTool`` opens
 and closes a brand-new connection on every call, so there is no connection
@@ -16,14 +27,19 @@ revisited separately.
 Environment variables
 ---------------------
 DB_MAX_ROWS   Row cap enforced by ``select`` (default 1000).
-PORT          HTTP listen port (default 8000).
+MCP_TRANSPORT ``stdio`` (default) or ``http``.
+PORT          HTTP listen port when MCP_TRANSPORT=http (default 8000).
 """
 from __future__ import annotations
 import uvicorn
 import asyncio
+import contextlib
+import json
 import logging
 import os
 import re
+import sys
+import threading
 from typing import Any
 
 from fastmcp import FastMCP
@@ -94,7 +110,13 @@ def _fetch_as_dicts(sql: str, params: tuple | None = None) -> list[dict[str, Any
     single JSON value, which psycopg3 auto-parses into a native Python
     ``list[dict]`` -- no pg_tool.py changes needed.
     """
-    wrapped = f"SELECT COALESCE(json_agg(t), '[]'::json) FROM ({sql}) AS t"
+    # The alias must not collide with a column name in ``sql``: with
+    # ``AS t``, a query that had its own column ``t`` made ``json_agg(t)``
+    # aggregate that column instead of the row.
+    wrapped = (
+        "SELECT COALESCE(json_agg(_mcp_row), '[]'::json) "
+        f"FROM ({sql}) AS _mcp_row"
+    )
     rows = _db.fetch_all(wrapped, params)
     if not rows or rows[0][0] is None:
         return []
@@ -172,6 +194,291 @@ def select(sql: str, limit: int | None = None) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Crawl control: pg_cron jobs that fill pop.<seed>_list
+# ---------------------------------------------------------------------------
+# Job naming and the per-tick INSERT come from Pipeline.schedule_seed_table_refresh:
+# job 'seed_refresh_<table>0' runs
+#   INSERT INTO pop.<table> SELECT * FROM hidden.<table> WHERE ... EXCEPT
+#   SELECT * FROM pop.<table> LIMIT <row_cnt>;
+# (a '...1' job exists only when table_reindex=True put a REINDEX in slot 0).
+
+_REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+_pipeline = None
+_pipeline_lock = threading.Lock()
+
+
+@contextlib.contextmanager
+def _stdout_to_stderr():
+    """Pipeline prints progress to stdout, which is the MCP stdio channel."""
+    with contextlib.redirect_stdout(sys.stderr):
+        yield
+
+
+def _get_pipeline():
+    """Lazily build one Pipeline (parses db/poc/*.sql once; no DB setup)."""
+    global _pipeline
+    with _pipeline_lock:
+        if _pipeline is None:
+            with _stdout_to_stderr():
+                from pipeline import Pipeline
+
+                p = Pipeline(setup_db=False)
+                p.cached_seed_tables = list(p.seed_tables)
+            _pipeline = p
+    return _pipeline
+
+
+def _seed_tables() -> list[str]:
+    return _get_pipeline().cached_seed_tables
+
+
+def _check_seed_table(table: str) -> str:
+    seeds = _seed_tables()
+    if table not in seeds:
+        raise ValueError(f"{table!r} is not a seed table. Seed tables: {sorted(seeds)}")
+    return table
+
+
+def _insert_prefix(table: str) -> str:
+    # Every seed job's command starts with this; used to match run history
+    # even after the job was unscheduled/rescheduled under a new jobid.
+    return f"INSERT INTO pop.{table} %"
+
+
+def _jobs_for(table: str) -> list[dict[str, Any]]:
+    return _fetch_as_dicts(
+        """
+        SELECT jobid, jobname, schedule, active,
+               NULLIF(substring(command FROM 'LIMIT ([0-9]+)'), '')::int AS row_cnt,
+               command
+        FROM cron.job
+        WHERE jobname IN (%s, %s)
+        ORDER BY jobname
+        """,
+        (f"seed_refresh_{table}0", f"seed_refresh_{table}1"),
+    )
+
+
+_STATUS_SQL = """
+WITH seeds AS (
+    SELECT unnest(%s::text[]) AS seed_table
+),
+jobs AS (
+    SELECT s.seed_table, j.jobid, j.schedule, j.active,
+           NULLIF(substring(j.command FROM 'LIMIT ([0-9]+)'), '')::int AS row_cnt
+    FROM seeds s
+    JOIN cron.job j ON j.jobname = 'seed_refresh_' || s.seed_table || '0'
+),
+runs AS (
+    SELECT s.seed_table, d.status, d.start_time, d.end_time, d.return_message,
+           CASE WHEN d.status = 'succeeded' AND d.return_message LIKE 'INSERT %%'
+                THEN split_part(d.return_message, ' ', 3)::int END AS inserted
+    FROM seeds s
+    JOIN cron.job_run_details d
+      ON d.command LIKE 'INSERT INTO pop.' || s.seed_table || ' %%'
+     AND d.start_time > now() - make_interval(mins => %s)
+),
+agg AS (
+    SELECT seed_table,
+           count(*) FILTER (WHERE status = 'succeeded') AS runs_ok,
+           count(*) FILTER (WHERE status = 'failed') AS runs_failed,
+           count(*) FILTER (WHERE status IN ('running', 'starting')) AS runs_in_progress,
+           COALESCE(sum(inserted), 0) AS rows_inserted,
+           round(avg(extract(epoch FROM end_time - start_time))
+                 FILTER (WHERE status = 'succeeded')::numeric, 2) AS avg_run_seconds,
+           max(start_time) AS last_run_at
+    FROM runs GROUP BY seed_table
+),
+last_run AS (
+    SELECT DISTINCT ON (seed_table) seed_table, status AS last_status,
+           left(return_message, 300) AS last_message
+    FROM runs ORDER BY seed_table, start_time DESC
+),
+last_err AS (
+    SELECT DISTINCT ON (seed_table) seed_table, start_time AS last_error_at,
+           left(return_message, 300) AS last_error
+    FROM runs WHERE status = 'failed' ORDER BY seed_table, start_time DESC
+)
+SELECT s.seed_table,
+       j.schedule, j.row_cnt, j.active,
+       (j.jobid IS NOT NULL) AS scheduled,
+       COALESCE(a.runs_ok, 0) AS runs_ok,
+       COALESCE(a.runs_failed, 0) AS runs_failed,
+       COALESCE(a.runs_in_progress, 0) AS runs_in_progress,
+       COALESCE(a.rows_inserted, 0) AS rows_inserted,
+       a.avg_run_seconds,
+       a.last_run_at, l.last_status, l.last_message,
+       e.last_error_at, e.last_error
+FROM seeds s
+LEFT JOIN jobs j USING (seed_table)
+LEFT JOIN agg a USING (seed_table)
+LEFT JOIN last_run l USING (seed_table)
+LEFT JOIN last_err e USING (seed_table)
+ORDER BY s.seed_table
+"""
+
+
+def _pop_row_counts(tables: list[str]) -> dict[str, int]:
+    """Exact count(*) per pop table (only names taken from pg_class)."""
+    existing = {
+        r["relname"]
+        for r in _fetch_as_dicts(
+            """SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'pop' AND c.relkind = 'r'"""
+        )
+    }
+    names = [t for t in tables if t in existing]
+    if not names:
+        return {}
+    union = " UNION ALL ".join(
+        f"SELECT '{t}' AS t, count(*) AS n FROM pop.\"{t}\"" for t in names
+    )
+    return {r["t"]: r["n"] for r in _fetch_as_dicts(union)}
+
+
+@mcp.tool()
+def crawl_status(
+    lookback_minutes: Annotated[
+        int, Field(ge=1, le=10080, description="統計 cron 執行紀錄的時間窗（分鐘）")
+    ] = 60,
+) -> list[dict[str, Any]]:
+    """每個 pop seed table（*_list）的爬取狀況總覽。
+
+    每列一個 seed table：目前 cron 排程（schedule / row_cnt / active）、
+    pop 內現有筆數、時間窗內成功/失敗/執行中的次數、實際新增筆數與
+    換算的每小時新增量、平均每次執行秒數、最後一次執行結果與最後一次錯誤。
+
+    判讀：scheduled=false 表示沒有排程；runs_ok>0 但 rows_inserted=0
+    通常表示 hidden 已沒有新資料可灌（爬完了）；runs_failed 多且
+    last_error 是 timeout 表示 row_cnt 太大或上游 API 太慢。
+    """
+    seeds = _seed_tables()
+    rows = _fetch_as_dicts(_STATUS_SQL, (seeds, lookback_minutes))
+    counts = _pop_row_counts(seeds)
+    for r in rows:
+        r["pop_rows"] = counts.get(r["seed_table"])
+        r["rows_per_hour"] = round(r["rows_inserted"] * 60.0 / lookback_minutes, 1)
+    return rows
+
+
+@mcp.tool()
+def crawl_runs(
+    table: Annotated[str, Field(description="seed table 名稱，例如 company_list")],
+    limit: Annotated[int, Field(ge=1, le=200)] = 20,
+    only_failed: bool = False,
+) -> list[dict[str, Any]]:
+    """某個 seed table 最近幾次 cron 執行紀錄（新到舊），含耗時、新增筆數與錯誤訊息。"""
+    _check_seed_table(table)
+    status_filter = "AND status = 'failed'" if only_failed else ""
+    return _fetch_as_dicts(
+        f"""
+        SELECT runid, jobid, status, start_time,
+               round(extract(epoch FROM end_time - start_time)::numeric, 2) AS run_seconds,
+               CASE WHEN status = 'succeeded' AND return_message LIKE 'INSERT %%'
+                    THEN split_part(return_message, ' ', 3)::int END AS inserted,
+               left(return_message, 500) AS return_message
+        FROM cron.job_run_details
+        WHERE command LIKE %s {status_filter}
+        ORDER BY start_time DESC
+        LIMIT %s
+        """,
+        (_insert_prefix(table), limit),
+    )
+
+
+@mcp.tool()
+def crawl_pop_tables() -> list[dict[str, Any]]:
+    """pop schema 每張表的實際筆數：seed table（*_list）與其下游 IMMV（raw_* 與解析後的表）。
+
+    用來看 seed 灌進去之後，下游 materialized view 是否也跟著長出資料。
+    """
+    rels = _fetch_as_dicts(
+        """
+        SELECT c.relname AS table_name,
+               CASE WHEN EXISTS (SELECT 1 FROM pgivm.pg_ivm_immv i WHERE i.immvrelid = c.oid)
+                    THEN 'immv' ELSE 'seed' END AS kind
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'pop' AND c.relkind = 'r'
+        ORDER BY 2 DESC, 1
+        """
+    )
+    counts = _pop_row_counts([r["table_name"] for r in rels])
+    for r in rels:
+        r["rows"] = counts.get(r["table_name"])
+    return rels
+
+
+@mcp.tool()
+def crawl_recommendations() -> dict[str, Any]:
+    """讀取 probe 量測出的建議爬取參數，作為設定排程的參考。
+
+    回傳 throughput_config.json（Pipeline.probe_all_throughput 產生，
+    每張表的 max_throughput / min_period / max_batch 三種 (period_seconds,
+    row_cnt) 設定）與 batch_size.json（Pipeline.probe_all 產生，每張表
+    單次安全 row_cnt）。檔案不存在時對應欄位為 null。
+    """
+    out: dict[str, Any] = {}
+    for key, fname in (("throughput_config", "throughput_config.json"),
+                       ("batch_size", "batch_size.json")):
+        path = os.path.join(_REPO_DIR, fname)
+        if not os.path.exists(path):
+            out[key] = None
+            continue
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if key == "throughput_config":
+            # Drop the raw sweep grid; keep the three chosen profiles.
+            data = {t: {k: v for k, v in prof.items() if k != "sweep"}
+                    for t, prof in data.items()}
+        out[key] = data
+    out["seed_tables"] = _seed_tables()
+    return out
+
+
+@mcp.tool()
+def crawl_set_schedule(
+    table: Annotated[str, Field(description="seed table 名稱，例如 company_list")],
+    period_seconds: Annotated[int, Field(
+        gt=0,
+        description=("每隔幾秒執行一次。允許 1..59，或可整除 60 分鐘的分鐘數 "
+                     "(60,120,180,240,300,360,600,720,900,1200,1800)，"
+                     "或可整除 24 小時的小時數 (3600,7200,...,86400)。"),
+    )],
+    row_cnt: Annotated[int, Field(ge=1, le=10000, description="每次新增幾筆 seed rows (SQL LIMIT)")],
+) -> dict[str, Any]:
+    """建立或更新某個 seed table 的 pg_cron 爬取排程（寫入操作）。
+
+    每次執行會從 hidden.<table> 挑 row_cnt 筆 pop 還沒有的資料 insert 進
+    pop.<table>，下游 IMMV 因此觸發 API 呼叫。與 Pipeline.setup_schedules
+    使用同一個 job 名稱，重複呼叫即覆蓋原設定。建議先看 crawl_recommendations
+    的量測值；row_cnt 越大單次越久，超過 API timeout 會整批失敗並在下次重試。
+    """
+    _check_seed_table(table)
+    p = _get_pipeline()
+    # Validates the period (raises ValueError with the allowed forms).
+    schedule = p._period_seconds_to_schedule(period_seconds)
+    with _stdout_to_stderr():
+        p.schedule_seed_table_refresh(table=table, period_seconds=period_seconds, row_cnt=row_cnt)
+    return {"table": table, "schedule": schedule, "row_cnt": row_cnt, "jobs": _jobs_for(table)}
+
+
+@mcp.tool()
+def crawl_pause(
+    table: Annotated[str, Field(description="seed table 名稱，例如 company_list")],
+) -> dict[str, Any]:
+    """停止某個 seed table 的爬取排程（unschedule 其 pg_cron job；寫入操作）。
+
+    已灌進 pop 的資料不受影響；之後可用 crawl_set_schedule 重新開始。
+    """
+    _check_seed_table(table)
+    removed = []
+    for job in _jobs_for(table):
+        _db.execute_query("SELECT cron.unschedule(%s);", (job["jobid"],))
+        removed.append(job["jobname"])
+    return {"table": table, "unscheduled_jobs": removed, "remaining_jobs": _jobs_for(table)}
+
+
+# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 # fastmcp 1.0 exposes a ``settings`` attribute (host/port); fastmcp 3.x does
@@ -187,9 +494,14 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    # run_kwargs = {"transport": "http"}
-    if not hasattr(mcp, "settings"):
-        run_kwargs["host"] = "0.0.0.0"
-        run_kwargs["port"] = int(os.getenv("PORT", "8001"))
+    # Default is stdio (what Claude Code launches). MCP_TRANSPORT=http
+    # serves over HTTP on 0.0.0.0:$PORT instead.
+    transport = os.getenv("MCP_TRANSPORT", "stdio")
+    run_kwargs: dict[str, Any] = {}
+    if transport != "stdio":
+        run_kwargs["transport"] = transport
+        if not hasattr(mcp, "settings"):
+            run_kwargs["host"] = "0.0.0.0"
+            run_kwargs["port"] = int(os.getenv("PORT", "8000"))
 
-    mcp.run()
+    mcp.run(**run_kwargs)

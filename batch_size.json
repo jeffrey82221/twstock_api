@@ -1,24 +1,7 @@
 {
+    "product_revenue_filer_scope_list": 7,
     "chain_list": 8,
-    "product_revenue_filer_scope_list": 16,
-    "chain_info_list": 1024,
-    "product_revenue_filer_list": 1,
-    "company_list": 1,
-    "company_basic_info_list": 2,
-    "dividend_event_yfinance_list": 2,
-    "dividend_event_list": 5,
-    "financial_year_yfinance_list": 8,
-    "ohlcv_monthly_list": 7,
-    "financial_year_list": 18,
-    "financial_quarter_yfinance_list": 1,
-    "financial_month_twse_list": 4,
-    "financial_month_list": 8,
-    "mops_quarterly_financials_quarter_list": 2,
-    "financial_analysis_year_list": 2,
-    "foreign_ownership_monthly_list": 4,
-    "sbl_history_monthly_list": 4,
-    "institutional_monthly_list": 4,
-    "market_valuation_date_list": 4,
-    "company_valuation_monthly_list": 4,
-    "finmind_news_monthly_list": 2
+    "market_valuation_date_list": 32,
+    "company_list": 12,
+    "chain_info_list": 1024
 }

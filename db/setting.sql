@@ -9,9 +9,18 @@ CREATE EXTENSION IF NOT EXISTS pg_ivm;
 -- POSTGRES_DB (=app_db) as set in db/docker-compose.yaml.
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 
-SELECT http_set_curlopt('CURLOPT_CONNECTTIMEOUT', '15000');
-
-SELECT http_set_curlopt('CURLOPT_TIMEOUT', '12000');
+-- HTTP timeouts are set per DATABASE, not per session: http_set_curlopt()
+-- only affects the session that runs this file, so every other connection
+-- (pg_cron workers, pipeline probes, MCP) fell back to pgsql-http's 5s
+-- default and turned slow-but-healthy API calls into NULLs.
+-- Applies to sessions opened after this runs.
+DO $$
+BEGIN
+    EXECUTE format('ALTER DATABASE %I SET http.timeout_msec = 30000', current_database());
+    EXECUTE format('ALTER DATABASE %I SET http.curlopt_connecttimeout_ms = 15000', current_database());
+END
+$$;
+SET http.timeout_msec = 30000;
 
 SET work_mem = '1GB';
 
@@ -130,73 +139,109 @@ CREATE TABLE IF NOT EXISTS job_control.http_log (
 CREATE INDEX IF NOT EXISTS http_log_started_at_idx
     ON job_control.http_log (started_at);
 
--- VOLATILE wrapper around http_get with:
---   1. Configurable pre-call sleep (job_control.http_config['fetch_sleep_ms'])
---   2. Audit row written to job_control.http_log on both success and failure
---   3. Failure classification: timeout vs other (curl returns status 0 on
---      transport errors -- we surface SQLSTATE+message as error_message)
+-- Response cache keyed by URL.
 --
--- IMPORTANT: This function is VOLATILE. It MUST NOT be used inside an
--- incremental materialized view or any IMMUTABLE / STABLE context.
--- For IVM / immv use custom.http_get_content (the pure IMMUTABLE
--- version above).
+-- Why: pg_ivm inlines the IMMUTABLE http_get_content() into every
+-- expression that reads its result, so one row of a parsed view used to
+-- fire the same request once per column (22x for market_valuation_summary,
+-- 55x in the sbl_history plan), and every IMMV built on the same seed
+-- table re-fetched the same URL. pg_ivm rejects IMMVs defined on other
+-- IMMVs, so the duplication cannot be removed in SQL; the cache makes the
+-- repeats free instead.
+--
+-- 2xx and 4xx responses are cached (4xx here means "no data for this
+-- date/stock", which is stable); 5xx and transport errors are not, so they
+-- are retried on the next tick.
+CREATE UNLOGGED TABLE IF NOT EXISTS job_control.http_cache (
+    url         text PRIMARY KEY,
+    status_code int         NOT NULL,
+    content     jsonb,
+    fetched_at  timestamptz NOT NULL
+);
+
+INSERT INTO job_control.http_config (key, value)
+VALUES ('cache_ttl_seconds', '3600')
+ON CONFLICT (key) DO NOTHING;
+
+-- VOLATILE worker behind custom.http_get_content, with:
+--   1. URL cache (job_control.http_cache, TTL http_config['cache_ttl_seconds'])
+--   2. Configurable pre-call sleep (http_config['fetch_sleep_ms']), only on
+--      cache misses
+--   3. Audit row in job_control.http_log for every real request
+--
+-- It runs inside pg_ivm maintenance (through the IMMUTABLE wrapper), so it
+-- must NOT use an EXCEPTION block: catching an error rolls back a
+-- subtransaction, which corrupts pg_ivm's delta tuplestore ("invalid
+-- tuplestore state") and can segfault the backend. A transport error
+-- (timeout, connection refused) therefore propagates and aborts the
+-- statement cleanly; it shows up in cron.job_run_details and the row is
+-- retried on the next run.
 CREATE OR REPLACE FUNCTION custom.http_get_content_logged(p_url text)
 RETURNS jsonb
 LANGUAGE plpgsql
 VOLATILE
 AS $$
 DECLARE
-    v_sleep_ms   int;
-    v_started_at timestamptz := clock_timestamp();
-    v_finished_at timestamptz;
-    v_status     int;
-    v_content    text;
-    v_result     jsonb;
+    v_sleep_ms    int;
+    v_ttl_s       int;
+    v_started_at  timestamptz;
+    v_status      int;
+    v_content     text;
+    v_cached      job_control.http_cache%ROWTYPE;
+    v_json        jsonb;
 BEGIN
-    -- 1. Read configured sleep (ms). Treat missing / non-numeric as 0.
-    SELECT COALESCE(NULLIF(value, '')::int, 0)
-      INTO v_sleep_ms
-      FROM job_control.http_config
-     WHERE key = 'fetch_sleep_ms';
+    -- 1. Cache lookup. Non-numeric config values fall back to defaults
+    --    without raising (no EXCEPTION blocks allowed here, see above).
+    SELECT CASE WHEN value ~ '^\d+$' THEN value::int ELSE 3600 END
+      INTO v_ttl_s
+      FROM job_control.http_config WHERE key = 'cache_ttl_seconds';
+    v_ttl_s := COALESCE(v_ttl_s, 3600);
 
-    IF v_sleep_ms IS NULL THEN
-        v_sleep_ms := 0;
+    IF v_ttl_s > 0 THEN
+        SELECT * INTO v_cached FROM job_control.http_cache
+         WHERE url = p_url
+           AND fetched_at > clock_timestamp() - make_interval(secs => v_ttl_s);
+        IF FOUND THEN
+            RETURN CASE WHEN v_cached.status_code BETWEEN 200 AND 299
+                        THEN v_cached.content END;
+        END IF;
     END IF;
 
-    IF v_sleep_ms > 0 THEN
+    -- 2. Throttle real requests only.
+    SELECT CASE WHEN value ~ '^\d+$' THEN value::int ELSE 0 END
+      INTO v_sleep_ms
+      FROM job_control.http_config WHERE key = 'fetch_sleep_ms';
+    IF COALESCE(v_sleep_ms, 0) > 0 THEN
         PERFORM pg_sleep(v_sleep_ms / 1000.0);
     END IF;
 
-    -- 2. Perform the HTTP fetch. Wrap in a sub-block so we can catch
-    --    any exception (timeout, DNS failure, connection refused, ...)
-    --    and still write a log row.
-    BEGIN
-        SELECT status, content INTO v_status, v_content FROM http_get(p_url);
-        v_finished_at := clock_timestamp();
+    -- 3. Fetch. Transport errors propagate (see header comment).
+    v_started_at := clock_timestamp();
+    SELECT status, content INTO v_status, v_content FROM http_get(p_url);
 
-        INSERT INTO job_control.http_log
-            (url, started_at, finished_at, success, status_code, error_message)
-        VALUES
-            (p_url, v_started_at, v_finished_at,
-             v_status BETWEEN 200 AND 299, v_status, NULL);
+    IF v_status BETWEEN 200 AND 299 AND pg_input_is_valid(v_content, 'jsonb') THEN
+        v_json := v_content::jsonb;
+    END IF;
 
-        IF v_status BETWEEN 200 AND 299 THEN
-            v_result := v_content::jsonb;
-        ELSE
-            v_result := NULL;
-        END IF;
+    INSERT INTO job_control.http_log
+        (url, started_at, finished_at, success, status_code, error_message)
+    VALUES
+        (p_url, v_started_at, clock_timestamp(),
+         v_json IS NOT NULL, v_status,
+         CASE WHEN v_status BETWEEN 200 AND 299 AND v_json IS NULL
+              THEN 'response body is not valid JSON' END);
 
-        RETURN v_result;
-    EXCEPTION WHEN OTHERS THEN
-        v_finished_at := clock_timestamp();
-        INSERT INTO job_control.http_log
-            (url, started_at, finished_at, success, status_code, error_message)
-        VALUES
-            (p_url, v_started_at, v_finished_at,
-             false, NULL, SQLSTATE || ': ' || SQLERRM);
-        -- Return NULL so callers can decide whether to fail downstream.
-        RETURN NULL;
-    END;
+    -- 4. Cache 2xx (valid JSON) and 4xx; skip 5xx so it is retried.
+    IF v_ttl_s > 0 AND (v_json IS NOT NULL OR v_status BETWEEN 400 AND 499) THEN
+        INSERT INTO job_control.http_cache (url, status_code, content, fetched_at)
+        VALUES (p_url, v_status, v_json, clock_timestamp())
+        ON CONFLICT (url) DO UPDATE
+           SET status_code = EXCLUDED.status_code,
+               content     = EXCLUDED.content,
+               fetched_at  = EXCLUDED.fetched_at;
+    END IF;
+
+    RETURN v_json;
 END;
 $$;
 
