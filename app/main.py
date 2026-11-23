@@ -1059,6 +1059,12 @@ async def company_valuation(
     return result
 
 
+# MOPS-backed endpoints: a transient upstream failure must not look like a
+# permanent "no data" 404, because db/setting.sql caches 4xx responses in
+# job_control.http_cache but retries 5xx on the next call.
+_UPSTREAM_REASON_STATUS = {"upstream_timeout": 504, "upstream_error": 502}
+
+
 @app.get(
     "/api/v1/fundamentals/financial-analysis",
     response_model=FinancialAnalysisResponse,
@@ -1116,7 +1122,7 @@ async def financial_analysis(
     if not result.get("found"):
         reason = result.get("reason") or "not_found"
         raise HTTPException(
-            status_code=404,
+            status_code=_UPSTREAM_REASON_STATUS.get(reason, 404),
             detail=(
                 f"no financial analysis data for stock_id={stock_id!r} "
                 f"year={year} (reason={reason})"
@@ -1160,9 +1166,10 @@ async def quarterly_financials(
         raise HTTPException(status_code=400, detail="`as_of` must be <= today")
     result = await mops_quarterly_financials.get_quarterly_financials(stock_id, as_of)
     if not result.get("found"):
-        raise HTTPException(status_code=404, detail=(
+        reason = result.get("reason") or "not_found"
+        raise HTTPException(status_code=_UPSTREAM_REASON_STATUS.get(reason, 404), detail=(
             f"no quarterly financial data for stock_id={stock_id!r} "
-            f"at or before {as_of.isoformat()}"
+            f"at or before {as_of.isoformat()} (reason={reason})"
         ))
     return result
 

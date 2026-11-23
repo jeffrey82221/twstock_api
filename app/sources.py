@@ -88,6 +88,43 @@ def _record_source_error(err: SourceError) -> None:
         errs.append(err)
 
 
+# Total wall-clock budget for one API request that fans out to slow
+# full-market upstreams (MOPS). Must stay below the Postgres
+# `http.timeout_msec` (45s, db/setting.sql) so the caller always gets a
+# handled HTTP response instead of a curl timeout. httpx's `timeout=` is
+# per phase (connect / each read), not a total, and the sources retry, so
+# without this cap one request can run for minutes.
+UPSTREAM_TOTAL_BUDGET_S = 25.0
+
+# Strong refs to upstream tasks that outlived their caller's budget; they
+# keep running so their result lands in the disk cache for the next call.
+_background_upstream_tasks: set[asyncio.Task] = set()
+
+
+class UpstreamBudgetExceeded(Exception):
+    """Raised by `run_within_budget` when the total budget runs out."""
+
+
+async def run_within_budget(coro, budget_s: float = UPSTREAM_TOTAL_BUDGET_S):
+    """Await `coro` for at most `budget_s` seconds.
+
+    On timeout the underlying task is *not* cancelled (it is shielded and
+    kept referenced), so a slow-but-healthy upstream download still
+    finishes and populates the disk cache; the caller gets
+    `UpstreamBudgetExceeded` immediately and can answer with a 504.
+    """
+    task = asyncio.ensure_future(coro)
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), timeout=budget_s)
+    except asyncio.TimeoutError:
+        _background_upstream_tasks.add(task)
+        task.add_done_callback(_background_upstream_tasks.discard)
+        # Swallow the eventual exception of the detached task so asyncio
+        # does not log "Task exception was never retrieved".
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())
+        raise UpstreamBudgetExceeded(f"upstream exceeded {budget_s:.0f}s budget") from None
+
+
 def _classify_http_exc(exc: Exception, url: str) -> tuple[Optional[int], str, bool]:
     """從 httpx 例外抽出 (status_code, message, is_rate_limited)。"""
     status: Optional[int] = None

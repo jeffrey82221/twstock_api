@@ -11,12 +11,24 @@ from typing import Any, Optional
 import httpx
 from bs4 import BeautifulSoup
 
-from .sources import SourceError, _classify_http_exc, _record_source_error, load_basic_table
+from .sources import (
+    SourceError,
+    UpstreamBudgetExceeded,
+    _classify_http_exc,
+    _record_source_error,
+    load_basic_table,
+    run_within_budget,
+)
 
 MOPS_OPERATING_URL = "https://mopsov.twse.com.tw/mops/web/ajax_t163sb06"
 MOPS_INCOME_URL = "https://mopsov.twse.com.tw/mops/web/ajax_t163sb04"
 QUARTERLY_MIN_DATE = date(2013, 3, 31)
 CACHE_ROOT = Path("/tmp/valuation_cache/mops_quarterly")
+# Quarters examined per request (the requested one + 3 earlier). Each step
+# costs two full-market MOPS downloads; a year covers the filing lag of any
+# listed company, and an unbounded walk back to 2013 turned a single miss
+# into dozens of requests.
+MAX_LOOKBACK_QUARTERS = 4
 
 _OPERATING_COLUMNS = (
     "stock_id", "company_name", "revenue_millions", "gross_margin_pct",
@@ -145,7 +157,13 @@ def _cache_write(path: Path, payload: dict) -> None:
     temporary.replace(path)
 
 
-async def _fetch(kind: str, market: str, year_tw: int, quarter: int) -> dict[str, dict[str, Any]]:
+async def _fetch(kind: str, market: str, year_tw: int, quarter: int) -> Optional[dict[str, dict[str, Any]]]:
+    """Full-market table for one period, or `None` when the download failed.
+
+    `{}` means MOPS answered but has no rows (e.g. not filed yet) and is
+    cached; `None` is a transient failure and is not cached, so callers must
+    not treat it as "stock absent" and keep scanning further back.
+    """
     path = _cache_path(kind, market, year_tw, quarter)
     cached = _cache_read(path)
     if cached is not None:
@@ -166,24 +184,35 @@ async def _fetch(kind: str, market: str, year_tw: int, quarter: int) -> dict[str
     except Exception as exc:
         status, message, rate_limited = _classify_http_exc(exc, url)
         _record_source_error(SourceError(source="MOPS", url=url, status_code=status, message=message, is_rate_limited=rate_limited))
-        return {}
+        return None
     _cache_write(path, payload)
     return payload
 
 
-async def get_quarterly_financials(stock_id: str, as_of: date) -> dict[str, Any]:
+def _not_found(stock: str, as_of: date, year_tw: int, quarter: int, period_end: date, reason: str) -> dict[str, Any]:
+    return {
+        "found": False, "stock_id": stock, "as_of": as_of.isoformat(), "data_date": period_end.isoformat(),
+        "fiscal_year": period_end.year, "quarter": quarter, "data": None, "reason": reason,
+        "source": "MOPS t163sb06 + t163sb04",
+    }
+
+
+async def _scan_quarters(stock: str, as_of: date) -> dict[str, Any]:
     year_tw, quarter, period_end = _period_for(as_of)
-    stock = str(stock_id).strip()
     basic = await load_basic_table()
     basic_market = (basic.get(stock) or {}).get("market")
     markets = ["sii" if basic_market == "上市" else "otc"] if basic_market in {"上市", "上櫃"} else ["sii", "otc"]
-    while period_end >= QUARTERLY_MIN_DATE:
+    for _ in range(MAX_LOOKBACK_QUARTERS):
+        if period_end < QUARTERLY_MIN_DATE:
+            break
         for market in markets:
             operating, income = await asyncio.gather(_fetch("operating", market, year_tw, quarter), _fetch("income", market, year_tw, quarter))
+            if operating is None:
+                return _not_found(stock, as_of, year_tw, quarter, period_end, "upstream_error")
             if stock not in operating:
                 continue
             op = operating[stock]
-            inc = income.get(stock, {})
+            inc = (income or {}).get(stock, {})
             return {
                 "found": True, "stock_id": stock, "company_name": op.get("company_name") or inc.get("company_name"),
                 "market": market, "as_of": as_of.isoformat(), "data_date": period_end.isoformat(),
@@ -191,4 +220,20 @@ async def get_quarterly_financials(stock_id: str, as_of: date) -> dict[str, Any]
                 "source": "MOPS t163sb06 + t163sb04",
             }
         year_tw, quarter, period_end = _previous_period(year_tw, quarter)
-    return {"found": False, "stock_id": stock, "as_of": as_of.isoformat(), "data_date": period_end.isoformat(), "fiscal_year": period_end.year, "quarter": quarter, "data": None, "source": "MOPS t163sb06 + t163sb04"}
+    return _not_found(stock, as_of, year_tw, quarter, period_end, "not_found")
+
+
+async def get_quarterly_financials(stock_id: str, as_of: date) -> dict[str, Any]:
+    """Most recent filed quarter at or before `as_of`, looking back at most
+    `MAX_LOOKBACK_QUARTERS` quarters, within `UPSTREAM_TOTAL_BUDGET_S`.
+
+    `reason` on a miss: `not_found` (no filing in the lookback window),
+    `upstream_error` (MOPS download failed), `upstream_timeout` (budget hit;
+    the download keeps running in the background and fills the cache).
+    """
+    stock = str(stock_id).strip()
+    try:
+        return await run_within_budget(_scan_quarters(stock, as_of))
+    except UpstreamBudgetExceeded:
+        year_tw, quarter, period_end = _period_for(as_of)
+        return _not_found(stock, as_of, year_tw, quarter, period_end, "upstream_timeout")

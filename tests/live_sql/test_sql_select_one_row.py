@@ -210,6 +210,13 @@ _VIEW_WHERE_OVERRIDES = {
     # Natural first row is (first company, year 2012..) -> one slow MOPS
     # call; pin to a company that reliably has data.
     "financial_analysis": ["stk_code = '2330'"],
+    # Same MOPS full-market fan-out. On a cold CI runner the natural first
+    # company (observed: 1593, 上櫃) needs whole-market downloads that took
+    # longer than Postgres's 45s http.timeout_msec (PR #79 CI). 2330 is 上市,
+    # so only one market is fetched per period.
+    "raw_financial_analysis": ["stk_code = '2330'"],
+    "raw_mops_quarterly_financials": ["stk_code = '2330'"],
+    "mops_quarterly_financials": ["stk_code = '2330'"],
 }
 
 _VIEW_REQUIRED_DATA_COLUMNS = {
