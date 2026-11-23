@@ -859,14 +859,19 @@ async def institutional_net_buy_sell(
         "完成還券日收盤價、完成還券日與借券天數。\n\n"
         f"**最早日期**：實測股票 2330 的最早可得完成還券資料為 `{twse_sbl_source.SBL_MIN_DATE.isoformat()}`；"
         "早於此日期回 HTTP 400，不同股票實際第一筆事件可能較晚。\n\n"
-        "**as_of 行為**：以 `as_of` 為完成還券日期上限，從該日往前以 31 日視窗尋找最近有資料的日期；"
-        "週末、休市日或該股沒有還券事件時，回溯到最近一筆 `data_date`，並保留查詢基準日。\n\n"
+        "**as_of 行為**：以 `as_of` 為完成還券日期上限，往前最多 `max_lookback_days` 天（預設 31，即一個 31 日視窗）"
+        "尋找最近有資料的日期；視窗內沒有還券事件時回 404。需要更長回溯時可調大 `max_lookback_days`"
+        "（每多 31 天多打一次上游）。\n\n"
         "官方免費、無 API key；服務依股票／日期視窗 gzip 快取，避免重複請求。"
     ),
 )
 async def sbl_history(
     stock_id: str,
     as_of: date = Query(default_factory=date.today, description="完成還券日期的查詢上限；省略則使用今天。"),
+    max_lookback_days: int = Query(
+        twse_sbl_source.MAX_LOOKBACK_DAYS, ge=1, le=7000,
+        description="從 as_of 往前最多回溯幾天（預設 31）。",
+    ),
 ):
     if as_of < twse_sbl_source.SBL_MIN_DATE:
         raise HTTPException(status_code=400, detail=(
@@ -875,7 +880,7 @@ async def sbl_history(
         ))
     if as_of > date.today():
         raise HTTPException(status_code=400, detail="`as_of` must be <= today")
-    result = await twse_sbl_source.get_sbl_history(stock_id, as_of)
+    result = await twse_sbl_source.get_sbl_history(stock_id, as_of, max_lookback_days)
     if not result.get("found"):
         raise HTTPException(status_code=404, detail=(
             f"no SBL history for stock_id={stock_id!r} at or before {as_of.isoformat()}"
@@ -894,7 +899,8 @@ async def sbl_history(
         "**上游 endpoint**：`GET https://www.twse.com.tw/fund/MI_QFIIS?response=csv&date=YYYYMMDD&selectType=ALLBUT0999`。"
         "回應是 Big5 編碼 CSV；本服務尋找 `證券代號` 表頭，略過頁首說明與頁尾文字，再以 `csv.reader` 解析。\n\n"
         "**查詢參數**：`as_of` 為西元日期 `YYYY-MM-DD`。TWSE MI_QFIIS 實際可取得的最早日期為 **2004-02-11**；"
-        "早於此日期回 HTTP 400。若 as_of 當日沒有資料，服務會逐日往前查找，直到找到最近一筆資料或抵達 2004-02-11。\n\n"
+        "早於此日期回 HTTP 400。若 as_of 當日沒有資料（非交易日），服務會逐日往前查找，最多 `max_lookback_days` 天（預設 31）；"
+        "若遇到有資料的交易日但沒有該股（上櫃股、尚未掛牌或已下市），直接回 `found=false`，不再往前。\n\n"
         "**欄位轉換**：股數欄位去除千分位逗號後轉為股；比例欄位保留百分點（例如 `2.54` 代表 2.54%）；"
         "民國日期轉為 `YYYY-MM-DD`；回應的 `data_date` / `row.trade_date` 是實際資料日，可能早於使用者輸入的 `as_of`。\n\n"
         "**成本與限流**：官方免費且不需 API key。資料只能逐日下載；fallback 過程的連續 cache miss 間隔 3 秒，"
@@ -904,6 +910,10 @@ async def sbl_history(
 async def company_foreign_ownership(
     stock_id: str,
     as_of: str = Query(..., description="查詢日期，`YYYY-MM-DD`。"),
+    max_lookback_days: int = Query(
+        foreign_ownership_source.MAX_LOOKBACK_DAYS, ge=0, le=7000,
+        description="as_of 當日無資料時最多往前回溯幾天（預設 31）。",
+    ),
 ):
     try:
         query_date = datetime.strptime(as_of, "%Y-%m-%d").date()
@@ -915,7 +925,7 @@ async def company_foreign_ownership(
         raise HTTPException(status_code=400, detail=f"`as_of` must be >= {foreign_ownership_source.MIN_DATE.isoformat()}")
     if query_date > date.today():
         raise HTTPException(status_code=400, detail="`as_of` must be <= today")
-    row = await foreign_ownership_source.get_foreign_ownership(stock_id.strip(), query_date)
+    row = await foreign_ownership_source.get_foreign_ownership(stock_id.strip(), query_date, max_lookback_days)
     return {
         "found": row is not None,
         "stock_id": stock_id.strip(),

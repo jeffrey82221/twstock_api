@@ -4,7 +4,7 @@
 -- yfinance 不提供：stock_dividend / cash_payment_date / stock_ex_dividend_date / announcement_date
 -- 對應欄位於上游 endpoint 已回 null/0，本 view 保留相同欄位以維持 schema align。
 --
--- 設計理念（rule 15）：每列對應歷史一次真實除息事件（by cash_ex_dividend_date）。
+-- 設計理念（rule 15）：每列對應歷史一次真實股利事件（by reference_date，見 dividend_event_yfinance_list）。
 -- 設計理念（rule 13）：不做 WHERE 過濾，保留 raw 母體所有 rows。
 SELECT
     stk_code,

@@ -10,11 +10,21 @@
 -- 設計理念（rule 20）：本 seed 專供 FinMind 版 raw_monthly_revenue；TWSE/MOPS 版已於 v0.0.10 五次補丁
 --   拆到獨立的 financial_month_twse_list。並行拆分目的在給限流寬的 TWSE/MOPS 端取得大跨步 batch
 --   進度，不被 FinMind（免費層 300 req/hr）限流拖累。
+--
+-- 邊界（rule 13：對齊資料源實際覆蓋）：FinMind TaiwanStockMonthRevenue 最早一筆為 2002-01 營收
+--   （date=2002-02-01；2026-11 實測 2330），as_of 早於 2002-02-01 必定回空，故起點取
+--   GREATEST(成立月 1 日, 2002-02-01)。
+-- rule 13 例外：`incorporation_date IS NOT NULL` 為技術性 guard（GREATEST 會忽略 NULL，
+--   不加 guard 時無成立日的公司會從 2002-02 起整段展開）。
 SELECT
     stk_code,
     generate_series(
-        make_date(EXTRACT(YEAR FROM incorporation_date)::INT, EXTRACT(MONTH FROM incorporation_date)::INT, 1),
+        GREATEST(
+            make_date(EXTRACT(YEAR FROM incorporation_date)::INT, EXTRACT(MONTH FROM incorporation_date)::INT, 1),
+            DATE '2002-02-01'
+        ),
         CURRENT_DATE,
         INTERVAL '1 month'
     )::DATE AS month_start_date
-FROM {{ schema }}.company_basic_info_list;
+FROM {{ schema }}.company_basic_info_list
+WHERE incorporation_date IS NOT NULL;

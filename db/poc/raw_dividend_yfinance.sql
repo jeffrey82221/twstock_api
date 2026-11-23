@@ -1,6 +1,6 @@
 -- raw_dividend_yfinance
--- 上游：dividend_event_list_yfinance（每公司每個真實除息日一筆）
--- 對應 endpoint: GET /api/company/{stock_id}/dividend/yfinance?as_of={cash_ex_dividend_date}
+-- 上游：dividend_event_yfinance_list（每公司每個真實股利事件 reference_date 一筆）
+-- 對應 endpoint: GET /api/company/{stock_id}/dividend/yfinance?as_of={reference_date}
 -- 上游資料源：yfinance Python Library — Ticker.dividends
 --
 -- 與 raw_dividend (FinMind 版) 結構完全一致，純資料源替代版。

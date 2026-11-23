@@ -1,4 +1,4 @@
--- product_revenue_filer_scope
+-- product_revenue_filer_scope_list
 -- 用途：MOPS 各項產品業務營收「歷史掃描範圍」的定義層（時間邊界 + 市場列表）。
 --
 -- 設計理念（rule 13 + rule 15 子則）：
@@ -9,7 +9,8 @@
 -- 產出：(ym TEXT 民國年月 5 碼, market TEXT sii|otc)
 --   ym 已避免民國年 0 前的邊界；MOPS ajax_t05st08_all 最早 2006-01 前後可用。
 --
--- 註：本檔為衍生 view（非 _list），不呼叫 HTTP；下游的 raw_product_revenue_filers 才對每一列打 API。
+-- 註：本檔為純上游 seed（rule 8：不引用其他 poc 表，只靠日期產生器；原名 product_revenue_filer_scope，
+--   已依 rule 8 改名為 _list），不呼叫 HTTP；下游的 raw_product_revenue_filers 才對每一列打 API。
 SELECT
     LPAD((EXTRACT(YEAR FROM month_date)::INT - 1911)::TEXT, 3, '0')
         || LPAD(EXTRACT(MONTH FROM month_date)::INT::TEXT, 2, '0') AS ym,

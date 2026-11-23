@@ -1,5 +1,6 @@
 -- raw_dividend_history
--- 上游：company_list（每家公司抓一次）
+-- 上游：company_finmind_list（每家公司抓一次；rule 20：FinMind 專用 seed，與 TWSE / yfinance 共用的
+--   company_list 分流，讓 FinMind 能依 300 req/hr 的限流獨立排程）
 -- 對應 endpoint: GET /api/company/{stock_id}/dividend/history
 -- 上游資料源：FinMind v4 TaiwanStockDividend（20 年區間全量）
 --
@@ -12,4 +13,4 @@ SELECT
     custom.http_get_content(
         ('http://host.docker.internal:5002/api/company/' || stk_code || '/dividend/history')::TEXT
     ) AS dividend_history
-FROM {{ schema }}.company_list
+FROM {{ schema }}.company_finmind_list

@@ -84,6 +84,22 @@ AS $$
   SELECT make_date(EXTRACT(YEAR FROM p_date)::int, 1, 1)
 $$;
 
+-- Last day of the month containing p_date. Equivalent to:
+--   (p_date + INTERVAL '1 month' - INTERVAL '1 day')::date
+-- but expressed with IMMUTABLE building blocks only (make_date + date - int),
+-- so non-_list poc SQL can use it without a ::DATE cast (db/poc rule 1 / 3).
+CREATE OR REPLACE FUNCTION custom.month_end(p_date date)
+RETURNS date
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT CASE
+    WHEN EXTRACT(MONTH FROM p_date)::int = 12
+      THEN make_date(EXTRACT(YEAR FROM p_date)::int + 1, 1, 1)
+    ELSE make_date(EXTRACT(YEAR FROM p_date)::int, EXTRACT(MONTH FROM p_date)::int + 1, 1)
+  END - 1
+$$;
+
 -- Format a date as 'YYYY-MM-DD' text without depending on DateStyle.
 -- Replaces implicit date->text conversion ('foo' || date_value), which
 -- relies on date_out() (STABLE) and changes output under non-ISO
@@ -147,7 +163,10 @@ CREATE INDEX IF NOT EXISTS http_log_started_at_idx
 -- 55x in the sbl_history plan), and every IMMV built on the same seed
 -- table re-fetched the same URL. pg_ivm rejects IMMVs defined on other
 -- IMMVs, so the duplication cannot be removed in SQL; the cache makes the
--- repeats free instead.
+-- repeats free instead. NOTE: this table only dedupes ACROSS transactions —
+-- inside one IVM maintenance pass its new rows are invisible (fixed
+-- snapshot), so in-transaction repeats are handled by the transaction-local
+-- memo in custom.http_get_content_logged (step 0).
 --
 -- 2xx and 4xx responses are cached (4xx here means "no data for this
 -- date/stock", which is stable); 5xx and transport errors are not, so they
@@ -176,6 +195,18 @@ ON CONFLICT (key) DO NOTHING;
 -- (timeout, connection refused) therefore propagates and aborts the
 -- statement cleanly; it shows up in cron.job_run_details and the row is
 -- retried on the next run.
+--
+-- Transaction-local memo (step 0): pg_ivm evaluates the maintenance query
+-- under a fixed snapshot, so rows this function INSERTs into
+-- job_control.http_cache are NOT visible to later calls in the same IVM
+-- maintenance pass. Measured on 2026-11-23: one company_list tick fetched
+-- the same /business-items URL 140+ times within ~20 s. The memo keeps each
+-- response in a transaction-local custom GUC (set_config(..., is_local =>
+-- true)), which is not subject to MVCC visibility and vanishes at
+-- COMMIT/ROLLBACK; job_control.http_cache still covers repeats across
+-- transactions. Encoding: 'j:<json>' = 2xx JSON, 'n:' = no usable body
+-- (4xx / 5xx / non-JSON). A 5xx is memoised only for the rest of the
+-- current transaction, so the next tick still retries it.
 CREATE OR REPLACE FUNCTION custom.http_get_content_logged(p_url text)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -189,7 +220,16 @@ DECLARE
     v_content     text;
     v_cached      job_control.http_cache%ROWTYPE;
     v_json        jsonb;
+    v_memo_key    text := 'twstock_http.u' || md5(p_url);
+    v_memo        text;
 BEGIN
+    -- 0. Transaction-local memo (see header comment). An unset placeholder
+    --    reads as NULL, and as '' once it has been reset at transaction end.
+    v_memo := current_setting(v_memo_key, true);
+    IF v_memo IS NOT NULL AND v_memo <> '' THEN
+        RETURN CASE WHEN left(v_memo, 2) = 'j:' THEN substr(v_memo, 3)::jsonb END;
+    END IF;
+
     -- 1. Cache lookup. Non-numeric config values fall back to defaults
     --    without raising (no EXCEPTION blocks allowed here, see above).
     SELECT CASE WHEN value ~ '^\d+$' THEN value::int ELSE 3600 END
@@ -202,8 +242,12 @@ BEGIN
          WHERE url = p_url
            AND fetched_at > clock_timestamp() - make_interval(secs => v_ttl_s);
         IF FOUND THEN
-            RETURN CASE WHEN v_cached.status_code BETWEEN 200 AND 299
-                        THEN v_cached.content END;
+            v_json := CASE WHEN v_cached.status_code BETWEEN 200 AND 299
+                           THEN v_cached.content END;
+            PERFORM set_config(v_memo_key,
+                               CASE WHEN v_json IS NULL THEN 'n:' ELSE 'j:' || v_json::text END,
+                               true);
+            RETURN v_json;
         END IF;
     END IF;
 
@@ -232,7 +276,14 @@ BEGIN
               THEN 'response body is not valid JSON' END);
 
     -- 4. Cache 2xx (valid JSON) and 4xx; skip 5xx so it is retried.
-    IF v_ttl_s > 0 AND (v_json IS NOT NULL OR v_status BETWEEN 400 AND 499) THEN
+    --    Also skip 2xx bodies that report upstream failures (non-empty
+    --    "source_errors", e.g. FinMind 402 "Requests reach the upper limit"
+    --    wrapped as found=false): caching them would hand the failure to
+    --    every retry within the TTL.
+    IF v_ttl_s > 0
+       AND (v_json IS NOT NULL OR v_status BETWEEN 400 AND 499)
+       AND NOT (jsonb_typeof(v_json -> 'source_errors') = 'array'
+                AND jsonb_array_length(v_json -> 'source_errors') > 0) THEN
         INSERT INTO job_control.http_cache (url, status_code, content, fetched_at)
         VALUES (p_url, v_status, v_json, clock_timestamp())
         ON CONFLICT (url) DO UPDATE
@@ -241,6 +292,9 @@ BEGIN
                fetched_at  = EXCLUDED.fetched_at;
     END IF;
 
+    PERFORM set_config(v_memo_key,
+                       CASE WHEN v_json IS NULL THEN 'n:' ELSE 'j:' || v_json::text END,
+                       true);
     RETURN v_json;
 END;
 $$;

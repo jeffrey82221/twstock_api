@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import date, timedelta
 
 import app.foreign_ownership_source as fos
 
@@ -74,3 +74,53 @@ def test_get_foreign_ownership_falls_back_to_previous_available_day(monkeypatch,
 
     assert requested_dates == [date(2026, 9, 20), date(2026, 9, 19), previous_day]
     assert row["trade_date"] == "2026-09-18"
+
+def _no_sleep_fetch(monkeypatch, tmp_path, responder):
+    monkeypatch.setattr(fos, "CACHE_ROOT", tmp_path)
+    requested = []
+
+    async def fake_fetch(report_date):
+        requested.append(report_date)
+        return responder(report_date)
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(fos, "_fetch_day", fake_fetch)
+    monkeypatch.setattr(fos.asyncio, "sleep", no_sleep)
+    return requested
+
+
+def test_lookback_is_bounded_by_max_lookback_days(monkeypatch, tmp_path):
+    # every day is a non-trading day → must stop after max_lookback_days, not walk to MIN_DATE
+    requested = _no_sleep_fetch(monkeypatch, tmp_path, lambda d: {})
+    row = asyncio.run(fos.get_foreign_ownership("2330", date(2008, 1, 5)))
+    assert row is None
+    assert len(requested) == fos.MAX_LOOKBACK_DAYS + 1
+    assert min(requested) == date(2008, 1, 5) - timedelta(days=fos.MAX_LOOKBACK_DAYS)
+
+
+def test_lookback_never_goes_below_min_date(monkeypatch, tmp_path):
+    requested = _no_sleep_fetch(monkeypatch, tmp_path, lambda d: {})
+    asyncio.run(fos.get_foreign_ownership("2330", fos.MIN_DATE + timedelta(days=3)))
+    assert min(requested) == fos.MIN_DATE
+
+
+def test_trading_day_without_the_stock_stops_immediately(monkeypatch, tmp_path):
+    # MI_QFIIS lists every listed stock on a trading day; absence means "not covered" (e.g. 上櫃)
+    requested = _no_sleep_fetch(monkeypatch, tmp_path, lambda d: {"1101": {"trade_date": d.isoformat()}})
+    row = asyncio.run(fos.get_foreign_ownership("5483", date(2024, 3, 5)))
+    assert row is None
+    assert requested == [date(2024, 3, 5)]
+
+
+def test_custom_lookback_can_be_widened(monkeypatch, tmp_path):
+    target = date(2024, 1, 1)
+    requested = _no_sleep_fetch(
+        monkeypatch, tmp_path,
+        lambda d: {"2330": {"trade_date": d.isoformat()}} if d == target else {},
+    )
+    assert asyncio.run(fos.get_foreign_ownership("2330", date(2024, 3, 5))) is None
+    requested.clear()
+    row = asyncio.run(fos.get_foreign_ownership("2330", date(2024, 3, 5), max_lookback_days=90))
+    assert row["trade_date"] == "2024-01-01"

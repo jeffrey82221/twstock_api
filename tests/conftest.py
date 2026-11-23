@@ -17,8 +17,7 @@ compiled C extensions that a pure `pip install` cannot provide. However,
 schemas defined in `db/setting.sql` to *exist* so the views' queries can be
 parsed/analyzed -- it never actually executes `http_get()` over the network
 at `CREATE VIEW` time. So we apply a *sanitized* copy of `db/setting.sql`
-that skips the three `CREATE EXTENSION` statements, the two
-`http_set_curlopt()` calls, and the two `pg_cron`-backed
+that skips the three `CREATE EXTENSION` statements and the two `pg_cron`-backed
 `public.job`/`public.job_run_details` views, and executes everything else
 (schemas, `custom.*` functions, `mcp_reader` grants) verbatim. This keeps
 the test setup in sync with `db/setting.sql` automatically -- if the
@@ -51,7 +50,6 @@ _SKIPPED_PATTERNS: List[Tuple[str, int]] = [
     (r"CREATE EXTENSION IF NOT EXISTS\s+http\s*;", 1),
     (r"CREATE EXTENSION IF NOT EXISTS\s+pg_ivm\s*;", 1),
     (r"CREATE EXTENSION IF NOT EXISTS\s+pg_cron\s*;", 1),
-    (r"SELECT\s+http_set_curlopt\([^)]*\)\s*;", 2),
     (
         r"CREATE\s+or\s+REPLACE\s+VIEW\s+public\.(job_run_details|job)\b.*?"
         r"GRANT SELECT ON public\.\1 TO mcp_reader;",

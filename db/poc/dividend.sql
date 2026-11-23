@@ -3,7 +3,7 @@
 -- 攤平：每列 = 該公司歷史某次除息事件對應的股利明細
 -- 欄位 align DividendSection；命名規則同 financial_quarterly。
 --
--- 設計理念（rule 15）：每列對應歷史一次真實除息事件（by cash_ex_dividend_date），
+-- 設計理念（rule 15）：每列對應歷史一次真實股利事件（by reference_date，見 dividend_event_list），
 --                    非規則性時間格點採樣。
 -- 設計理念（rule 13）：不做 WHERE 過濾，保留 raw 母體所有 rows。
 SELECT

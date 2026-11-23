@@ -11,7 +11,13 @@ Two groups of tools:
   it then call the API. These tools let an agent read crawl health and set
   or pause each job. Scheduling reuses ``pipeline.Pipeline`` (same SQL and
   job names as ``Pipeline.setup_schedules``) instead of duplicating it.
-  ``crawl_set_schedule`` and ``crawl_pause`` are the only tools that write.
+* Schema maintenance: ``poc_rebuild_views`` rebuilds the whole poc schema;
+  ``pop_check_definitions`` / ``pop_update_mat_views`` compare pop with the
+  current SQL and update only the objects that changed
+  (``Pipeline.pop_definition_drift`` / ``Pipeline.update_mat_views``).
+
+Tools that write: ``crawl_set_schedule``, ``crawl_pause``,
+``poc_rebuild_views``, and ``pop_update_mat_views`` with ``dry_run=false``.
 
 Connection lifecycle -- opening, closing, DSN -- is entirely owned by
 ``pg_tool.py``; this file does not create or hold a ``psycopg`` connection
@@ -460,6 +466,277 @@ def crawl_set_schedule(
     with _stdout_to_stderr():
         p.schedule_seed_table_refresh(table=table, period_seconds=period_seconds, row_cnt=row_cnt)
     return {"table": table, "schedule": schedule, "row_cnt": row_cnt, "jobs": _jobs_for(table)}
+
+
+@mcp.tool()
+def crawl_backlog(
+    table: Annotated[str, Field(description="seed table 名稱，例如 company_list")],
+    row_cnt: Annotated[int, Field(ge=1, le=10000, description="模擬一次 tick 取幾筆")] = 1,
+    timeout_seconds: Annotated[int, Field(ge=1, le=300)] = 60,
+) -> dict[str, Any]:
+    """量測某個 seed table 還剩多少待爬，以及每次 cron tick 選列（不含 insert/API）的 DB 成本（唯讀）。
+
+    每次 tick 都要算出整個 hidden.<table> 再 EXCEPT pop.<table>，所以 tick_select_ms
+    會隨母體與已爬筆數成長；pending 是目前 hidden 有、pop 沒有、且無 NULL 欄位的筆數。
+    注意：hidden.chain_list 會呼叫 API（其餘 hidden view 為純 SQL）。
+    """
+    import time
+
+    _check_seed_table(table)
+    p = _get_pipeline()
+    with _stdout_to_stderr():
+        insert_sql = p._build_seed_insert_sql(table, row_cnt=row_cnt)[-1]
+    select_sql = insert_sql.split(f"INSERT INTO pop.{table} ", 1)[1].rstrip(";")
+    without_limit = select_sql.rsplit(" LIMIT ", 1)[0]
+    conn = _db.get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SET statement_timeout = '{int(timeout_seconds)}s'")
+            t0 = time.perf_counter()
+            cur.execute(select_sql)
+            picked = len(cur.fetchall())
+            tick_ms = (time.perf_counter() - t0) * 1000
+            t0 = time.perf_counter()
+            cur.execute(f"SELECT count(*) FROM ({without_limit}) AS pending")
+            pending = cur.fetchone()[0]
+            pending_ms = (time.perf_counter() - t0) * 1000
+            cur.execute(f'SELECT count(*) FROM pop."{table}"')
+            done = cur.fetchone()[0]
+    finally:
+        conn.rollback()
+        conn.close()
+    return {
+        "table": table,
+        "pop_rows": done,
+        "pending": pending,
+        "tick_select_ms": round(tick_ms, 1),
+        "rows_picked_by_tick": picked,
+        "full_pending_count_ms": round(pending_ms, 1),
+    }
+
+
+@mcp.tool()
+def crawl_insert_filtered(
+    table: Annotated[str, Field(description="seed table 名稱，例如 company_list")],
+    filters: Annotated[
+        dict[str, str | int | float | bool | list[str | int | float | bool]],
+        Field(description=(
+            "hidden.<table> 欄位篩選，{column: value} 表示 column = value；"
+            "value 為 list 時表示 column IN (...)。多個欄位以 AND 結合。"
+            "例如 {\"stock_id\": \"2330\"} 或 {\"stock_id\": [\"2330\", \"2317\"]}。"
+            "欄位名稱可用 describe_table(pop, <table>) 查詢。"
+        )),
+    ],
+    row_cnt: Annotated[int, Field(ge=1, le=10000, description="最多 insert 幾筆 (SQL LIMIT)")] = 10,
+    order_by: Annotated[
+        list[str] | None,
+        Field(description=(
+            "決定 LIMIT 留下哪幾筆，格式 [\"column\", \"column ASC|DESC\", ...]；"
+            "只寫欄位名稱時為 DESC（最新優先）。省略（預設）時自動用該表第一個 "
+            "date/timestamp 欄位（否則 year/ym/quarter/month）DESC，即最新優先；"
+            "傳 [] 表示不排序。例如 [\"year_start_date\"]、[\"month_start_date ASC\"]。"
+        )),
+    ] = None,
+    dry_run: Annotated[
+        bool, Field(description="true（預設）只回傳符合條件的待爬筆數與 SQL；確認後再以 false 執行")
+    ] = True,
+    timeout_seconds: Annotated[int, Field(ge=1, le=600)] = 120,
+) -> dict[str, Any]:
+    """依條件優先把 hidden.<table> 的特定資料 insert 進 pop.<table>（dry_run=false 時為寫入操作）。
+
+    與 cron 排程使用同一個 INSERT（Pipeline._build_seed_insert_sql），只是多了
+    WHERE column = value 的條件，讓 AI 做資料分析時能先爬與當下問題最相關的資料
+    （例如特定股票），而不用等排程依序輪到；order_by 決定先爬哪幾筆（預設最新優先）。
+    只會挑 pop 還沒有、且無 NULL 欄位的列；
+    下游 IMMV 會因此觸發 API 呼叫，row_cnt 越大越久，超過 timeout_seconds 整批 rollback。
+    """
+    import time
+
+    _check_seed_table(table)
+    p = _get_pipeline()
+    with _stdout_to_stderr():
+        if order_by is None:
+            order_by = p._default_seed_order_by(table)
+        insert_sql = p._build_seed_insert_sql(
+            table, row_cnt=row_cnt, filters=filters, order_by=order_by)[-1]
+        # Pending count needs neither ORDER BY nor LIMIT.
+        count_sql = p._build_seed_insert_sql(table, row_cnt=1, filters=filters)[-1]
+    without_limit = count_sql.split(f"INSERT INTO pop.{table} ", 1)[1].rstrip(";").rsplit(" LIMIT ", 1)[0]
+
+    conn = _db.get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SET LOCAL statement_timeout = '{int(timeout_seconds)}s'")
+            cur.execute(f"SELECT count(*) FROM ({without_limit}) AS pending")
+            pending = cur.fetchone()[0]
+            result: dict[str, Any] = {
+                "table": table,
+                "filters": filters,
+                "order_by": order_by,
+                "pending_matching": pending,
+                "sql": insert_sql,
+                "dry_run": dry_run,
+            }
+            if dry_run or pending == 0:
+                conn.rollback()
+                result["inserted"] = 0
+                return result
+            t0 = time.perf_counter()
+            cur.execute(insert_sql)
+            inserted = cur.rowcount
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    result["inserted"] = inserted
+    result["insert_seconds"] = round(time.perf_counter() - t0, 2)
+    result["pending_after"] = max(pending - inserted, 0)
+    return result
+
+
+@mcp.tool()
+def http_stats(
+    minutes: Annotated[int, Field(ge=1, le=10080, description="統計時間窗（分鐘）")] = 60,
+) -> dict[str, Any]:
+    """API 呼叫統計（唯讀，來源 job_control.http_log；cache 命中不會進 log）。
+
+    每個 endpoint：實際請求數、不重複 URL 數、重複請求數（同 URL 打超過一次 = 浪費的網路）、
+    2xx/404/5xx 筆數、平均與最大秒數。另附 http_cache 目前筆數。
+    逾時等傳輸錯誤會讓整筆 insert rollback，所以不會留在 log，要看 crawl_runs 的錯誤。
+    """
+    endpoints = _fetch_as_dicts(
+        """
+        SELECT regexp_replace(
+                 regexp_replace(regexp_replace(url, '^https?://[^/]+', ''), '\\?.*$', ''),
+                 '/[0-9]{4,6}(/|$)', '/{id}\\1', 'g') AS endpoint,
+               count(*) AS requests,
+               count(DISTINCT url) AS distinct_urls,
+               count(*) - count(DISTINCT url) AS repeated_requests,
+               count(*) FILTER (WHERE status_code BETWEEN 200 AND 299) AS ok_2xx,
+               count(*) FILTER (WHERE status_code = 404) AS not_found_404,
+               count(*) FILTER (WHERE status_code >= 500) AS server_5xx,
+               round(avg(extract(epoch FROM finished_at - started_at))::numeric, 2) AS avg_seconds,
+               round(max(extract(epoch FROM finished_at - started_at))::numeric, 1) AS max_seconds
+        FROM job_control.http_log
+        WHERE started_at > now() - make_interval(mins => %s)
+        GROUP BY 1
+        ORDER BY requests DESC
+        """,
+        (minutes,),
+    )
+    cache = _fetch_as_dicts(
+        "SELECT count(*) AS entries, count(*) FILTER (WHERE status_code BETWEEN 200 AND 299) AS ok_entries "
+        "FROM job_control.http_cache"
+    )
+    return {"minutes": minutes, "endpoints": endpoints, "cache": cache[0] if cache else None}
+
+
+@mcp.tool()
+def pop_raw_quality() -> list[dict[str, Any]]:
+    """每個 pop.raw_* IMMV 的資料可用率（唯讀）。
+
+    對每個 jsonb 欄位統計：總列數、NULL（API 非 2xx 或回應非 JSON）、found=false
+    （API 回 200 但沒資料，例如上游限流或該日期本來就沒資料）、可用列數，以及 source 分佈。
+    seed row 一旦插入，IMMV 的這一列就固定了，不會自動重抓，所以低可用率代表浪費的爬取。
+    """
+    cols = _fetch_as_dicts(
+        """
+        SELECT c.table_name, c.column_name
+        FROM information_schema.columns c
+        WHERE c.table_schema = 'pop' AND c.table_name LIKE 'raw\\_%%' AND c.data_type = 'jsonb'
+        ORDER BY 1, 2
+        """
+    )
+    if not cols:
+        return []
+    parts = []
+    for c in cols:
+        t, col = c["table_name"], c["column_name"]
+        parts.append(
+            f"""SELECT '{t}' AS raw_view, '{col}' AS json_column,
+                   count(*) AS total_rows,
+                   count(*) FILTER (WHERE "{col}" IS NULL) AS null_rows,
+                   count(*) FILTER (WHERE "{col}"->>'found' = 'false') AS found_false_rows,
+                   count(*) FILTER (WHERE "{col}" IS NOT NULL
+                                    AND COALESCE("{col}"->>'found', 'true') <> 'false') AS usable_rows,
+                   (SELECT json_object_agg(s, n) FROM (
+                        SELECT COALESCE("{col}"->>'source', '(none)') AS s, count(*) AS n
+                        FROM pop."{t}" GROUP BY 1) src) AS sources
+            FROM pop."{t}" """
+        )
+    rows = _fetch_as_dicts(" UNION ALL ".join(parts))
+    for r in rows:
+        r["usable_pct"] = round(100.0 * r["usable_rows"] / r["total_rows"], 1) if r["total_rows"] else None
+    return rows
+
+
+def _fresh_pipeline():
+    """A Pipeline that re-reads db/poc/*.sql (the cached one may predate SQL edits)."""
+    with _stdout_to_stderr():
+        from pipeline import Pipeline
+
+        return Pipeline(setup_db=False)
+
+
+@mcp.tool()
+def pop_check_definitions(
+    names: Annotated[
+        list[str] | None,
+        Field(description="只檢查這些物件（seed table 或 IMMV 名稱）；省略則檢查全部"),
+    ] = None,
+    only_drifted: bool = True,
+) -> list[dict[str, Any]]:
+    """比對 pop schema 現有物件與目前 db/poc/*.sql 的定義是否一致（唯讀）。
+
+    seed table（*_list）比對 hidden.<name> view 定義；其他比對 pop.<name> IMMV 定義。
+    status：ok / changed（SQL 改過，需要 update）/ missing（不存在）/
+    invalid_sql（新 SQL 在 pop 上編譯失敗，通常是上游要先更新）。
+    改完 SQL 後先跑 poc_rebuild_views，再用這個看哪些 pop 物件需要更新。
+    """
+    p = _fresh_pipeline()
+    with _stdout_to_stderr():
+        rows = p.pop_definition_drift(names)
+    return [r for r in rows if not only_drifted or r["status"] != "ok"]
+
+
+@mcp.tool()
+def pop_update_mat_views(
+    names: Annotated[
+        list[str] | None,
+        Field(description="只更新這些物件；省略則更新所有 status 非 ok 的物件"),
+    ] = None,
+    dry_run: Annotated[
+        bool, Field(description="true（預設）只回傳計畫；確認後再以 false 執行")
+    ] = True,
+) -> list[dict[str, Any]]:
+    """只更新定義有變動的 pop 物件，不重建整個 pop schema（寫入操作，dry_run=false 時）。
+
+    - seed table：CREATE OR REPLACE VIEW hidden.<name>，pop.<name> 已爬的資料保留；
+      欄位有變動時拒絕執行（需刪資料，rule 18）。
+    - IMMV：DROP + pgivm.create_immv 重建，會對現有 seed rows 重新跑一次查詢
+      （每列一次 API 呼叫，http_cache 內的會直接命中），被 CASCADE 掉的 hidden view 會補回。
+    dry_run 的結果中 recreate_immv 會列出 seed_upstreams，可用 crawl_status 的
+    pop_rows 估計要重打的 API 次數。執行前建議先暫停相關 crawl 排程。
+    """
+    p = _fresh_pipeline()
+    with _stdout_to_stderr():
+        return p.update_mat_views(names, dry_run=dry_run)
+
+
+@mcp.tool()
+def poc_rebuild_views() -> dict[str, Any]:
+    """整個重建 poc schema 的 view（DROP SCHEMA poc CASCADE 後依 DAG 順序重建；寫入操作）。
+
+    poc 是研發層、沒有存資料，可以安全整個重建。pop 不受影響。
+    """
+    p = _fresh_pipeline()
+    with _stdout_to_stderr():
+        p.create_views()
+    views = _fetch_as_dicts(
+        "SELECT count(*) AS n FROM information_schema.views WHERE table_schema = 'poc'")
+    return {"poc_views": views[0]["n"], "sql_files": len(p.ordered_sql_paths)}
 
 
 @mcp.tool()

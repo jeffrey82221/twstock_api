@@ -10,6 +10,7 @@
 
 1. 非 `_list` 結尾的 SQL **禁止** 使用 mutable 操作（例如 `::DATE`, `http_get`）。
 2. `_list` 結尾的 SQL **不可** 呼叫 `http_get_content`。
+    - **例外：DAG 根節點 seed**。不引用 `{{ schema }}`、沒有任何上游的 `_list`（rule 8 的「純上游 seed」，目前只有 `chain_list` 打 `/chains`）可以呼叫一次 endpoint 取得實體清單——它沒有其他資料來源，改成 `raw_` 也還是需要一張上游 `_list`。條件：只打一個不帶參數的 URL（不隨列數放大），且排程頻率低（`chain_list` 為每日一次；URL 另有 `job_control.http_cache` 命中）。有上游的 `_list` 一律不可呼叫，應改讀已物化的上游表（例：`company_list` 讀 `chain_info_list`，不自己打 `/api/chain/*`）。
 3. 若需要 mutable 邏輯或型別轉換,請封裝為 immutable function 放在 `db/settings.sql`。
 4. 每個 PoC SQL 對應一個 table/view。
 
@@ -29,6 +30,8 @@ incremental materialized view 建構,可以與 `_list` 表同步擴充資料,避
 ### 資料邊界與事件母體
 
 13. 避免使用 WHERE 條件,讓 POC 階段會 full scan 整個上游表,應透過對 endpoint 的資料源的理解,從 相關 endpoint 找出資料邊界,融入到 `_list.sql` 表的邏輯中,讓下游的 `raw_` 表資料爬取可以有合理的起始點。
+    - **時間格點的邊界用產生器本身表達，不要「多產生再 WHERE 篩」**。例：季末日用 `generate_series(<對齊到季末月的起點>, CURRENT_DATE, INTERVAL '3 months')`，不要逐月展開再 `WHERE EXTRACT(MONTH ...) IN (3,6,9,12)`。`hidden.<seed>` 在每次 cron tick 都會整張重算再 EXCEPT，多產生的列就是每 tick 的額外成本（`mops_quarterly_financials_quarter_list` 實測 16.2ms → 3.8ms，輸出相同）。可用 MCP `crawl_backlog` 量每 tick 的選列成本。
+    - **邊界要對齊資料源實際覆蓋，並用資料驗證**。`_list` 起點早於資料源實際可得日期時，每一列都是必定作廢的 API 呼叫（下游 raw 為 NULL / found=false 或內容全空）。上線後用 MCP `pop_raw_quality` 檢查各 raw 的可用率。
     - **例外**：`_list.sql` 允許 `WHERE <field> IS NOT NULL` 過濾「不可用事件」（例：某事件 key 為 NULL 的歷史列）,因為此類列對下游 `as_of` API 呼叫無意義。這屬資料品質層清理,不算隱藏 raw 母體邊界。但在動用本例外前,先見 **rule 17**— 優先換一個不會 NULL 的事件 key，而不是用 WHERE 掃掉 NULL 列。
 14. 不同時間維度的資料,如 monthly, yearly, quarterly 資料,應基於不同的 `_list.sql` 來設定母體範圍
 15. **事件性資料應建立事件層 endpoint 作為 `_list` 母體。** 當資料本質為離散事件（股利除息、產品營收自願申報）而非連續時間序列時：
@@ -61,6 +64,8 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
     - **命名慣例**：保留原名給「默認或原始資料源」（路徑上常為 FinMind），新增另一張以資料源名稱作尾綴（`_yfinance_list`、`_twse_list`），對應的 raw view 也沿用同尾綴，以便 diff 最小並保留既有下游不動。
     - **例子1**：`financial_year_list` (FinMind、300 req/hr) vs `financial_year_yfinance_list` (yfinance、每小時數千次)。yfinance 可先拉高 LIMIT 快速拉齊，FinMind 保守進度，兩邊互不阻塞。
     - **例子2**：`financial_month_list` (FinMind `/api/company/{stock_id}/revenue`、300 req/hr) vs `financial_month_twse_list` (TWSE OpenAPI + MOPS t21sc03、TWSE OpenAPI 無明顯 quota + MOPS 內部有 24h cache，實際寬鬆很多)。月頻資料母體實際上非常大（~1900 家 × 每家實際上市以來月份），共用 seed 時 FinMind 建議保守值 1/tick 會拉低 TWSE 端進度；拆分後 TWSE 端可獨立以 4/tick（初版，後續 probe）壓縮拉齊時間。
+    - **例子3**：`company_list`（TWSE OpenAPI `raw_company_info`、yfinance `raw_dividend_history_yfinance`）vs `company_finmind_list`（FinMind `raw_dividend_history`）。共用時實測：`company_list` 以 36 家/分推進，FinMind 約 100 次後回 402 "Requests reach the upper limit"，之後每家公司的 `raw_dividend_history` 都被固定成 found=false 空列（seed 已插入、IMMV 不會再重抓），一輪下來 154/454 列作廢。拆分後 `company_finmind_list` 只讀 `pop.company_list`，以 ≤ 300/hr 獨立排程。
+    - **判斷方式**：一張 `_list` 的直接下游 `raw_*` 若打到兩個以上不同限流的資料源，就該拆；可用 MCP `pop_raw_quality` 看各 raw 的 found=false 比例、`http_stats` 看各 endpoint 請求量確認。
     - Rule 20 與 rule 14、rule 15 相輔：rule 14 讓不同時間維度分 `_list`（monthly / yearly / quarterly）；rule 15 讓事件性 vs 連續型資料分 `_list`；rule 20 讓不同上游實作分 `_list`。
 21. **展開型純 view 若下游多方消費，要物化成 `_list` 切斷 lateral 傳染**。當一張 view 用 `CROSS JOIN LATERAL jsonb_array_elements(...)` 把 `raw_*` 的 JSONB 攤成多列（一列變 N 列的 fan-out），且有**多張下游** view 直接讀它，pg_ivm 展開整條 SQL 時每個下游都會各自把 lateral 重新算一遍。若那條 lateral 鏈上游是 `raw_*`（背後掛 `http_get_content`），每次下游 refresh 都會**間接**觸發上游 endpoint 重複被呼叫（即使 `raw_*` 已經是 mat view，pg_ivm 對 view chain 的展開行為仍會把整條路徑作為單一表達式重新推算，導致效能崩塌）。
     - **判斷方式**：非 `raw_`、非 `_list` 的展開 view 若被 ≥ 2 張下游引用，或該 view 本身的 fan-out 倍率高（一列 → 幾十/幾百列），就應該把它改造成 `_list`。
@@ -77,88 +82,85 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 ## Seed 填滿時間 · 存放空間估算
 
-> 本章估算在現行 `batch_size.json` 下，各 `_list.sql` 對應的 `pop.<seed>` 空表完全填滿母體所需的時間，以及填滿後 pop schema 整體存放空間。與 v0.0.10 五次補丁（月營收分流）直接相關。
+> 本章數字由 [`scripts/estimate_seed_fill_and_storage.py`](scripts/estimate_seed_fill_and_storage.py) 從 live DB 實測產生（取代舊版「1,900 家 × 300 月」之類的假設值）。母體邊界見各 `_list.sql`（rule 13 對齊資料源實際覆蓋後的版本）。
 
-### 估算前提
+### 估算方法
 
-- **排程**：pg_cron 每 **1 分鐘** tick 一次 (`Pipeline.setup_schedules(period_minutes=1)`)，每 tick 每張 seed insert `batch_size.json` 的 `row_cnt` 列。
-- **進度假設**：不考慮 `probe_seed_insert_limit` 後續 doubling（實際可能更快）、不考慮 API 限流或重試微延。
-- **公司母體**：上市約 1,030 + 上櫃 約 870 = 約 **1,900** 家（來自 `company_list` DISTINCT `chain_info_list`）。
-- **中位上市年數**：25 年（台股上市中位典型值；新公司拉低、老公司拉高）。
-- **提醒**：這些數字是 **PoC 估算**，不取代實際 `pg_relation_size` 監控。
-
-### 母體估算方法（多張 seed 共用）
-
-各 seed 的母體列數估算來自純 SQL 推斷（`generate_series`、JSONB fan-out `jsonb_array_elements`、`CROSS JOIN LATERAL`）或上游 raw JSON 的直接展開。欄位意義見下方表格「母體估算方法」列。
-
-### 存放空間估算方法（by 欄位型態）
-
-以 PostgreSQL 表 heap tuple 估算，不含 TOAST 壓縮優化（JSONB > 2 KB 時 PostgreSQL 實際會 zlib 壓縮到 約 40-60%，估算屬保守上限）：
-
-**Seed 本體** 約 60 B / 列：
-- Heap tuple header + null bitmap + alignment：24-32 B
-- `stk_code TEXT` 短字串（英數 4-6 char）：含 1 B length 共 約 8 B
-- `DATE`：4 B
-- BTree PK index（(stk_code, date)）：約 20 B / 列
-- 小計：約 60 B / 列（tuple header + 索引，取保守上限）
-
-**raw_* JSONB payload** by endpoint response 結構抽樣估均值：
-- 月營收 (`/revenue`, `/revenue/twse`)：`latest_month_label` `latest_month_value` `latest_month_yoy_pct` `ttm_value` `ttm_yoy_pct` + wrapping → **約 1.2 KB**
-- 年報 (`/financials`)：EPS 年度、revenue、net_income、margins、growth 共 15-20 數字欄位 → **約 4 KB**（yfinance 版略少 3.5 KB）
-- 季報 (`/financials/yfinance?as_of=quarter`)：**約 2.5 KB**
-- 除息單筆 (`/dividend`)：cash_dividend, stock_dividend, cash_ex_dividend_date, cash_capital_reduction 等 → **約 0.7-0.8 KB**
-- 除息全歷史 (`/dividend/history`)：約 15 events 陣列 → **約 12 KB / 家**
-- Product revenue (`/product-revenue`)：少於 10 行產品線 → **約 3 KB**
-- Product revenue filers (`/product-revenue/filers`)：`co_ids` 陣列 ~200 家 × 6 char + wrap → **約 6 KB**
-- Chain info (`/api/chain/{ic_code}`)：segments dict + 展開前公司清單 → **約 12 KB / 條**
-- Company info (`/api/company/{id}`)：基本資料 + 主要營業項目 → **約 5 KB**
-
-> pg_ivm 實作上仍會呼叫 PostgreSQL 的 TOAST 壓縮；本估算屬保守上限，實際磁碟需求可能為估算值的 40-60%。
+- **母體列數**：直接 count `hidden.<seed>`（= 目前 SQL 定義下的母體）。依賴 `company_basic_info_list` 的 seed 在 hidden 中只看得到已爬到的公司，因此乘上「估計公司數 ÷ 已爬公司數」換算全量；估計公司數 = `chain_info_list` 的 DISTINCT `stk_code`（全量 2,250 家）× 基本資料可得率（約 83%，其餘公司 TWSE/TPEx OpenAPI 查無資料）。事件型 seed（`dividend_event_*`、`financial_quarter_yfinance_list`）以「已爬上游公司數」同理換算。
+- **已爬列數**：`hidden ∩ pop`，只計仍落在新母體內的列（改邊界前爬過、已不在母體內的舊列不算進度）。
+- **速率**：名目值讀 `cron.job` 的排程與 `LIMIT`；「估算採用」為觀察窗口內實際新增列數換算的 rows/hr（本表窗口 = IMMV 重複呼叫修正後的 15 分鐘，10:43–10:58 UTC）（取與名目的較小值），分母只計窗口內**實際有 cron 執行的分鐘**——主機睡眠時 Docker VM 暫停、cron 不會跑，睡眠空檔不計入。
+- **存放**：seed 已爬 ≥ 50 列時，以「該 seed 下游所有 pop 表（raw_* + 正規化 IMMV，直到下一個 seed）的 `pg_total_relation_size` ÷ seed 已爬列數」為每列實測成本（含 TOAST、索引）；不足 50 列標「推估」，以相近 endpoint 的實測值代入。
+- **含上游填滿**：下游 seed 最快也要等上游填滿，取自身與所有上游 seed 的最大值。
+- 填滿時間是「主機持續運作」下的時間；主機睡眠期間爬取暫停，實際日曆時間會更長。
 
 ### 各 seed 填滿時間與空間估算總表
 
-填滿時間 = 母體列數 ÷ (batch_size × 1440 分鐘/天)。
+> 量測時間：2026-11-23 18:58；全量公司 2,250 家，基本資料可得率 82.6%（估計 1,859 家）。
 
-| seed | 母體列數 | 母體估算方法 | batch_size (row/min) | 填滿時間 | raw payload / 列 | 填滿後 raw 存放 | seed 本體存放 | 總計 |
-| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `product_revenue_filer_scope_list` | 120 | 近 5 年 60 月 × 2 市場 (sii+otc) — 由 `product_revenue_filer_scope_list.sql` 的 `INTERVAL '5 years'` × `VALUES('sii'),('otc')` 卡氏積直接產生 | 4 | 0.5 小時 | ~6,000 B | 703.1 KB | 7.0 KB | 710.2 KB |
-| `product_revenue_filer_list` | 24,000 | 60 月 × 2 市場 × 平均 ~200 家申報 = 24,000 — 每列來自 `raw_product_revenue_filers.filers.co_ids` 攝平 | 2 | 8.3 天 | ~3,000 B | 68.7 MB | 1.4 MB | 70.0 MB |
-| `dividend_event_list` | 28,500 | 1,900 家 × 平均 15 event/家 (20 年 × 0.75 除息/年) — 由 `raw_dividend_history.events` 陣列 fan-out | 1 | **19.8 天** | ~800 B | 21.7 MB | 1.6 MB | 23.4 MB |
-| `dividend_event_yfinance_list` | 28,500 | 同上（yfinance 版），母體相同但資料源不同 | 12 | 1.6 天 | ~700 B | 19.0 MB | 1.6 MB | 20.7 MB |
-| `financial_year_list` | 47,500 | 1,900 家 × 25 年（中位上市年數）— 由 `generate_series(incorporation_date, CURRENT_DATE, '1 year')` 產生 | 22 | 1.5 天 | ~4,000 B | 181.2 MB | 2.7 MB | 183.9 MB |
-| `financial_year_yfinance_list` | 47,500 | 與 financial_year_list 內容完全一致（rule 20 分流），僅 seed 表獨立 | 16 | 2.1 天 | ~3,500 B | 158.5 MB | 2.7 MB | 161.3 MB |
-| `financial_quarter_yfinance_list` | 38,000 | 1,900 家 × 20 季（yfinance 提供近 5 年）— 由 `raw_quarterly_financials_yfinance` 已抓的 quarter list 反查 | 2 | **13.2 天** | ~2,500 B | 90.6 MB | 2.2 MB | 92.8 MB |
-| `chain_list` | 47 | 47 條產業鏈 — 由 `/api/chains` 一次抓完（服務內硬編碼 IC_CHAINS 常數） | 2 | 0.4 小時 | — | — | 2.8 KB | 2.8 KB |
-| `chain_info_list` | 2,200 | ~2,200 = 47 鏈 × 平均 47 家/鏈 — 由 `raw_chain_info.segments` 3 層 LATERAL 展開（rule 21） | 1024 | < 0.1 小時 | — | — | 128.9 KB | 128.9 KB |
-| `company_list` | 1,900 | 1,900 = 上市 ~1,030 + 上櫃 ~870 — 由 `chain_info_list` DISTINCT 而來 | 1 | 1.3 天 | — | — | 111.3 KB | 111.3 KB |
-| **`financial_month_list`** | **570,000** | 1,900 家 × 300 月（平均上市月數，中位 25 年）— 由 `generate_series(incorporation_date, CURRENT_DATE, '1 month')` | 1 | **395.8 天 (~13.2 月)** | ~1,200 B | 652.3 MB | 32.6 MB | **684.9 MB** |
-| **`financial_month_twse_list`** | **570,000** | 與 financial_month_list 內容完全一致（rule 20 分流），僅 seed 表獨立 | 4 | **99.0 天 (~3.3 月)** | ~1,200 B | 652.3 MB | 32.6 MB | **684.9 MB** |
+| seed | 上游資料源 | 母體（全量估計） | 已爬 | 排程 | rows/hr（名目 → 估算採用） | tick 失敗率 | 自身填滿 | 含上游填滿 | 每列存放 | 填滿後存放 |
+| --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `financial_year_list` | FinMind | 56,442 | 86 | 1 列 / 60s | 60 → 56（實測） | 0% | 41.7 天 | 41.7 天 | 1.2 KB（實測） | 87.2 MB |
+| `institutional_monthly_list` | TWSE T86 / TPEx | 269,010 | 387 | 3 列 / 20s | 540 → 394（實測） | 8% | 28.4 天 | 28.4 天 | 677.4 B（實測） | 255.2 MB |
+| `financial_month_twse_list` | TWSE OpenAPI + MOPS t21sc03 | 368,877 | 319 | 5 列 / 20s | 900 → 619（實測） | 8% | 24.8 天 | 24.8 天 | 898.8 B（實測） | 433.6 MB |
+| `ohlcv_monthly_list` | TWSE STOCK_DAY / TPEx | 300,941 | 710 | 3 列 / 10s | 1,080 → 799（實測） | 12% | 15.7 天 | 15.7 天 | 3.4 KB（實測） | 1.0 GB |
+| `mops_quarterly_financials_quarter_list` | MOPS t163sb06/04 | 100,969 | 241 | 2 列 / 20s | 360 → 292（實測） | 11% | 14.3 天 | 14.3 天 | 1.1 KB（實測） | 134.2 MB |
+| `product_revenue_filer_list` | MOPS t05st08 | 15,045 | 142 | 1 列 / 30s | 120 → 105（實測） | 7% | 5.9 天 | 5.9 天 | 1.8 KB（實測） | 29.8 MB |
+| `company_valuation_monthly_list` | TWSE BWIBBU_d（與上列共用日 cache） | 187,287 | 1,232 | 5 列 / 10s | 1,800 → 1,331（實測） | 14% | 5.8 天 | 5.8 天 | 804.7 B（實測） | 169.6 MB |
+| `financial_analysis_year_list` | MOPS t51sb02 | 27,505 | 217 | 2 列 / 20s | 360 → 322（實測） | 4% | 3.5 天 | 3.5 天 | 1.7 KB（實測） | 55.5 MB |
+| `dividend_event_yfinance_list` | yfinance | 22,372 | 321 | 3 列 / 20s | 540 → 461（實測） | 9% | 47.8 小時 | 47.8 小時 | 918.7 B（實測） | 25.6 MB |
+| `company_finmind_list` | FinMind | 2,250 | 472 | 1 列 / 20s | 180 → 158（實測） | 5% | 11.3 小時 | 11.3 小時 | 1.5 KB（實測） | 3.7 MB |
+| `financial_quarter_yfinance_list` | yfinance | 5,612 | 631 | 3 列 / 10s | 1,080 → 821（實測） | 13% | 6.1 小時 | 6.1 小時 | 895.8 B（實測） | 5.8 MB |
+| `company_list` | TWSE/TPEx OpenAPI + 經濟部 + yfinance | 2,250 | 914 | 4 列 / 20s | 720 → 540（實測） | 18% | 2.5 小時 | 2.5 小時 | 4.1 KB（實測） | 9.5 MB |
+| `company_basic_info_list` | —（純 SQL 正規化） | 1,859 | 755 | 100 列 / 10s | 36,000 → 446（實測） | 0% | 2.5 小時 | 2.5 小時 | — | 1.3 MB |
+| `financial_year_yfinance_list` | yfinance | 1,859 | 565 | 3 列 / 10s | 1,080 → 799（實測） | 14% | 1.6 小時 | 2.5 小時 | 859.8 B（實測） | 1.8 MB |
+| `product_revenue_filer_scope_list` | MOPS ajax_t05st08_all | 122 | 122 | — | — | — | 0 分 | 0 分 | 1.6 KB（實測） | 224.0 KB |
+| `chain_list` | IC 產業鏈 | 47 | 47 | 8 列 / 86400s | 0 | — | 0 分 | 0 分 | 1000.0 B（推估） | 50.5 KB |
+| `market_valuation_date_list` | TWSE BWIBBU_d | 115 | 115 | 32 列 / 60s | 1,920 | 0% | 0 分 | 0 分 | 1.0 KB（實測） | 141.3 KB |
+| `chain_info_list` | —（純 SQL 展開） | 6,889 | 6,889 | — | — | — | 0 分 | 0 分 | — | 1.7 MB |
+| `dividend_event_list` | FinMind | 24,769 | 41 | — | — | — | 未排程 | 未排程 | 900.0 B（推估） | 23.6 MB |
+| `sbl_history_monthly_list` | TWSE t13sa870 | 362,947 | 50 | — | — | — | 未排程 | 未排程 | 819.2 B（實測） | 510.4 MB |
+| `foreign_ownership_monthly_list` | TWSE MI_QFIIS | 372,217 | 2 | — | — | — | 未排程 | 未排程 | 900.0 B（推估） | 355.0 MB |
+| `financial_month_list` | FinMind | 522,155 | 0 | — | — | — | 未排程 | 未排程 | 900.0 B（推估） | 498.0 MB |
+| `finmind_news_monthly_list` | FinMind | 157,975 | 95 | — | — | — | 未排程 | 未排程 | 13.6 KB（實測） | 2.1 GB |
 
-### 非-seed 型 raw view（直接從上層 seed 抽取，不單獨列入 batch_size）
+**填滿後 pop 總存放估計**：約 5.7 GB（目前實際 16.7 MB）
 
-| raw view | 列數 | 母體來源 | payload / 列 | 存放空間 |
-| --- | ---: | --- | ---: | ---: |
-| `raw_company_info` | 1,900 | company_list | ~5,000 B | 9.1 MB |
-| `raw_chain_info` | 47 | chain_list | ~12,000 B | 550.8 KB |
-| `raw_dividend_history` | 1,900 | company_list | ~12,000 B | 21.7 MB |
-| `raw_dividend_history_yfinance` | 1,900 | company_list | ~12,000 B | 21.7 MB |
+- `finmind_news_monthly_list`（95 列）與 `dividend_event_list`（41 列）沒有 cron 排程，pop 內的列為排程以外寫入；`finmind_news` 每月平均約 20 則新聞，每 seed 列實測約 13.6 KB，是填滿後存放的最大項（約 2.1 GB）。
 
-### 總計
+### 排程與限流配置（2026-11-23）
 
-- **全部 pop.raw_* JSONB** 約 **1.9 GB**（TOAST 壓縮後實際磁碟可能降至 40-60%）
-- **全部 pop.<seed> 本體** 約 **77.7 MB**
-- **合計估算** 約 **1.9-2.0 GB**
+所有排程經 MCP `crawl_set_schedule` 設定。原則：每個上游資料源的總請求量留安全餘裕；backend 有磁碟 / 記憶體 cache 的來源（每列幾乎不打上游）可以開快，每列必打一次上游的來源依限流壓速。
+
+| 上游 | 已知限流 | backend cache 粒度 | 使用的 seed（列 / 秒） | 上游請求量估計 |
+| --- | --- | --- | --- | --- |
+| FinMind（免費層、無 token） | 300 req/hr，超過回 402 且該列被固定成 found=false | 1 小時，key 含 as_of 窗口 → 每列 1 次 | `company_finmind_list` 1/20s、`financial_year_list` 1/60s | 240/hr（留 20%） |
+| TWSE www.twse.com.tw | 非官方：約每 5 秒 3 次，超過會暫時封 IP | STOCK_DAY / tradingStock 已結束月份磁碟 cache；BWIBBU_d / T86 依日期磁碟 cache | `ohlcv_monthly_list` 3/10s、`company_valuation_monthly_list` 5/10s、`institutional_monthly_list` 3/20s、`foreign_ownership_monthly_list` 2/20s、`sbl_history_monthly_list` 1/20s | 約 10/min（日 K 每列 1 次；修正前因 IMMV 重複呼叫每列 2 次） |
+| MOPS（mopsov） | 無公開保證，過頻會回「查詢過於頻繁」 | t163sb06/04、t51sb02 依（市場, 年[, 季]）磁碟 cache；t21sc03 依（市場, 年, 月）24h | `mops_quarterly_*` 2/20s、`financial_analysis_year_list` 2/20s、`financial_month_twse_list` 5/20s、`product_revenue_filer_list` 1/30s | cache 暖後每分鐘個位數 |
+| yfinance | 寬鬆 | 無 | `financial_year_yfinance_list` 3/10s、`financial_quarter_yfinance_list` 3/10s、`dividend_event_yfinance_list` 3/20s | 約 40/min |
+
+**刻意不排程**：
+
+- `financial_month_list`、`dividend_event_list`、`finmind_news_monthly_list`（FinMind）：免費層額度已被上表用滿。`dividend_event_list` 可在 `company_finmind_list` 爬完（約 17 小時）後接手它的額度；`financial_month_list` 52 萬列在免費層需 70 天以上，且資料與 `financial_month_twse_list` 重疊，建議申請 FinMind token（600 req/hr）後再開。
+- ~~`foreign_ownership_monthly_list`、`sbl_history_monthly_list`~~ 已於 2026-11-23 修正並重新排程。原本 backend 回溯沒有上限（MI_QFIIS 逐日回溯到 2004-02-11、SBL 以 31 日視窗回溯到 2005-01-28），seed 第一列又常落在掛牌前，一列可能打上千次 TWSE（實測 20 分鐘累積 1,694 個 MI_QFIIS 日檔）而暫停。已修正：backend 預設最多回溯 31 天（`max_lookback_days`，endpoint 可調）、MI_QFIIS 遇到「有資料但無該股」的交易日即停（上櫃股不再白打）；seed 起點改為「掛牌日之後第一個 5 日」（舊版 412 / 377 列落在掛牌前、379 列早於 SBL_MIN_DATE）。 修正後 5 分鐘實測：外資持股約 1.4 次 MI_QFIIS / 列（日檔跨股共用，會隨進度下降）、借券剛好 1 次 t13sa870 / 列，tick 失敗率 0–7%。
 
 ### 對作業方針的意義
 
-1. **首要瓶頸 = `financial_month_list` (FinMind)**：現行 `batch_size=1` 下需約 396 天。FinMind 免費層 300 req/hr = 5 req/min，理論上 `batch_size` 可推到 4-5，但需留安全餘裕避免 burst 遭 limit。probe 後從 1 → 4 可壓至約 100 天。
-2. **次要瓶頸 = `financial_month_twse_list`**：拆分後初版 4/tick = 99 天。TWSE OpenAPI 無明顯 quota + MOPS 有 24h cache，probe 後可拉高 8-16/tick 壓至 25-50 天。
-3. **第二層 tuning 對象 = `dividend_event_list` (FinMind)** 與 **`financial_quarter_yfinance_list`**：兩邊都 10-20 天，可接受但仍可依需往上推。
-4. **存放面**：1.9 GB 對現代 SSD 不是問題。若未來拓展到全歷史（`INTERVAL '20 years'` 代替 `INTERVAL '5 years'`），`product_revenue_filer_*` 系列列數需 ×4，就需優先 tune batch_size。
+1. **IMMV 重複呼叫已修正（2026-11-23），tick 失敗率從 30–70% 降到 4–18%**。原因：`pipeline._get_matview_select_sqls` 把非 seed 上游內嵌進每個 IMMV，http 呼叫被展開到每個欄位參照與每個 delta 分支；pg_ivm 以固定 snapshot 跑維護查詢，函式剛寫進 `job_control.http_cache` 的列在同一次維護中看不到，同一 URL 在一個 tick 內被打上百次（實測 `1604/business-items` 20 秒內 140+ 次），把本機 API 的 CPU 打滿（8 核 load 約 12），大量 tick 因連線逾時整批回滾。修正：
+    - `custom.http_get_content_logged` 加上交易內記憶（transaction-local GUC，不受 MVCC snapshot 影響）：每 URL 請求數 10.2 → 1.84，總請求數約降為 1/3。
+    - 剩下的 2 倍來自 `raw_X` 與正規化 `X` 兩個 IMMV 各呼叫一次（pg_ivm 每個 IMMV 維護結束會還原 GUC），多半命中 backend cache；唯一沒有 backend cache 的逐股月 K（TWSE STOCK_DAY / TPEx tradingStock）已加上「已結束月份」的磁碟 cache，第二次呼叫不再打上游。
+    - 結果：實測速率達名目的 70–90%（修正前 1/3–1/2）；`financial_month_twse_list` 113 → 25 天、`ohlcv_monthly_list` 32 → 16 天、`company_valuation_monthly_list` 16 → 6 天。
+2. **目前最長的是 FinMind `financial_year_list`（約 42 天）**，受 60 req/hr 配額限制。`company_finmind_list` 約 11 小時後爬完，可把它的 180 req/hr 轉給 `financial_year_list` / `dividend_event_list`。
+3. **TWSE 系列（三大法人 28 天、月營收 25 天、日 K 16 天）仍有加速空間**：零筆 402 / 429，且日 K 修正後每列只打一次 TWSE，實際請求量約為原本的一半，可逐步調高 `ohlcv_monthly_list` / `institutional_monthly_list` 的 row_cnt 並觀察 `http_stats` 與 `[source-error]`。
+4. **`foreign_ownership_monthly_list` / `sbl_history_monthly_list` 已恢復**（回溯上限修正後，見上節）。以 2 / 1 列每 20 秒保守起步，母體約 37 萬 / 36 萬列，此速率下各需約 40 天以上；TWSE 總量仍有餘裕，可觀察 `[source-error]` 後逐步調高。
+5. **存放面**：填滿後約 5.7 GB，`finmind_news`（約 2.1 GB）與日 K（約 1 GB）為大宗，對 SSD 不是問題。
+6. **主機睡眠會暫停爬取**（Docker VM 隨之暫停），表中填滿時間為主機持續運作下的估計；長時間爬取建議 `caffeinate -s`。
 
-### 估算腳本從哪來？
+### 重新估算
 
-本章所有數字都來自 `db/poc/scripts/estimate_seed_fill_and_storage.py`（同 commit 一併新增），可重新執行以在母體假設或 `batch_size.json` 變更後重新產生。
+```bash
+# repo root；ESTIMATE_OBSERVE_MINUTES 為實測速率窗口（預設 30 分）
+ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_and_storage.py
+```
 
 ## 章節索引
 
@@ -166,6 +168,7 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 2. [raw_chain_info](#raw_chain_info)
 3. [chain_info_list](#chain_info_list)
 4. [company_list](#company_list)
+4a. [company_finmind_list](#company_finmind_list)
 5. [product_revenue_filer_scope_list](#product_revenue_filer_scope_list)
 6. [raw_product_revenue_filers](#raw_product_revenue_filers)
 7. [product_revenue_filer_list](#product_revenue_filer_list)
@@ -188,7 +191,7 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 24. [raw_dividend_history](#raw_dividend_history)
 25. [raw_dividend_history_yfinance](#raw_dividend_history_yfinance)
 26. [dividend_event_list](#dividend_event_list)
-27. [dividend_event_list_yfinance](#dividend_event_list_yfinance)
+27. [dividend_event_yfinance_list](#dividend_event_yfinance_list)
 28. [raw_dividend](#raw_dividend)
 29. [dividend](#dividend)
 30. [raw_dividend_yfinance](#raw_dividend_yfinance)
@@ -276,14 +279,15 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 ## mops_quarterly_financials_quarter_list
 
 - **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
-- **HTTP API endpoint**：無（純 SQL 展開，每月末篩出季末月）
+- **HTTP API endpoint**：無（純 SQL 展開，以 3 個月步長直接產生季末日）
 - 對應 [`/api/company/{stock_id}/quarterly-financials`](../../app/main.py) MOPS t163sb06 + t163sb04。
 - 設計理念（rule 14, 20）：季頻獨立 `_list`，不與既有 FinMind/yfinance 版季度母體混用（不同資料源分流）。
+- 設計理念（rule 13）：起點對齊到設立日所在季的季末月、步長 3 個月，不再逐月展開後用 WHERE 篩季末月（輸出相同，hidden 每 tick 少算 2/3 的列）。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `quarter_end` | DATE | 該季最後一日（僅保留 3/6/9/12 月月末） | 逐月展開後篩選季末月 |
+| `quarter_end` | DATE | 該季最後一日（3/6/9/12 月月末） | `generate_series(..., INTERVAL '3 months')` |
 
 ---
 
@@ -384,7 +388,7 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `month_start_date` | DATE | 每月 5 日（從 `GREATEST(listing_date, 2004-02-11)` 起） | `generate_series(...)` |
+| `month_start_date` | DATE | 每月 5 日（從 `GREATEST(掛牌日之後第一個 5 日, 2004-02-05)` 起；2004-02 那列改用下限 2004-02-11） | `generate_series(...)` |
 
 ---
 
@@ -432,7 +436,7 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `month_start_date` | DATE | 每月 5 日（從 `GREATEST(listing_date, 2005-01-28)` 起） | `generate_series(...)` |
+| `month_start_date` | DATE | 每月 5 日（從 `GREATEST(掛牌日之後第一個 5 日, 2005-02-05)` 起） | `generate_series(...)` |
 
 ---
 
@@ -525,10 +529,12 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 - **HTTP API endpoint**：無（純 SQL `generate_series`）
 - 對應 [`/api/market-valuation-summary`](../../app/main.py) TWSE BWIBBU_d（市場層級彙總，無 stock_id 維度）。
 - 設計理念（rule 11）：單日全市場彙總、無回溯 fallback，PoC 每月一次（每月 5 日）代表性取樣。
+- **邊界（rule 13）**：起點 2017-05-05。TWSE BWIBBU_d 雖自 2005-09-02 起有資料，但 2017-04-05 以前 payload 只有 5 欄（無收盤價），backend 依 8 欄格式解析而失敗；實測 pop 2017-05 以前 139 列全部 NULL。backend 支援舊格式後可往回調，並同步調整 [company_valuation_monthly_list](#company_valuation_monthly_list)。
+- **已知限制**：5 日落在週末 / 假日時無回溯，2017-05 以後約 1/3 列為 NULL，需 backend 加回溯才能解。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
-| `valuation_date` | DATE | 每月 5 日（從 2005-10-05 起） | `generate_series(...)` |
+| `valuation_date` | DATE | 每月 5 日（從 2017-05-05 起） | `generate_series(...)` |
 
 ---
 
@@ -563,18 +569,20 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 ## company_valuation_monthly_list
 
-- **上游 SQL**：[company_basic_info_list](#company_basic_info_list) + [market_valuation_date_list](#market_valuation_date_list)
-- **HTTP API endpoint**：無（純 SQL `CROSS JOIN`）
+- **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
+- **HTTP API endpoint**：無（純 SQL `generate_series`）
 - 對應 [`/api/company-valuation`](../../app/main.py) TWSE BWIBBU_d（單股展開）。
-- **爬取效率**：不再各自 `generate_series`，改為直接 `CROSS JOIN market_valuation_date_list` 取得與
-  `/api/market-valuation-summary` **完全相同**的日期集合（`WHERE valuation_date >= listing_date` 排除掛牌前）。
+- **爬取效率**：取樣日格點與 [market_valuation_date_list](#market_valuation_date_list) **完全相同**（起點 2017-05-05、每月 5 日），
   兩個 endpoint 共用同一份 TWSE `BWIBBU_d` 每日 payload（backend 依日期磁碟 cache），對齊取樣日期後
-  同一天只會打上游 1 次，避免因為兩個 seed 各自取樣到不同日期而讓上游被打兩次。
+  同一天只會打上游 1 次。若調整 `market_valuation_date_list` 的起點，這裡要同步改。
+- **設計理念（rule 13）**：掛牌日邊界直接寫進 `generate_series` 起點（`GREATEST(2017-05-05, 掛牌日當月 5 日；掛牌日晚於 5 日則下月 5 日)`），
+  不再 `CROSS JOIN` 全部日期後用 `WHERE valuation_date >= listing_date` 篩。輸出與舊版相同（實測 85,555 列，雙向 `EXCEPT ALL` 皆 0）。
+  `WHERE listing_date IS NOT NULL` 為技術性 guard（rule 13 例外）。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `valuation_date` | DATE | 與 `market_valuation_date_list` 完全相同的每月 5 日集合 | `market_valuation_date_list.valuation_date` |
+| `valuation_date` | DATE | 掛牌後每月 5 日（格點與 `market_valuation_date_list` 相同） | `generate_series(...)` |
 
 ---
 
@@ -711,7 +719,9 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 ## company_list
 
 - **上游 SQL**：[chain_info_list](#chain_info_list)
-- **HTTP API endpoint**：無（純 SQL `DISTINCT`）
+- **HTTP API endpoint**：無（純 SQL `GROUP BY stk_code`，rule 2）
+- **設計理念**：只讀已物化的 `pop.chain_info_list`（rule 21），所以 `hidden.company_list` 每次 cron tick 都是純 SQL、不會重打 47 條 `/api/chain/*`。以 `stk_code` 為唯一 key（rule 6），同一公司在不同產業鏈名稱不一致時取 `MIN(company_name)`，避免同代號兩列讓下游 `raw_*` 重複發查。本表是 seed，不經 pg_ivm 展開，`GROUP BY` 不受 rule 16 限制。
+- **曾經的寫法**：commit `45ecf3f` 為了讓 poc `LIMIT 1` 不展開全部產業鏈，改成以 recursive CTE 直接呼叫 `/api/chain/*`，違反 rule 2，也讓 pop 的 cron 每 tick 重打 API；現在 API 回應有 `job_control.http_cache`，poc 全展開冷啟動約 0.4 秒，已無此必要。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
@@ -871,12 +881,13 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 - **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
 - **HTTP API endpoint**：無（純 SQL `generate_series`）
-- 以 `custom.trunc_year(incorporation_date)` 為起點,`generate_series(..., CURRENT_DATE, INTERVAL '1 year')` 展開出每一個年初
+- 以 `GREATEST(custom.trunc_year(incorporation_date), 1992-01-01)` 為起點,`generate_series(..., CURRENT_DATE, INTERVAL '1 year')` 展開出每一個年初
+- **邊界（rule 13）**：FinMind `TaiwanStockFinancialStatements` 最早一季為 1991-12-31（2026-11 實測 2330），更早的 as_of 必定回空。`incorporation_date IS NOT NULL` 為技術性 guard。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `year_start_date` | DATE | 公司歷年的 1 月 1 日（從設立年到今年） | `generate_series(trunc_year(incorporation_date), CURRENT_DATE, '1 year')` |
+| `year_start_date` | DATE | 公司歷年的 1 月 1 日（從 `GREATEST(設立年, 1992)` 到今年） | `generate_series(GREATEST(trunc_year(incorporation_date), '1992-01-01'), CURRENT_DATE, '1 year')` |
 
 ---
 
@@ -899,12 +910,13 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 - **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
 - **HTTP API endpoint**：無（純 SQL `generate_series`）
-- **設計理念（rule 20）**：內容完全等同 `financial_year_list`,拆成兩張目的在於「分流爬取」：`raw_yearly_financials`（FinMind）與 `raw_yearly_financials_yfinance` 對應到不同 `pop.<seed>` 空表，可各自以不同的 doubling limit 進度填充。yfinance 限流寬（每小時可數千次），可以先拉高 LIMIT 快速拉齊；FinMind 慢，保持保守進度，兩邊互不阻塞。
+- **邊界（rule 13）**：只產生「今年 1/1」（`GREATEST(trunc_year(incorporation_date), trunc_year(CURRENT_DATE))`）。yfinance `quarterly_financials` 只保留最近幾季的滾動視窗，實測 pop 300 列中只有最新一年的列帶回季度、更早年度全是空陣列；每跨一年自然多一列，已爬過的舊列留在 pop。
+- **設計理念（rule 20）**：結構同 `financial_year_list`（只差上述下限）,拆成兩張目的在於「分流爬取」：`raw_yearly_financials`（FinMind）與 `raw_yearly_financials_yfinance` 對應到不同 `pop.<seed>` 空表，可各自以不同的 doubling limit 進度填充。yfinance 限流寬（每小時可數千次），可以先拉高 LIMIT 快速拉齊；FinMind 慢，保持保守進度，兩邊互不阻塞。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `year_start_date` | DATE | 公司歷年的 1 月 1 日（從設立年到今年） | `generate_series(trunc_year(incorporation_date), CURRENT_DATE, '1 year')` |
+| `year_start_date` | DATE | 今年 1 月 1 日（yfinance 只有近幾季，舊年度不產生） | `generate_series(GREATEST(trunc_year(incorporation_date), trunc_year(CURRENT_DATE)), CURRENT_DATE, '1 year')` |
 
 ---
 
@@ -952,12 +964,13 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 - **HTTP API endpoint**：無（純 SQL 產生）
 - **服務的下游**：[raw_monthly_revenue](#raw_monthly_revenue)（FinMind 版）
 - 設計理念（規則 11, 14, 15）：月營收公布頻率為每月一次（次月 10 日前）,幾乎所有公司每月都有,規則性格點恰等於事件母體 — 為 rule 15 的退化特例。因此仍以「每月一次」的 as_of 遍歷所有月份切片,不必以日為單位密集抓取。
+- **邊界（rule 13）**：起點 `GREATEST(成立月 1 日, 2002-02-01)`。FinMind `TaiwanStockMonthRevenue` 最早一筆為 2002-01 營收（date=2002-02-01，2026-11 實測 2330）。`incorporation_date IS NOT NULL` 為技術性 guard。
 - **設計理念（規則 20）**：本 seed 專供 FinMind 版 raw_monthly_revenue。TWSE/MOPS 版已於 v0.0.10 五次補丁拆到獨立 seed [financial_month_twse_list](#financial_month_twse_list)。並行拆分目的在避免共用 seed 時慢端（FinMind 免費層 300 req/hr）拖累快端（TWSE OpenAPI + MOPS t21sc03,後者有 24h server-side cache,quota 寬鬆很多）。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `month_start_date` | DATE | 從公司成立日所屬月份開始、每月 1 日 generate 一列,直到 CURRENT_DATE | `generate_series(...)` |
+| `month_start_date` | DATE | 從 `GREATEST(成立月, 2002-02)` 開始、每月 1 日 generate 一列,直到 CURRENT_DATE | `generate_series(...)` |
 
 ---
 
@@ -1002,13 +1015,13 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 - **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
 - **HTTP API endpoint**：無（純 SQL `generate_series`）
 - **服務的下游**：[raw_monthly_revenue_twse](#raw_monthly_revenue_twse)
-- **設計理念（規則 20）**：內容完全等同 [financial_month_list](#financial_month_list)，拆成兩張目的在於「分流爬取」：`raw_monthly_revenue`（FinMind, 免費層 300 req/hr）與 `raw_monthly_revenue_twse`（TWSE OpenAPI + MOPS t21sc03; TWSE OpenAPI 無明顯 quota、MOPS 內部有 24h server-side cache）對應到不同 `pop.<seed>` 空表，可各自以不同的 batch limit 進度填充。TWSE 端限流寬，可拉高 `batch_size.json` 的 `financial_month_twse_list` 快速拉齊（初版 4/tick，後續由 `probe_seed_insert_limit` 推升），FinMind 端保持 1/tick 不被拖累。
-- 內容與 [financial_month_list](#financial_month_list) 完全一致 — 拆分價值僅在於獨立 seed，不在邏輯差異。
+- **設計理念（規則 20）**：結構同 [financial_month_list](#financial_month_list)（只差資料源下限），拆成兩張目的在於「分流爬取」：`raw_monthly_revenue`（FinMind, 免費層 300 req/hr）與 `raw_monthly_revenue_twse`（TWSE OpenAPI + MOPS t21sc03; TWSE OpenAPI 無明顯 quota、MOPS 內部有 24h server-side cache）對應到不同 `pop.<seed>` 空表，可各自以不同的 batch limit 進度填充。TWSE 端限流寬，可拉高 `batch_size.json` 的 `financial_month_twse_list` 快速拉齊（初版 4/tick，後續由 `probe_seed_insert_limit` 推升），FinMind 端保持 1/tick 不被拖累。
+- **邊界（rule 13）**：起點 `GREATEST(成立月 1 日, 2010-01-01)`。MOPS t21sc03 靜態頁最早為上市 民國 98/12、上櫃 民國 99/1，更早月份 404（2026-11 實測）。`incorporation_date IS NOT NULL` 為技術性 guard。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `month_start_date` | DATE | 從公司成立日所屬月份開始、每月 1 日 generate 一列,直到 CURRENT_DATE | `generate_series(...)` |
+| `month_start_date` | DATE | 從 `GREATEST(成立月, 2010-01)` 開始、每月 1 日 generate 一列,直到 CURRENT_DATE | `generate_series(...)` |
 
 ---
 
@@ -1048,9 +1061,22 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 ---
 
-## raw_dividend_history
+## company_finmind_list
 
 - **上游 SQL**：[company_list](#company_list)
+- **HTTP API endpoint**：無（純 SQL，內容與 `company_list` 相同）
+- **設計理念（rule 20 例子3）**：FinMind 專用的公司 seed，只餵 `raw_dividend_history`，讓 FinMind 以 ≤ 300 req/hr 獨立排程，不被 `company_list`（TWSE / yfinance 速度）拖進限流。只讀 `pop.company_list`，所以進度永遠落在 `company_list` 之後。
+
+| 欄位 | 型別 | 中文描述 | 來源 |
+| --- | --- | --- | --- |
+| `stk_code` | TEXT | 股票代號 | `company_list.stk_code` |
+| `company_name` | TEXT | 公司名稱 | `company_list.company_name` |
+
+---
+
+## raw_dividend_history
+
+- **上游 SQL**：[company_finmind_list](#company_finmind_list)（rule 20：FinMind 專用 seed）
 - **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/dividend/history`
   - 上游：[FinMind v4](https://api.finmindtrade.com/api/v4/data) dataset `TaiwanStockDividend`（20 年區間全量）
 - 設計理念（rule 15）：股利是「事件性資料」— 每公司每年 0~數次除息事件。對 (公司 × 每年年初) 打 `/dividend?as_of=X` 只會回 as_of 前最後一筆,多年查詢會產生大量重複命中。本 raw 每公司一次撈整包歷史 events array,作為下游 `dividend_event_list` 的來源母體。
@@ -1080,19 +1106,19 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 - **上游 SQL**：[raw_dividend_history](#raw_dividend_history)
 - **HTTP API endpoint**：無（`_list` 不呼叫 HTTP,rule 2）
-- 用途：作為 `raw_dividend` 的上游母體 — 攤平該公司歷史所有除息日 `cash_ex_dividend_date`。
-- 設計理念（rule 15）：股利屬「事件性資料」,事件母體由資料本身告訴我們（哪些日期真正有除息）,而非以規則性時間格點採樣。
-- 設計理念（rule 13 例外）：本檔以 `WHERE cash_ex_dividend_date IS NOT NULL` 過濾「不可用事件」（FinMind 罕見狀況：僅有股票股利 / 除權日,無現金除息日）;這些列對下游 as_of endpoint 無意義,屬資料品質層清理。
-- 設計理念（rule 6）：以 `(stk_code, cash_ex_dividend_date)` 為唯一 key（`DISTINCT` 去重罕見 FinMind 同日重複）。
+- 用途：作為 `raw_dividend` 的上游母體 — 攤平該公司歷史所有股利事件 `reference_date`。
+- 設計理念（rule 15）：股利屬「事件性資料」,事件母體由資料本身告訴我們（哪些日期真正有事件）,而非以規則性時間格點採樣。
+- 設計理念（rule 17）：事件 key 選 `reference_date`（歷史列皆非 NULL），不選 `cash_ex_dividend_date`（純股票股利年份為 NULL），因此不需要 `WHERE ... IS NOT NULL`。
+- 設計理念（rule 6）：以 `(stk_code, reference_date)` 為唯一 key。SQL 不另外去重，依賴上游 events 同公司同 `reference_date` 不重複（實測 pop 3,709 筆 events 重複 0、NULL 0）。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `raw_dividend_history.stk_code` |
-| `cash_ex_dividend_date` | DATE | 現金股利除息交易日（本次事件的 as_of） | `dividend_history.events[].cash_ex_dividend_date` |
+| `reference_date` | DATE | 股利事件基準日（本次事件的 as_of） | `dividend_history.events[].reference_date` |
 
 ---
 
-## dividend_event_list_yfinance
+## dividend_event_yfinance_list
 
 - **上游 SQL**：[raw_dividend_history_yfinance](#raw_dividend_history_yfinance)
 - **HTTP API endpoint**：無
@@ -1101,22 +1127,22 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `raw_dividend_history_yfinance.stk_code` |
-| `cash_ex_dividend_date` | DATE | 現金股利除息交易日 | `dividend_history.events[].cash_ex_dividend_date` |
+| `reference_date` | DATE | 股利事件基準日 | `dividend_history.events[].reference_date` |
 
 ---
 
 ## raw_dividend
 
 - **上游 SQL**：[dividend_event_list](#dividend_event_list)
-- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/dividend?as_of={cash_ex_dividend_date}`
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/dividend?as_of={reference_date}`
   - 上游：[FinMind v4](https://api.finmindtrade.com/api/v4/data) dataset `TaiwanStockDividend`（透過 `_pick_dividend` 取 as_of 前最後一筆）
-- 設計理念（rule 15）：以事件母體「該公司歷史真正的除息日」作為 as_of 遍歷。每筆 `(stk_code, ex_date)` 打一次 `/dividend?as_of=ex_date`,每次命中的就是「該次除息事件對應的股利明細」— 不會落到重複的 last_dividend,也不會浪費 API 打沒事件的日期。
+- 設計理念（rule 15）：以事件母體「該公司歷史真正的股利事件日」作為 as_of 遍歷。每筆 `(stk_code, reference_date)` 打一次 `/dividend?as_of=reference_date`,每次命中的就是「該次股利事件對應的明細」— 不會落到重複的 last_dividend,也不會浪費 API 打沒事件的日期。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `dividend_event_list.stk_code` |
 | `dividend` | JSONB | `/dividend?as_of=X` endpoint 整包 JSON（含 `dividend.{year, reference_date, cash_dividend, stock_dividend, cash_ex_dividend_date, cash_payment_date, stock_ex_dividend_date, announcement_date}`） | `custom.http_get_content(url)` |
-| `as_of` | DATE | 本筆對應的查詢基準日（即 `cash_ex_dividend_date`） | `dividend_event_list.cash_ex_dividend_date` |
+| `as_of` | DATE | 本筆對應的查詢基準日（即 `reference_date`） | `dividend_event_list.reference_date` |
 
 ---
 
@@ -1125,7 +1151,7 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 - **上游 SQL**：[raw_dividend](#raw_dividend)
 - **HTTP API endpoint**：無（純 JSON 攤平）
 - 欄位 align `DividendSection`;主鍵顯示規則與 [financial_quarterly](#financial_quarterly) 同 (`stk_code` + `as_of`)。每列 = 該公司歷史某次除息事件對應的股利明細。
-- 設計理念（rule 15）：每列對應歷史一次真實除息事件（by `cash_ex_dividend_date`）,非規則性時間格點採樣。
+- 設計理念（rule 15）：每列對應歷史一次真實股利事件（by `reference_date`）,非規則性時間格點採樣。
 - 設計理念（rule 13）：不做 WHERE 過濾,保留 raw 母體所有 rows。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
@@ -1146,16 +1172,16 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 
 ## raw_dividend_yfinance
 
-- **上游 SQL**：[dividend_event_list_yfinance](#dividend_event_list_yfinance)
-- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/dividend/yfinance?as_of={cash_ex_dividend_date}`
+- **上游 SQL**：[dividend_event_yfinance_list](#dividend_event_yfinance_list)
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/dividend/yfinance?as_of={reference_date}`
   - 上游：yfinance Python Library — `Ticker.dividends`
 - 與 `raw_dividend` (FinMind 版) 結構完全一致,純資料源替代版。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
-| `stk_code` | TEXT | 股票代號 | `dividend_event_list_yfinance.stk_code` |
+| `stk_code` | TEXT | 股票代號 | `dividend_event_yfinance_list.stk_code` |
 | `dividend` | JSONB | `/dividend/yfinance?as_of=X` endpoint 整包 JSON（結構與 raw_dividend 一致） | `custom.http_get_content(url)` |
-| `as_of` | DATE | 本筆對應的查詢基準日（即 `cash_ex_dividend_date`） | `dividend_event_list_yfinance.cash_ex_dividend_date` |
+| `as_of` | DATE | 本筆對應的查詢基準日（即 `reference_date`） | `dividend_event_yfinance_list.reference_date` |
 
 ---
 
@@ -1164,7 +1190,7 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 - **上游 SQL**：[raw_dividend_yfinance](#raw_dividend_yfinance)
 - **HTTP API endpoint**：無（純 JSON 攤平）
 - 欄位完全與 [dividend](#dividend) align,只差在資料源（yfinance vs FinMind）。`stock_dividend` / `cash_payment_date` / `stock_ex_dividend_date` / `announcement_date` 上游 endpoint 已回 null/0,此處保留同 schema。
-- 設計理念（rule 15）：每列對應歷史一次真實除息事件（by `cash_ex_dividend_date`）。
+- 設計理念（rule 15）：每列對應歷史一次真實股利事件（by `reference_date`）。
 - 設計理念（rule 13）：不做 WHERE 過濾,保留 raw 母體所有 rows。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
@@ -1226,6 +1252,8 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 - **上游 SQL**：[raw_yearly_financials_yfinance](#raw_yearly_financials_yfinance)
 - **HTTP API endpoint**：無（純 JSONB 展開）
 - 設計理念（規則 14, 15）：季度屬離散事件（每公司只有真正揭露的那幾季有資料）。事件母體由 `raw_yearly_financials_yfinance.financials.eps.ttm_quarters ∪ net_income.ttm_quarters` 告訴我們,而非規則性時間格點。與 `financial_quarter_list` (FinMind 版) 結構完全一致,只差資料源。
+- 設計理念（rule 13 例外）：只以 `WHERE value IS NOT NULL` 濾掉陣列內的 null 季度（取代舊版 `quarter <> '[null]'`，舊版擋不住 `[null, "2025-06-30"]` 這類混合陣列）。
+- 設計理念（rule 6）：eps 與 net_income 的季度清單在同一列 raw 內大量重疊（實測 16 列中 4 列重複），故在 `LATERAL` 子查詢內**逐列** `DISTINCT`；不在外層 DISTINCT，因為外層 DISTINCT 會讓 poc 的 `LIMIT 1` 無法提早結束。殘餘限制：同公司不同年度列帶回相同季度的跨列重複（目前資料未出現）無法在不阻斷串流下消除，由 seed insert 的 `EXCEPT` 去重。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
@@ -1279,17 +1307,18 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
 - **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
 - **HTTP API endpoint**：無（純 SQL `generate_series`）
 - **角色**：seed（`_list`）— 每 `(stk_code, month_start_date)` 一列，作為 `/api/ohlcv` 事件母體。上市 + 上櫃 **統一在同一張 seed**，不再分流（v3 曾經拆為 `ohlcv_daily_twse_list` / `ohlcv_daily_tpex_list` 兩張，v4 已合併）。
-- **設計理念（rule 15 · 母體大小）**：從 `company_basic_info_list.listing_date` 起，月粒度 `generate_series` 到 `CURRENT_DATE`。~1900 檔（上市 + 上櫃）× 平均 12 年 × 12 月 ≈ 270k 列 seed 上限。
+- **設計理念（rule 15 · 母體大小）**：從 `GREATEST(listing_date 所屬月, 2010-02-01)` 起，月粒度 `generate_series` 到 `CURRENT_DATE`。~1900 檔（上市 + 上櫃）× 平均 12 年 × 12 月 ≈ 270k 列 seed 上限。
 - **設計理念（rule 20 · 資料源分流）**：seed 層**不做**分流。backend `/api/ohlcv` 統一 endpoint 內部依 `company_basic_info_list.market` 分發到 TWSE STOCK_DAY 或 TPEx tradingStock 上游，分流已下沉到 backend 層。單一 `batch_size.json` → `ohlcv_monthly_list` 條目控制 refresh 節奏。
 - **設計理念（rule 6 · rows 唯一）**：`(stk_code, month_start_date)` 天然唯一 — `generate_series` step `INTERVAL '1 month'` 且起點為月初。
-- **設計理念（rule 13）**：`listing_date IS NOT NULL` 為技術性 guard（`generate_series` 起點不能是 NULL），非業務過濾。
+- **設計理念（rule 13）**：`listing_date IS NOT NULL` 為技術性 guard（`GREATEST` 會忽略 NULL），非業務過濾。
+- **起點 2010-02-01（commit 614005c）**：backend 對上市股 `from < 2010-01-04`（STOCK_DAY hard block）會改走 MI_INDEX 逐日全市場 payload（每月 ~20 次呼叫）；起點設在 2010-02-01 讓所有月份都走 STOCK_DAY 一月一次。代價是 2004-02 ~ 2010-01 不在母體內；要補齊時把下限改回 `2004-02-01`（backend 已支援）。
 - **每日新月觸發機制**：每月 1 日 `CURRENT_DATE` 推進到新月 → `generate_series` 上界改變 → 每檔股票多一列新的 `month_start_date` → pipeline `EXCEPT` anti-join 判定為新列並 INSERT → 觸發 raw 拉該股該月最新日 K。
 - **傳遞欄位**：SELECT 出 `listing_date`，向下游 `raw_ohlcv_monthly` 傳遞（未來若需以 listing_date 為條件過濾早於上市日的空月，可在下游使用）。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `month_start_date` | DATE | 該月第一日（西元） | `generate_series(month_of(listing_date), CURRENT_DATE, INTERVAL '1 month')` |
+| `month_start_date` | DATE | 該月第一日（西元） | `generate_series(GREATEST(month_of(listing_date), '2010-02-01'), CURRENT_DATE, INTERVAL '1 month')` |
 | `listing_date` | DATE | 上市/上櫃日 | `company_basic_info_list.listing_date` |
 
 ---
@@ -1301,8 +1330,8 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
   - 上游 endpoint：twstock_api 統一 `/api/ohlcv`（於 `app/main.py` 定義）— backend 依 `company_basic_info_list.market` 判別後分發到 [TWSE 證交所 · 個股日成交資訊 STOCK_DAY](https://www.twse.com.tw/zh/trading/historical/stock-day.html) 或 [TPEx 櫃買中心 · 個股日成交資訊 tradingStock](https://www.tpex.org.tw/zh-tw/mainboard/trading/info/mi-pricing.html)（per-stock-per-month）。
   - Backend 策略：`range_days > 7` 走 `per_stock_month`，一次呼叫上游拿整月日 K（~20 個交易日）；`range_days ≤ 7` 走 `per_day_market`，走 MI_INDEX / dailyQuotes 全市場 payload + 磁碟 cache（seed 打的月範圍固定 ~28~31 天，實際永遠走 `per_stock_month`）。
   - 為何走 `/api/ohlcv` 而非直接打 TWSE / TPEx：backend 已把 TPEx「張 / 仟元」單位對齊「股 / 元」、把民國年轉西元、把「漲跌方向 + 漲跌價差」合成 signed `change`；raw 層與 normalized 層 SQL 大幅簡化，且 TWSE / TPEx 兩市場共享同一 endpoint（未來若上游 URL 變動只需改 backend）。
-- **設計理念（rule 9 · one payload per event）**：一個 `(stk_code, month_start_date)` = 一列 payload；範圍為「該月 1 號 → 當月月底」（`month_start + INTERVAL '1 month' - INTERVAL '1 day'`）。
-- **設計理念（rule 3）**：URL 組合僅使用 IMMUTABLE building blocks；HTTP 呼叫走 `custom.http_get_content`。
+- **設計理念（rule 9 · one payload per event）**：一個 `(stk_code, month_start_date)` = 一列 payload；範圍為「該月 1 號 → 當月月底」（`custom.month_end(month_start_date)`）。
+- **設計理念（rule 1 / 3）**：URL 組合僅使用 IMMUTABLE building blocks（月底用 `db/setting.sql` 的 `custom.month_end`，不用 `::DATE` cast）；HTTP 呼叫走 `custom.http_get_content`。
 - **payload 空回情境**：`found=false`（stk_code 不在 `company_basic_info_list`）或該月無交易日 → `rows=[]`，正規化層 `CROSS JOIN LATERAL` 自然攤平 0 列。
 - **payload 結構（供下游正規化參考）**：backend 已把單位對齊到「股 / 元」，欄位命名與市場無關：
   ```
