@@ -81,14 +81,8 @@ RUN_POC_VIEW_SELECT_TESTS=1 pytest -m poc_view_select tests/live_sql/ -v
 
 # Data Pipeline 串接測試方式
 
-## (1) 啟動資料庫
 
-```bash
-cd db_start
-docker compose up
-```
-
-## (2) 安裝 python 環境
+## (1) 安裝 python 環境
 
 ```bash
 python3 -m pip install virtualenv
@@ -96,7 +90,7 @@ python3 -m virtualenv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
-## (3) 執行單元測試
+## (2) 執行單元測試
 
 與 CI（`.github/workflows/test-all.yml`）相同的測試項目：
 
@@ -122,6 +116,12 @@ RUN_POC_VIEW_SELECT_TESTS=1 pytest tests/live_sql/ -vv
 RUN_UPSTREAM_CONTRACT_TESTS=1 pytest tests/upstream/ -m upstream_contract -q
 ```
 
+## (3) 啟動資料庫
+
+```bash
+cd db_start
+docker compose up
+```
 
 ## (4) 建立 poc 資料流
 
