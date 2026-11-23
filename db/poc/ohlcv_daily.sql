@@ -1,5 +1,5 @@
--- ohlcv_daily_tpex
--- 上游：raw_ohlcv_daily_tpex（每 (stk_code, month_start_date) 一列，內含該月日 K JSON）
+-- ohlcv_daily
+-- 上游：raw_ohlcv_monthly（每 (stk_code, month_start_date) 一列，內含該月日 K JSON；上市 + 上櫃合併）
 -- 用途：把 /api/ohlcv payload 攤平成 (trade_date, stk_code) 逐股逐日正規化行情。
 --
 -- 設計理念（rule 16 · pg_ivm 相容）：只用 CROSS JOIN LATERAL jsonb_array_elements(ohlcv->'rows')。
@@ -7,12 +7,12 @@
 -- 設計理念（rule 13）：不做業務過濾；rows=[] → 0 列。
 -- 設計理念（NULL-safe）：COALESCE(ohlcv->'rows', '[]'::jsonb) 防 refresh 中斷。
 --
--- 欄位對齊 ohlcv_daily_twse：market='otc'（上櫃）；欄位命名、單位皆對齊 TWSE 版。
+-- 上市 / 上櫃共用同一張 view；本 view 不輸出 market 欄位（需要時可 join company_basic_info_list）。
 --
 -- 單位對齊：backend 已把 TPEx 上游「張 / 仟元」統一乘 1000 對齊「股 / 元」，
 --   normalized 層不再需要在 SQL 內乘 1000（原本 TPEx-only 的 *1000 魔數已消失）。
 --
--- rows[*] 欄位：與 ohlcv_daily_twse 完全相同 schema，backend 已保證。
+-- rows[*] 欄位：上市 / 上櫃 schema 完全相同，backend 已保證。
 SELECT
     custom.parse_iso_date(item->>'trade_date') AS trade_date,
     item->>'stk_code' AS stk_code,

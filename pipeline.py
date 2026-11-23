@@ -1,8 +1,9 @@
 
 import os
+import re
 from jinja2 import Template
 from sql_metadata import Parser
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 from paradag import DAG, dag_run, SequentialProcessor
 from pg_tool import PostgreSQLTool
 from psycopg import OperationalError
@@ -235,7 +236,102 @@ class Pipeline:
             )
         ]
 
-    def _build_seed_insert_sql(self, table: str, row_cnt: int = 1, table_reindex: bool = False) -> List[str]:
+    @staticmethod
+    def _sql_literal(value: Any) -> str:
+        """Render a Python scalar as an untyped SQL literal (``'...'``).
+
+        Untyped literals let Postgres coerce to the column's own type
+        (text/int/date/numeric), so ``"stock_id" = '2330'`` and
+        ``"year" = '2024'`` both work and stay pushable into the view.
+        Single quotes are doubled (safe with standard_conforming_strings,
+        the Postgres default).
+        """
+        if value is None:
+            raise ValueError('Filter value must not be None (seed rows are never NULL).')
+        if isinstance(value, bool):
+            text = 'true' if value else 'false'
+        elif isinstance(value, (int, float, str)):
+            text = str(value)
+        else:
+            raise ValueError(f'Unsupported filter value type: {type(value).__name__}')
+        if '\x00' in text:
+            raise ValueError('Filter value must not contain NUL characters.')
+        return "'" + text.replace("'", "''") + "'"
+
+    def _build_seed_filter_clause(self, columns: List[str], filters: Optional[Dict[str, Any]]) -> str:
+        """``AND "col" = 'v'`` / ``AND "col" IN ('a','b')`` for each filter.
+
+        Column names are only accepted if they are real columns of
+        pop.<table> (== hidden.<table>), so no identifier is ever taken
+        verbatim from the caller.
+        """
+        if not filters:
+            return ''
+        parts = []
+        for col, value in filters.items():
+            if col not in columns:
+                raise ValueError(f'Unknown filter column {col!r}. Columns: {columns}')
+            if isinstance(value, (list, tuple, set)):
+                values = list(value)
+                if not values:
+                    raise ValueError(f'Filter list for {col!r} is empty.')
+                parts.append(f'"{col}" IN ({", ".join(self._sql_literal(v) for v in values)})')
+            else:
+                parts.append(f'"{col}" = {self._sql_literal(value)}')
+        return ' AND ' + ' AND '.join(parts)
+
+    _ORDER_TERM_RE = re.compile(r'^\s*(\S+?)(?:\s+(asc|desc))?\s*$', re.IGNORECASE)
+    _ORDERABLE_TIME_TYPES = ('date', 'timestamp without time zone', 'timestamp with time zone')
+    _ORDERABLE_TIME_NAMES = ('year', 'ym', 'quarter', 'month')
+
+    def _default_seed_order_by(self, table: str) -> List[str]:
+        """Newest-first default: the first date/timestamp column of
+        pop.<table>, else a column named year/ym/quarter/month, as DESC.
+        Returns [] when the table has no time-like column."""
+        rows = self._db_tool.fetch_all(
+            """
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = 'pop' AND table_name = %s
+            ORDER BY ordinal_position
+            """,
+            (table,),
+        )
+        for name, dtype in rows:
+            if dtype in self._ORDERABLE_TIME_TYPES:
+                return [f'{name} DESC']
+        for name, _ in rows:
+            if name in self._ORDERABLE_TIME_NAMES:
+                return [f'{name} DESC']
+        return []
+
+    def _build_seed_order_clause(self, columns: List[str], order_by: Optional[List[str]]) -> str:
+        """`` ORDER BY "c1" DESC, "c2" ASC`` from ``["c1", "c2 asc"]``.
+
+        A bare column means DESC (newest first). Columns must be real
+        columns of pop.<table>; only ASC/DESC are accepted as modifiers.
+        """
+        if not order_by:
+            return ''
+        terms = []
+        for term in order_by:
+            m = self._ORDER_TERM_RE.match(term or '')
+            if not m:
+                raise ValueError(f'Bad order_by term {term!r}; use "column" or "column ASC|DESC".')
+            col, direction = m.group(1), (m.group(2) or 'DESC').upper()
+            if col not in columns:
+                raise ValueError(f'Unknown order_by column {col!r}. Columns: {columns}')
+            terms.append(f'"{col}" {direction}')
+        return ' ORDER BY ' + ', '.join(terms)
+
+    def _build_seed_insert_sql(
+        self,
+        table: str,
+        row_cnt: int = 1,
+        table_reindex: bool = False,
+        filters: Optional[Dict[str, Any]] = None,
+        order_by: Optional[List[str]] = None,
+    ) -> List[str]:
         """Build the seed-refresh SQL for ``pop.<table>``.
 
         Parameters
@@ -248,6 +344,15 @@ class Pipeline:
             When True, prepend ``REINDEX TABLE CONCURRENTLY pop.<table>;``
             before the INSERT. Defaults to False to avoid unnecessary index
             maintenance during routine probes and scheduled refreshes.
+        filters:
+            Optional ``{column: value}`` restricting which hidden rows are
+            picked, e.g. ``{"stock_id": "2330"}`` or
+            ``{"stock_id": ["2330", "2317"]}`` (IN). Lets callers prioritise
+            the rows most relevant to the current analysis.
+        order_by:
+            Optional ``["column", "column ASC|DESC", ...]`` deciding which
+            rows the LIMIT keeps; a bare column sorts DESC (newest first).
+            None/[] keeps the original unordered pick (cheapest; used by cron).
 
         This SQL is shared by both the bootstrap one-shot path and the
         pg_cron scheduled refresh path so all callers stay in sync.
@@ -259,11 +364,13 @@ class Pipeline:
                 '(was create_seed_tables run?).'
             )
         not_null_clause = ' AND '.join(f'"{c}" IS NOT NULL' for c in columns)
+        not_null_clause += self._build_seed_filter_clause(columns, filters)
         insert_sql = (
             f'INSERT INTO pop.{table} '
             f'SELECT * FROM hidden.{table} '
             f'WHERE {not_null_clause} '
-            f'EXCEPT SELECT * FROM pop.{table} '
+            f'EXCEPT SELECT * FROM pop.{table}'
+            f'{self._build_seed_order_clause(columns, order_by)} '
             f'LIMIT {row_cnt};'
         )
         if table_reindex:
@@ -390,6 +497,231 @@ class Pipeline:
                 print('==========SUCCESS==================')
         if test_insert:
             self._insert_few_rows_to_seed_tables(row_cnt=1)
+
+    # ------------------------------------------------------------------
+    # Targeted pop updates: only touch objects whose SQL changed
+    # ------------------------------------------------------------------
+
+    def _render_sql(self, schema: str, sql_path: str) -> str:
+        with open(os.path.join(os.path.dirname(__file__), 'db', 'poc', sql_path), 'r') as f:
+            return Template(f.read()).render(schema=schema).strip().removesuffix(';')
+
+    def _expected_pop_definitions(self) -> List[Dict[str, str]]:
+        """What every pop object should be, in DAG order.
+
+        Seed tables (``*_list``) are plain tables whose *definition* lives in
+        ``hidden.<name>``; every other SQL is an IMMV ``pop.<name>`` whose
+        query inlines its non-seed upstream (see _get_matview_select_sqls).
+        """
+        seeds = set(self.seed_tables)
+        out = []
+        for sql_path in self.ordered_sql_paths:
+            name = sql_path[:-len('.sql')]
+            if name in seeds:
+                out.append({'name': name, 'kind': 'seed', 'sql_path': sql_path,
+                            'sql': self._render_sql('pop', sql_path)})
+            else:
+                sql = self._get_matview_select_sqls('pop', sql_path).strip().removesuffix(';')
+                out.append({'name': name, 'kind': 'immv', 'sql_path': sql_path, 'sql': sql})
+        return out
+
+    @staticmethod
+    def _normalize_viewdef(sql: Optional[str]) -> Optional[str]:
+        if sql is None:
+            return None
+        return ' '.join(sql.split()).rstrip(';').strip()
+
+    def pop_definition_drift(self, names: Optional[List[str]] = None) -> List[Dict[str, object]]:
+        """Compare pop objects in the database with the current db/poc SQL.
+
+        Read-only. Both sides are normalised by Postgres: the expected SQL is
+        turned into a temporary view (rolled back) and read back with
+        pg_get_viewdef; the current side is pg_get_viewdef(hidden.<seed>) or
+        pgivm.get_immv_def(pop.<immv>).
+
+        status per object:
+          ok            definition matches
+          changed       definition differs -> update_mat_views would rebuild it
+          missing       pop table / hidden view / IMMV does not exist
+          invalid_sql   the expected SQL does not compile against pop (error in
+                        'error'); usually an upstream that must be updated first
+        """
+        expected = self._expected_pop_definitions()
+        if names is not None:
+            known = {e['name'] for e in expected}
+            unknown = sorted(set(names) - known)
+            if unknown:
+                raise ValueError(f'Unknown pop objects: {unknown}')
+            expected = [e for e in expected if e['name'] in set(names)]
+
+        results: List[Dict[str, object]] = []
+        conn = self._db_tool.get_conn()
+        try:
+            with conn.cursor() as cur:
+                for e in expected:
+                    name, kind = e['name'], e['kind']
+                    row: Dict[str, object] = {'name': name, 'kind': kind, 'status': 'ok', 'error': None}
+                    if kind == 'seed':
+                        cur.execute('SELECT to_regclass(%s) IS NOT NULL, to_regclass(%s) IS NOT NULL',
+                                    (f'pop.{name}', f'hidden.{name}'))
+                        table_ok, view_ok = cur.fetchone()
+                        row['table_exists'], row['hidden_view_exists'] = table_ok, view_ok
+                        current = None
+                        if view_ok:
+                            cur.execute('SELECT pg_get_viewdef(%s::regclass)', (f'hidden.{name}',))
+                            current = cur.fetchone()[0]
+                        exists = table_ok and view_ok
+                    else:
+                        cur.execute(
+                            'SELECT to_regclass(%s) IS NOT NULL, '
+                            'EXISTS (SELECT 1 FROM pgivm.pg_ivm_immv WHERE immvrelid = to_regclass(%s))',
+                            (f'pop.{name}', f'pop.{name}'))
+                        table_ok, is_immv = cur.fetchone()
+                        row['table_exists'], row['is_immv'] = table_ok, is_immv
+                        current = None
+                        if is_immv:
+                            cur.execute('SELECT pgivm.get_immv_def(%s::regclass)', (f'pop.{name}',))
+                            current = cur.fetchone()[0]
+                        exists = is_immv
+
+                    cur.execute('SAVEPOINT drift_chk')
+                    try:
+                        cur.execute(f'CREATE TEMP VIEW _pop_drift_chk AS {e["sql"]}')
+                        cur.execute("SELECT pg_get_viewdef('_pop_drift_chk'::regclass)")
+                        want = cur.fetchone()[0]
+                    except Exception as exc:  # noqa: BLE001 - reported per object
+                        want = None
+                        row['status'] = 'invalid_sql'
+                        row['error'] = str(exc).strip().splitlines()[0]
+                    finally:
+                        cur.execute('ROLLBACK TO SAVEPOINT drift_chk')
+
+                    if row['status'] != 'invalid_sql':
+                        if not exists:
+                            row['status'] = 'missing'
+                        elif self._normalize_viewdef(current) != self._normalize_viewdef(want):
+                            row['status'] = 'changed'
+                    results.append(row)
+        finally:
+            conn.rollback()
+            conn.close()
+        return results
+
+    def _create_one_seed_table(self, table: str) -> None:
+        """Empty pop.<table> shaped like poc.<table> (poc must be current).
+
+        LIKE copies the column list without running the poc query; CREATE
+        TABLE AS ... LIMIT 0 would still let the planner pre-evaluate the
+        IMMUTABLE http_get_content() on constant URLs (an API call).
+        """
+        self._db_tool.execute_query(
+            f'CREATE TABLE IF NOT EXISTS pop.{table} (LIKE poc.{table});')
+        self._set_seed_table_primary_key('pop', table)
+
+    def _hidden_views_depending_on(self, table: str) -> List[str]:
+        rows = self._db_tool.fetch_all(
+            """
+            SELECT DISTINCT v.relname
+            FROM pg_depend d
+            JOIN pg_rewrite r ON r.oid = d.objid
+            JOIN pg_class v ON v.oid = r.ev_class
+            JOIN pg_namespace n ON n.oid = v.relnamespace
+            WHERE d.refobjid = to_regclass(%s) AND n.nspname = 'hidden' AND v.relkind = 'v'
+            """,
+            (f'pop.{table}',),
+        )
+        return [r[0] for r in rows]
+
+    def update_mat_views(
+        self,
+        names: Optional[List[str]] = None,
+        dry_run: bool = False,
+    ) -> List[Dict[str, object]]:
+        """Bring only the drifted pop objects in line with db/poc SQL.
+
+        Unlike ``create_mat_views(recreate=True)`` this never drops the pop
+        schema or a seed table, so crawled data survives (rule 18):
+
+        * seed (``*_list``): ``CREATE OR REPLACE VIEW hidden.<name>``; if
+          ``pop.<name>`` is missing it is created empty. A seed whose columns
+          changed is refused (CREATE OR REPLACE VIEW cannot change columns and
+          the seed data would have to be dropped) -- handle that explicitly.
+        * IMMV: ``DROP TABLE pop.<name> CASCADE`` + ``pgivm.create_immv``,
+          which repopulates it by re-running the query over the current seed
+          rows (one API call per row, served from job_control.http_cache when
+          fresh). ``hidden`` views dropped by the cascade are recreated.
+          (pgivm.restore_immv(replace => true) is not used: it adds a second
+          set of IVM triggers without removing the old ones, so every later
+          seed insert is applied twice.)
+
+        Run ``create_views()`` first so poc reflects the same SQL.
+
+        names:   restrict to these objects (default: every drifted object).
+        dry_run: only return the plan.
+        Returns one dict per object with the action taken / planned.
+        """
+        drift = self.pop_definition_drift(names)
+        by_name = {e['name']: e for e in self._expected_pop_definitions()}
+        plan: List[Dict[str, object]] = []
+        for d in drift:
+            if d['status'] == 'ok':
+                continue
+            if d['status'] == 'invalid_sql':
+                plan.append({**d, 'action': 'blocked'})
+                continue
+            if d['kind'] == 'seed':
+                action = 'create_seed_table+hidden_view' if not d['table_exists'] else 'replace_hidden_view'
+            else:
+                action = 'create_immv' if not d['table_exists'] else 'recreate_immv'
+            plan.append({**d, 'action': action})
+
+        if dry_run:
+            for p in plan:
+                if p['action'] == 'recreate_immv':
+                    p['seed_upstreams'] = self.get_upstream_seed_tables(p['name'])
+            return plan
+
+        for p in plan:
+            name, action = p['name'], p['action']
+            if action == 'blocked':
+                # An upstream created earlier in this loop (e.g. a new seed this
+                # SQL now reads) may have made it compile: re-check once.
+                (again,) = self.pop_definition_drift([name])
+                if again['status'] in ('changed', 'missing'):
+                    p.update(again)
+                    if p['kind'] == 'seed':
+                        action = 'create_seed_table+hidden_view' if not again['table_exists'] else 'replace_hidden_view'
+                    else:
+                        action = 'create_immv' if not again['table_exists'] else 'recreate_immv'
+                    p['action'] = action
+                else:
+                    p['result'] = f"skipped: expected SQL does not compile ({again['error']})"
+                    continue
+            try:
+                if p['kind'] == 'seed':
+                    if action == 'create_seed_table+hidden_view':
+                        self._create_one_seed_table(name)
+                    self._db_tool.execute_query(
+                        self._get_view_create_sql('pop', by_name[name]['sql_path'], target_schema='hidden'))
+                    p['result'] = 'ok'
+                else:
+                    dependents = self._hidden_views_depending_on(name)
+                    if action == 'recreate_immv':
+                        self._db_tool.execute_query(f'DROP TABLE IF EXISTS pop.{name} CASCADE;')
+                    self._db_tool.execute_query(
+                        self._get_matview_create_sqls('pop', by_name[name]['sql_path']))
+                    for dep in dependents:
+                        self._db_tool.execute_query(
+                            self._get_view_create_sql('pop', by_name[dep]['sql_path'], target_schema='hidden'))
+                    p['recreated_hidden_views'] = dependents
+                    p['result'] = 'ok'
+            except Exception as exc:  # noqa: BLE001 - keep going, report per object
+                msg = str(exc).strip().splitlines()[0]
+                if p['kind'] == 'seed' and 'cannot' in msg and 'column' in msg:
+                    msg += (' -- the seed columns changed; pop data would have to be dropped '
+                            '(rule 18). Rebuild this seed explicitly.')
+                p['result'] = f'error: {msg}'
+        return plan
 
     @staticmethod
     def _period_seconds_to_schedule(period_seconds: int) -> str:

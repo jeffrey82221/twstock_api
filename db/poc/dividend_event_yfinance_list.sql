@@ -1,6 +1,6 @@
--- dividend_event_list_yfinance
+-- dividend_event_yfinance_list
 -- 上游：raw_dividend_history_yfinance
--- 與 dividend_event_list 同結構、同意圖；差別在資料源 (yfinance vs FinMind)。
+-- 與 dividend_event_list 同結構、同意圖（事件 key = reference_date，rule 17）；差別在資料源 (yfinance vs FinMind)。
 -- 用途：作為 raw_dividend_yfinance 的上游母體。
 SELECT 
     stk_code,

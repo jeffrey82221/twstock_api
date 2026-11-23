@@ -14,9 +14,14 @@
 輸出統一 schema（單位對齊到「股 / 元」）：
   {trade_date, open, high, low, close, volume, trade_value, transaction_count, change}
 
-**磁碟 cache**（僅 per-day 全市場 payload）：
-  /tmp/ohlcv_cache/{market}/{YYYYMMDD}.json.gz
-  容器內 /tmp（重啟即消失）；per-stock 不 cache（combinatorial 過大且下游本身有 pg_ivm 物化）。
+**磁碟 cache**：
+  * per-day 全市場 payload：/tmp/ohlcv_cache/{market}/{YYYYMMDD}.json.gz
+  * per-stock-per-month（僅「已結束的月份」且上游 stat=OK）：
+    /tmp/ohlcv_cache/{twse_stock_day|tpex_trading_stock}/{stk_code}/{YYYYMM01}.json.gz
+    已結束月份的日 K 不會再變；當月仍每日更新，不 cache。pg_ivm 的 raw_ohlcv_monthly 與
+    ohlcv_daily 兩個 IMMV 會各呼叫一次 /api/ohlcv（GUC 記憶活不過單一 IMMV 維護），
+    uvicorn 多 worker 下記憶體 cache 也不共用，因此用磁碟 cache 讓第二次呼叫不再打 TWSE / TPEx。
+  容器內 /tmp（重啟即消失）。
 """
 from __future__ import annotations
 
@@ -25,6 +30,7 @@ import csv
 import gzip
 import json
 import logging
+import os
 from datetime import date, datetime, timedelta
 from io import StringIO
 from pathlib import Path
@@ -82,12 +88,19 @@ def _cache_write(market: str, d: date, payload: Any) -> None:
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         # 原子寫：先寫到 .tmp 再 rename
-        tmp = p.with_suffix(p.suffix + ".tmp")
+        # tmp 名含 pid：多 worker 同時寫同一檔時不會互相覆蓋 tmp
+        tmp = p.with_suffix(p.suffix + f".{os.getpid()}.tmp")
         with gzip.open(tmp, "wt", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
         tmp.replace(p)
     except Exception as e:
         logger.warning("ohlcv cache write failed %s: %s", p, e)
+
+
+def _is_completed_month(month_start: date, today: Optional[date] = None) -> bool:
+    """month_start 所在月份是否已結束（嚴格早於今天所在月份）。"""
+    today = today or date.today()
+    return (month_start.year, month_start.month) < (today.year, today.month)
 
 
 # =============================================================================
@@ -144,6 +157,12 @@ TWSE_STOCK_DAY_URL = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
 
 async def _fetch_twse_stock_day(stk_code: str, month_start: date) -> list[dict]:
     """回傳指定股票、指定月份的日 K 陣列（原始 payload rows，未 filter 日期範圍）。"""
+    cache_key = f"twse_stock_day/{stk_code}"
+    cacheable = _is_completed_month(month_start)
+    if cacheable:
+        cached = _cache_read(cache_key, month_start)
+        if cached is not None:
+            return cached
     url = f"{TWSE_STOCK_DAY_URL}?response=json&date={month_start.strftime('%Y%m%d')}&stockNo={stk_code}"
     try:
         data = await _http_get(url, timeout=20.0, retries=2, source_name="TWSE")
@@ -151,7 +170,10 @@ async def _fetch_twse_stock_day(stk_code: str, month_start: date) -> list[dict]:
         return []
     if not isinstance(data, dict) or data.get("stat") != "OK":
         return []
-    return _normalize_twse_stock_day_rows(data.get("data") or [], stk_code)
+    rows = _normalize_twse_stock_day_rows(data.get("data") or [], stk_code)
+    if cacheable:
+        _cache_write(cache_key, month_start, rows)
+    return rows
 
 
 def _normalize_twse_stock_day_rows(rows: list[list], stk_code: str) -> list[dict]:
@@ -286,6 +308,12 @@ TPEX_TRADING_STOCK_URL = "https://www.tpex.org.tw/www/zh-tw/afterTrading/trading
 
 
 async def _fetch_tpex_trading_stock(stk_code: str, month_start: date) -> list[dict]:
+    cache_key = f"tpex_trading_stock/{stk_code}"
+    cacheable = _is_completed_month(month_start)
+    if cacheable:
+        cached = _cache_read(cache_key, month_start)
+        if cached is not None:
+            return cached
     url = (
         f"{TPEX_TRADING_STOCK_URL}?code={stk_code}"
         f"&date={month_start.strftime('%Y/%m/%d')}&id=&response=json"
@@ -298,7 +326,10 @@ async def _fetch_tpex_trading_stock(stk_code: str, month_start: date) -> list[di
         return []
     tables = data.get("tables") or []
     rows = tables[0].get("data") if tables else []
-    return _normalize_tpex_trading_stock_rows(rows or [], stk_code)
+    out = _normalize_tpex_trading_stock_rows(rows or [], stk_code)
+    if cacheable:
+        _cache_write(cache_key, month_start, out)
+    return out
 
 
 def _normalize_tpex_trading_stock_rows(rows: list[list], stk_code: str) -> list[dict]:

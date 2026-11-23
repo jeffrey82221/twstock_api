@@ -17,6 +17,9 @@ from .sources import SourceError, _classify_http_exc, _record_source_error
 MI_QFIIS_URL = "https://www.twse.com.tw/fund/MI_QFIIS"
 MIN_DATE = date(2004, 2, 11)
 REQUEST_DELAY_SECONDS = 3.0
+# as_of 當日無資料時最多往前回溯幾天。31 天對齊 PoC seed「每月 5 日取樣一次」的間隔；
+# 原本無上限（一路回溯到 MIN_DATE），seed 第一列落在掛牌前時一列可打上千次 MI_QFIIS。
+MAX_LOOKBACK_DAYS = 31
 CACHE_ROOT = Path("/tmp/foreign_ownership_cache")
 
 
@@ -124,11 +127,21 @@ async def _fetch_day(report_date: date) -> dict[str, dict]:
     return payload
 
 
-async def get_foreign_ownership(stock_id: str, as_of: date) -> Optional[dict]:
-    """取得指定股票在 as_of 或之前最近可得交易日的外資持股資料。"""
+async def get_foreign_ownership(
+    stock_id: str, as_of: date, max_lookback_days: int = MAX_LOOKBACK_DAYS,
+) -> Optional[dict]:
+    """取得指定股票在 as_of 或之前最近可得交易日的外資持股資料。
+
+    回溯規則：
+      * 最多往前 `max_lookback_days` 天（且不早於 MIN_DATE）。
+      * 遇到「有資料的交易日（payload 非空）但沒有該股」即停止並回 None：MI_QFIIS 每個交易日
+        都列出全部上市股，當天沒有就代表該股不在涵蓋範圍（上櫃股、尚未掛牌或已下市），再往前
+        找只會白打上游。非交易日（payload 為空）才繼續往前。
+    """
+    floor = max(MIN_DATE, as_of - timedelta(days=max(max_lookback_days, 0)))
     current = as_of
     previous_was_cache_miss = False
-    while current >= MIN_DATE:
+    while current >= floor:
         was_cache_miss = _cache_read(current) is None
         if was_cache_miss and previous_was_cache_miss:
             await asyncio.sleep(REQUEST_DELAY_SECONDS)
@@ -137,5 +150,7 @@ async def get_foreign_ownership(stock_id: str, as_of: date) -> Optional[dict]:
         row = day_rows.get(stock_id)
         if row is not None:
             return row
+        if day_rows:  # 交易日但沒有該股 → 不在 MI_QFIIS 涵蓋範圍
+            return None
         current -= timedelta(days=1)
     return None

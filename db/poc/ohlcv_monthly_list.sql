@@ -9,22 +9,24 @@
 --   * 上市 + 2010-01-04 以前：走 TWSE MI_INDEX (per-day-market)（早期 STOCK_DAY 官方拒收）
 --   * 上櫃：一律走 TPEx tradingStock (per-stock-per-month)
 --
--- 設計理念（rule 15 · 母體大小）：seed 從 max(listing_date 所屬月, 民國 93/2/11 = 2004-02-11) 起
---   generate_series 到 CURRENT_DATE，月粒度。~1900 檔（上市 + 上櫃）× 平均 ~15 年 × 12 月
---   ≈ 340k 列 seed 上限。
+-- 設計理念（rule 15 · 母體大小）：seed 從 max(listing_date 所屬月, 2010-02-01) 起
+--   generate_series 到 CURRENT_DATE，月粒度。
 --
--- 資料可得性下限（民國 93/2/11 = 2004-02-11）：三家上游最寬鬆下限。
+-- 資料可得性與起點選擇（rule 13）：
 --   * TWSE STOCK_DAY: hard block 「查詢日期小於 99 年 1 月 4 日 (2010-01-04)」
---   * TWSE MI_INDEX:  hard block 「查詢日期小於 93 年 2 月 11 日 (2004-02-11)」← seed 下限依此設
+--   * TWSE MI_INDEX:  hard block 「查詢日期小於 93 年 2 月 11 日 (2004-02-11)」
 --   * TPEx tradingStock / dailyQuotes: 無官方下限（endpoint 接受任何日期，該檔上櫃前回空表）
---   seed 以 GREATEST(..., DATE '2004-02-01') 剃除，避免上市個股在 2004-02 前打上游必失敗。
---   注意 2004-02-01 是月粒度 anchor；2004-02 那個月 backend 打 MI_INDEX 2/11-2/29，2/1-2/10 上游無資料自動落空。
---   若要延伸到 1994-10-01（FinMind 起點），需另接第三方 driver（未實作）。
+--   backend 對上市股 from < 2010-01-04 會強制改走 per_day_market（MI_INDEX 逐日全市場 payload），
+--   每個月要打 ~20 次 MI_INDEX；起點刻意設在 2010-02-01（commit 614005c，原為 2004-02-01），
+--   讓所有月份都走 STOCK_DAY 的 per_stock_month（一個月一次呼叫）。代價：2004-02 ~ 2010-01 的
+--   日 K（含 2010-01 本身，因為 from=2010-01-01 < 2010-01-04 會觸發 MI_INDEX）不在母體內。
+--   若要補齊，把下限改回 DATE '2004-02-01' 即可（backend 已支援）。
 --
 -- 設計理念（rule 3 / rule 16）：僅 IMMUTABLE building blocks；pg_ivm 相容。
 -- 設計理念（rule 6）：(stk_code, month_start_date) 唯一。
--- 設計理念（rule 13）：不做業務過濾；listing_date IS NOT NULL 為技術性 guard；
---   2004-02-01 下限為「資料源可得性」guard，非業務過濾。
+-- 設計理念（rule 13）：不做業務過濾；2010-02-01 下限為「資料源可得性 / 呼叫成本」guard。
+-- rule 13 例外：`listing_date IS NOT NULL` 為技術性 guard（GREATEST 會忽略 NULL，不加 guard 時
+--   無掛牌日的公司會從 2010-02 起整段展開）。
 SELECT
     stk_code,
     generate_series(
@@ -36,4 +38,5 @@ SELECT
         INTERVAL '1 month'
     )::DATE AS month_start_date,
     listing_date
-FROM {{ schema }}.company_basic_info_list;
+FROM {{ schema }}.company_basic_info_list
+WHERE listing_date IS NOT NULL;

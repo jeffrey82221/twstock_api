@@ -17,6 +17,10 @@ SBL_URL = "https://www.twse.com.tw/SBL/t13sa870"
 # date, not the earliest lending transaction date.
 SBL_MIN_DATE = date(2005, 1, 28)
 WINDOW_DAYS = 31
+# as_of 往前最多回溯幾天（預設 = 1 個 31 日視窗）。PoC seed 每月 5 日取樣一次，相鄰兩次呼叫的
+# 31 日視窗首尾相接即可覆蓋全部月份；原本無上限（以 31 日視窗一路回溯到 SBL_MIN_DATE，視窗間
+# 不 sleep），沒有還券事件的股票一列可打上百次 t13sa870。
+MAX_LOOKBACK_DAYS = WINDOW_DAYS
 CACHE_ROOT = Path("/tmp/twse_sbl_cache")
 
 
@@ -119,15 +123,18 @@ async def _fetch_window(stock_id: str, start: date, end: date) -> list[dict[str,
     return rows
 
 
-async def get_sbl_history(stock_id: str, as_of: date) -> dict[str, Any]:
+async def get_sbl_history(
+    stock_id: str, as_of: date, max_lookback_days: int = MAX_LOOKBACK_DAYS,
+) -> dict[str, Any]:
     stock = str(stock_id).strip()
     basic = await load_basic_table()
     if stock not in basic:
         return {"found": False, "stock_id": stock, "as_of": as_of.isoformat(), "data_date": None, "records": [], "source": "TWSE SBL t13sa870"}
 
+    floor = max(SBL_MIN_DATE, as_of - timedelta(days=max(max_lookback_days, 1) - 1))
     end = as_of
-    while end >= SBL_MIN_DATE:
-        start = max(SBL_MIN_DATE, end - timedelta(days=WINDOW_DAYS - 1))
+    while end >= floor:
+        start = max(floor, end - timedelta(days=WINDOW_DAYS - 1))
         rows = await _fetch_window(stock, start, end)
         rows = [row for row in rows if row["completion_date"] <= as_of.isoformat()]
         if rows:

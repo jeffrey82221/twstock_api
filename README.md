@@ -183,8 +183,19 @@ claude mcp get twstock-db   # 應顯示 Status: ✔ Connected
 | `crawl_runs(table, limit, only_failed)` | 某個 seed table 最近的 cron 執行紀錄 |
 | `crawl_pop_tables()` | `pop` 每張 seed table 與下游 IMMV 的實際筆數 |
 | `crawl_recommendations()` | 讀取 `throughput_config.json` / `batch_size.json` 的量測建議值 |
+| `crawl_backlog(table, row_cnt)` | 該 seed 還剩多少待爬，以及每次 cron tick 選列（hidden EXCEPT pop）的 DB 成本 |
+| `http_stats(minutes)` | 各 endpoint 實際請求數、重複請求（同 URL 打多次）、2xx/404/5xx、平均耗時與 cache 筆數 |
+| `pop_raw_quality()` | 各 `raw_*` 的可用率（NULL / found=false 比例與 source 分佈），找出白爬的資料 |
 | `crawl_set_schedule(table, period_seconds, row_cnt)` | **寫入**：建立或更新該表的爬取排程 |
 | `crawl_pause(table)` | **寫入**：停止該表的爬取排程（已灌的資料保留） |
+
+Schema 維護（改完 `db/poc/*.sql` 後使用；對應 `Pipeline.create_views` / `pop_definition_drift` / `update_mat_views`）：
+
+| Tool | 用途 |
+| --- | --- |
+| `poc_rebuild_views()` | **寫入**：整個重建 poc schema 的 view（poc 不存資料，可安全重建） |
+| `pop_check_definitions(names, only_drifted)` | 比對 pop 物件與目前 SQL：`ok` / `changed` / `missing` / `invalid_sql` |
+| `pop_update_mat_views(names, dry_run)` | 只更新有變動的 pop 物件；預設 `dry_run=true` 只列計畫。seed 只換 `hidden` view、資料保留；IMMV 以 DROP + `create_immv` 重建（會對既有 seed rows 重打 API） |
 
 **4. 使用範例（直接對 Claude 說）**
 

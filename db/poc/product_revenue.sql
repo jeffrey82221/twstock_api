@@ -5,8 +5,9 @@
 --
 -- 設計理念（rule 15）：raw 表已由 product_revenue_filer_list（事件母體）驅動，
 --   每列 (stk_code, report_month) 都是真實有申報的事件；不需從 JSON 民國年月重新合成 report_month。
--- 設計理念（rule 13）：不做 WHERE 過濾，保留 raw 母體的所有 rows；用 LEFT JOIN LATERAL
---                    讓 items=null / 空 array 的公司仍保留一列（產品欄位為 NULL）。
+-- 設計理念（rule 13）：不做 WHERE 過濾，保留 raw 母體的所有 rows。
+-- 設計理念（rule 16）：pg_ivm 不支援 LEFT JOIN LATERAL，故用 INNER JOIN LATERAL + COALESCE(..., '[]')
+--                    攤平；items=null / 空 array 的 filing 會攤平成 0 列（不保留父列）。
 SELECT
     stk_code,
     ym,
