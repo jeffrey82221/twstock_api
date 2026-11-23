@@ -133,7 +133,75 @@ p.create_views()
 
 透過 create views 確認 SQL 語法皆正確且可運行。
 
-## (5) 欄位血緣分析
+
+## (5) 啟動資料抓取 API
+
+```bash
+source .venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 5002
+```
+
+## (6) 建立 Postgres MCP
+
+把 `server.py`（FastMCP，唯讀）註冊成 Claude Code 的 MCP server，讓 Claude 在開發 pipeline 時可以直接查 schema、view 欄位與資料內容。Claude Code 會用 stdio 自己啟動這個 server，不必另外開 port 或常駐 process。
+
+前置條件：已完成步驟 (1) 的 `.venv`，且步驟 (3) 的資料庫正在執行（`server.py` 透過 `pg_tool.py` 連 `postgresql://postgres:postgres@localhost:5432/app_db`）。
+
+**1. 註冊 MCP（在專案根目錄執行，只需做一次）**
+
+```bash
+claude mcp add --scope local twstock-db -e DB_MAX_ROWS=1000 -- \
+  "$(pwd)/.venv/bin/fastmcp" run "$(pwd)/server.py:mcp"
+```
+
+- `--scope local`：只對「你本機的這個專案目錄」生效，設定寫在 `~/.claude.json`，不會進 git。
+- `fastmcp run server.py:mcp` 預設使用 stdio transport；`python server.py` 效果相同。需要用 HTTP 提供服務時，改執行 `MCP_TRANSPORT=http PORT=8000 python server.py`。
+- `DB_MAX_ROWS` 是 `select` tool 的預設回傳筆數（單次上限 10000）。
+
+**2. 確認連線**
+
+```bash
+claude mcp get twstock-db   # 應顯示 Status: ✔ Connected
+```
+
+在這個專案目錄啟動 Claude Code（CLI 或 VSCode 開啟此 workspace）後，輸入 `/mcp` 也能看到 `twstock-db` 已連線。若顯示失敗，先檢查 `docker ps` 裡的 `postgres-db` 是否為 healthy。
+
+**3. 可用的 tools**
+
+| Tool | 用途 |
+| --- | --- |
+| `list_schemas` | 列出所有非系統 schema（如 `poc`、`pop`、`custom`、`cron`） |
+| `list_tables(schema)` | 列出 schema 內的 table / view |
+| `describe_table(table_name, schema)` | 欄位名稱、型別、nullable、default |
+| `select(sql, limit)` | 執行單一 `SELECT` / `WITH` 查詢；含 DML/DDL 關鍵字或 `;` 的查詢會被拒絕 |
+
+爬取控制（`pop` 的 seed table `*_list` 由 pg_cron 每 `period_seconds` 從 `hidden` 灌 `row_cnt` 筆，下游 IMMV 隨之呼叫 API；排程沿用 `Pipeline.schedule_seed_table_refresh`，與步驟 (9) 的 `setup_schedules` 是同一組 job）：
+
+| Tool | 用途 |
+| --- | --- |
+| `crawl_status(lookback_minutes)` | 每個 seed table 的排程、pop 筆數、時間窗內成功/失敗次數、新增筆數與每小時速率、最後錯誤 |
+| `crawl_runs(table, limit, only_failed)` | 某個 seed table 最近的 cron 執行紀錄 |
+| `crawl_pop_tables()` | `pop` 每張 seed table 與下游 IMMV 的實際筆數 |
+| `crawl_recommendations()` | 讀取 `throughput_config.json` / `batch_size.json` 的量測建議值 |
+| `crawl_set_schedule(table, period_seconds, row_cnt)` | **寫入**：建立或更新該表的爬取排程 |
+| `crawl_pause(table)` | **寫入**：停止該表的爬取排程（已灌的資料保留） |
+
+**4. 使用範例（直接對 Claude 說）**
+
+- 「列出 poc schema 所有 view，並說明 `financial_quarterly_yfinance` 的欄位」
+- 「看一下目前爬取狀況，失敗率高的 list table 把 row_cnt 調小」
+- 「`company_list` 爬完了嗎？爬完就把它的排程停掉」
+- 「`pop` 裡每張 materialized view 各有幾筆資料？」
+
+注意：`poc.raw_*` 等 view 在 SELECT 時會透過 `custom.http_get_content` 呼叫步驟 (7) 的 API（port 5002）。API 沒啟動時查詢會拿到 NULL 或失敗；即使 API 有啟動，查詢也可能很慢。看資料內容時優先查 `pop` 的 materialized view，查 `poc` view 時務必帶小的 `limit`。
+
+**安全性說明**：`crawl_set_schedule` / `crawl_pause` 會修改 `cron.job`，其餘 tool 唯讀。`select` 的唯讀保護只靠 `server.py` 的 SQL 白名單，連線本身用的是 `postgres` superuser，也沒有 statement timeout 或 connection pool。因此只適合本機開發使用，不要對外開放或指向正式資料庫。
+
+**移除**：`claude mcp remove twstock-db -s local`
+
+
+
+## (7) 欄位血緣分析
 
 ```bash
 python tools/render_lineagex.py
@@ -144,14 +212,7 @@ python tools/render_lineagex.py
 這能幫助資料庫內容的理解。
 
 
-## (6) 啟動資料抓取 API
-
-```bash
-source .venv/bin/activate
-uvicorn app.main:app --host 0.0.0.0 --port 5002
-```
-
-## (7) 實測 pop 實體資料流 爬取速度 
+## (8) 實測 pop 實體資料流 爬取速度 
 
 建立 incrementally 更新的 materialized view 並開始嘗試 insert 資料
 
@@ -162,7 +223,7 @@ p.create_mat_views()
 p.probe_all()
 ```
 
-## (8) 建立資料爬取 Cronjobs
+## (9) 建立資料爬取 Cronjobs
 
 ```python
 from pipeline import Pipeline
@@ -171,7 +232,7 @@ p.probe_all_throughput()
 p.setup_schedules()
 ```
 
-## (9) 資料爬取狀況監測網頁
+## (10) 資料爬取狀況監測網頁
 
 ```bash
 source .venv/bin/activate
