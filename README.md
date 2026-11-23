@@ -259,6 +259,39 @@ uvicorn db_demo.main:app --host 0.0.0.0 --port 5100
 > 排程建立後可用 `p.prune_and_report_seed_cron_jobs()` 檢查各 seed 最近一段時間的實際 insert 量，
 > 找出「已回填完畢、cron 一直 insert 0 列」的 seed 並自動 unschedule，避免空轉浪費排程資源。
 
+## (11) MCP 資料分析測試
+
+
+**前置條件**
+
+- 步驟 (3) 的 Postgres 正在執行，步驟 (5) 的 API（port 5002）已啟動
+- 步驟 (6) 已註冊 MCP，`claude mcp get twstock-db` 顯示 `✔ Connected`
+- 步驟 (8) 已跑過 `create_mat_views()`，`pop` schema 已存在
+
+以下每一步都是在此專案目錄的 Claude Code 對話中輸入的 prompt。請依序執行：後面的步驟會用到前面步驟的狀態。
+
+
+**Test 1：Backlog 量測（唯讀，對應 `Pipeline._build_seed_insert_sql`）**
+
+> 用 `crawl_backlog` 量測 `company_valuation_monthly_list` 和 `finmind_news_monthly_list` 還剩多少待爬，以及每次 tick 選列要花多少 ms。
+
+- 預期呼叫：`crawl_backlog` 兩次
+- 通過條件：回傳 `pop_rows`、`pending`、`tick_select_ms`；`pending` 約等於 `hidden` 筆數減去 `pop` 筆數。可另外請 Claude 用 `select` 驗算：`SELECT count(*) FROM hidden.company_valuation_monthly_list`
+
+**Test 2：條件式優先爬取（dry run → 實際寫入）**
+
+> 我想分析台積電（2330）最近的新聞。先用 `crawl_insert_filtered` 對 `finmind_news_monthly_list` 以 `{"stk_code": "2330"}` 做 dry run，告訴我待爬筆數和預設的排序欄位；確認沒問題後用 `row_cnt=3`、`dry_run=false` 實際 insert，然後好了以後幫我找出2330最新新聞。
+
+
+**Test 3：端到端資料分析**
+
+> 我想比較 2330 和 2317 最近 12 個月的估值變化。請先確認 `pop.company_valuation` 有沒有這兩檔的資料；不夠的話用 `crawl_insert_filtered` 對 上游資料做補爬，爬完後用 `select` 查出兩檔每月的本益比（`per`）、殖利率（`dividend_yield_pct`）、股價淨值比（`pbr`），並整理成表格。最後用 `pop_raw_quality` 告訴我 `raw_company_valuation` 的可用率。
+
+
+- 這一步驗證 MCP 的主要使用情境：AI 分析時發現資料不足，只優先爬取與問題相關的列，不必等 cron 依序輪到
+- 取樣日（每月 5 日）遇到週末或休市日時，`/api/company-valuation` 會回溯到最近交易日，所以每個月都應該有值，並以 `data_date` 標示實際交易日（例如 2026-09-05 是週六，實際資料日為 2026-09-04）。`raw_company_valuation` 若仍有 NULL，表示上游失敗（HTTP 502），不是非交易日造成的。
+
+
 # TWStock Query · 台灣上市櫃公司查詢平台
 
 > **Version: v0.0.11**
@@ -328,6 +361,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 5000
 - `GET /api/company/{stock_id}/dividend/yfinance?as_of=YYYY-MM-DD` 股利（yfinance）
 - `GET /api/company/{stock_id}/value-chain` 公司在產業鏈的定位與鄰居
 - `GET /api/company/{stock_id}/foreign-ownership?as_of=YYYY-MM-DD` 外資及陸資持股（TWSE MI_QFIIS）；若基準日無交易，回溯至最近資料日並以 `data_date` / `row.trade_date` 標示
+- `GET /api/company-valuation?stock_id=XXXX&date=YYYY-MM-DD` 單一上市公司估值（TWSE BWIBBU_d：本益比、殖利率、股價淨值比與反推 EPS / BVPS / DPS）；若查詢日無交易，回溯至最近交易日（最多 14 天）並以 `data_date` 標示
+- `GET /api/market-valuation-summary?date=YYYY-MM-DD` 全市場市值加權本益比 / 殖利率 / 股價淨值比（TWSE BWIBBU_d）；回溯規則同上
 - `GET /api/company/{stock_id}/sbl-history?as_of=YYYY-MM-DD` 借券歷史還券明細（TWSE SBL t13sa870）；以完成還券日期為基準，回溯至最近有事件的 `data_date`
 - `GET /api/company/{stock_id}/product-revenue?as_of=YYYY-MM-DD` 主要產品比重（MOPS）
 - `GET /api/ohlcv?stk_code=XXXX&from=YYYY-MM-DD&to=YYYY-MM-DD` 日 K OHLCV 行情（上市 + 上櫃整合，智能切換）：≤ 7 天範圍逐日拉全市場 payload（MI_INDEX / dailyQuotes）+ 磁碟 cache；> 7 天逐月拉單股整月 payload（STOCK_DAY / tradingStock）。TPEx 上游「張 / 仟元」已對齊到「股 / 元」。
@@ -348,6 +383,7 @@ Swagger UI: http://localhost:5000/docs
 - **公開資訊觀測站（MOPS）主要產品比重**：`ajax_t05st08_all` 月度申報資料，依 `as_of` 自動回溯最近一份有效申報期。
 - **公開資訊觀測站（MOPS）季度財務分析**：卡片原記載的 `ajax_t05st21` 已提示改用 IFRS 報表；本 API 使用官方 `ajax_t163sb06` 營益分析彙總表與 `ajax_t163sb04` 綜合損益表，按市場／民國年／季度抓全市場 HTML 後過濾個股。實測 2330 最早資料日為 `2013-03-31`；`as_of` 會選不晚於基準日的最近完整季度並以 `data_date` 標示實際日期。
 - **TWSE 外資及陸資投資持股統計（MI_QFIIS）**：官方免費、免 API key 的 Big5 CSV；以單一日期下載全市場資料後過濾股票代號。實測最早可得日期為 `2004-02-11`；`as_of` 不得早於此日。整日 payload 快取於 `/tmp/foreign_ownership_cache`；週末與休市日會逐日往前回溯，並以 `data_date` / `row.trade_date` 標示實際資料日。
+- **TWSE 個股本益比、殖利率及股價淨值比（BWIBBU_d）**：官方免費、免 API key 的 JSON，每個交易日一份全上市 payload，資料起始日 `2005-09-02`，快取於 `/tmp/valuation_cache/twse/`。`/api/company-valuation` 與 `/api/market-valuation-summary` 共用這份 payload。查詢日為週末、休市日或當日尚未收盤時，會逐日往前回溯最多 14 天，`date` 保留查詢日，`data_date` 標示實際交易日。回溯範圍內都沒資料時回 404；上游失敗時立即停止回溯並回 502，因為 DB 的 `http_cache` 會快取 4xx 但不快取 5xx，下次 cron 才會重試。當日尚未收盤的空 payload 不寫入快取。
 - **TWSE 借券歷史還券明細（SBL t13sa870）**：官方免費、免 API key 的 JSON；以 `startDate`／`endDate` 指定完成還券日期區間，再帶 `stockNo` 查詢單一股票。服務以 31 日視窗快取並向前回溯，實測 2330 最早可得完成還券資料為 `2005-01-28`（更早的 `2005-01-13` 是借券成交日期，不是本 endpoint 的 as_of 日期），並以 `data_date` 標示實際事件日期。
 
 ## 結構

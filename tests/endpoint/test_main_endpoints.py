@@ -193,3 +193,25 @@ def test_mops_upstream_failures_are_5xx_not_cached_404(client, monkeypatch):
     monkeypatch.setattr(main.mops_quarterly_financials, "get_quarterly_financials", failed_quarterly)
     assert client.get("/api/v1/fundamentals/financial-analysis", params={"stock_id": "2330", "year": "2024"}).status_code == 504
     assert client.get("/api/company/2330/quarterly-financials", params={"as_of": "2024-05-10"}).status_code == 502
+
+
+def test_valuation_upstream_error_is_502_and_no_data_is_404(client, monkeypatch):
+    """TWSE BWIBBU_d failures must be 5xx (retried) rather than a cached 404."""
+    reasons = {"reason": "upstream_error"}
+
+    async def fake_company(stock_id, d):
+        return {"found": False, "reason": reasons["reason"]}
+
+    async def fake_market(d, sample_size=5):
+        return {"found": False, "reason": reasons["reason"]}
+
+    monkeypatch.setattr(main.valuation_source, "get_company_valuation", fake_company)
+    monkeypatch.setattr(main.valuation_source, "get_market_valuation_summary", fake_market)
+    company = ("/api/company-valuation", {"stock_id": "2330", "date": "2026-09-05"})
+    market = ("/api/market-valuation-summary", {"date": "2026-09-05"})
+
+    assert client.get(company[0], params=company[1]).status_code == 502
+    assert client.get(market[0], params=market[1]).status_code == 502
+    reasons["reason"] = "no_market_data"
+    assert client.get(company[0], params=company[1]).status_code == 404
+    assert client.get(market[0], params=market[1]).status_code == 404
