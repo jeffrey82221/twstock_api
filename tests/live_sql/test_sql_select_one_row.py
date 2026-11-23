@@ -102,6 +102,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -147,6 +148,13 @@ _VIEW_TIMEOUT_OVERRIDES_S = {
 # until then, which silently turns `raw_chain_info` / `chain_info_list` into
 # 0 rows. Wait for it before running any test.
 ICCHAIN_READY_TIMEOUT_S = 180
+
+# How long to wait for a freshly spawned `uvicorn app.main:app` to answer
+# /api/health. Normally ~2s, but the very first start in a brand-new venv /
+# CI runner was observed blocking in "Waiting for application startup" for
+# >20s (cold first-time loading of freshly installed packages / native
+# libraries), which used to fail all 61 tests at setup. Overridable via env.
+APP_STARTUP_TIMEOUT_S = int(os.getenv("POC_APP_STARTUP_TIMEOUT_S", "120"))
 
 
 def _recent_ym(months_ago: int = 2) -> str:
@@ -285,25 +293,49 @@ def live_app_server(tmp_path_factory) -> Iterator[None]:
     global _API_LOG_PATH
     _API_LOG_PATH = str(tmp_path_factory.mktemp("api") / "uvicorn.log")
     log_file = open(_API_LOG_PATH, "wb")
+    # PYTHONUNBUFFERED: make sure every log line reaches the file even if the
+    # process is killed. PYTHONFAULTHANDLER: on SIGABRT (sent below when
+    # startup times out) dump every thread's stack into the log, so a hang
+    # shows exactly where it was stuck instead of a bare timeout.
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONFAULTHANDLER": "1"}
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", str(APP_PORT)],
         cwd=REPO_ROOT,
+        env=env,
         stdout=log_file,
         stderr=subprocess.STDOUT,
     )
     try:
-        deadline = time.time() + 20
+        started_at = time.time()
+        deadline = started_at + APP_STARTUP_TIMEOUT_S
         ready = False
         while time.time() < deadline:
             if _app_server_alive():
                 ready = True
                 break
             if proc.poll() is not None:
-                pytest.fail("app/main.py 背景啟動後立即結束，請先確認能以 `uvicorn app.main:app` 手動啟動", pytrace=False)
+                pytest.fail(
+                    "app/main.py 背景啟動後立即結束，請先確認能以 `uvicorn app.main:app` 手動啟動\n"
+                    f"--- API log (tail) ---\n{_api_log_tail()}",
+                    pytrace=False,
+                )
             time.sleep(0.5)
         if not ready:
-            proc.terminate()
-            pytest.fail(f"app/main.py 在 20 秒內未能於 port {APP_PORT} 回應 /api/health", pytrace=False)
+            # Ask faulthandler for a stack dump, give it a moment, then stop.
+            proc.send_signal(signal.SIGABRT)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            pytest.fail(
+                f"app/main.py 在 {APP_STARTUP_TIMEOUT_S} 秒內未能於 port {APP_PORT} 回應 /api/health"
+                "（可用環境變數 POC_APP_STARTUP_TIMEOUT_S 調整）\n"
+                f"--- API log (tail，含 faulthandler stack dump) ---\n{_api_log_tail()}",
+                pytrace=False,
+            )
+        startup_s = time.time() - started_at
+        if startup_s > 10:
+            print(f"[live_app_server] app/main.py took {startup_s:.1f}s to answer /api/health")
         _wait_icchain_loaded()
         yield
     finally:
