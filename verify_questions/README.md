@@ -97,7 +97,7 @@ verify_questions/
 | 2 出題 | 依覆蓋缺口與策略維度（§5）寫問題卡 | `describe_table`、`select`（確認欄位與現有資料） | `questions/Q###.md`（`status: draft`） |
 | 3 補爬 | 依問題卡的 `crawl` 區塊補資料（規則見 §8） | `select` 看現有 → `crawl_insert_filtered` dry run → 實際寫入 | run 紀錄的「補爬」表 |
 | 4 取數 | 執行問題卡的決策 SQL | `select` | run 紀錄的「決策資料」與結論 |
-| 5 驗證 | 逐一執行斷言，判定 PASS / FAIL / INCONCLUSIVE | `select` | run 紀錄的「斷言結果」；失敗依 §7.3 分流 |
+| 5 驗證 | 逐一執行斷言，判定 PASS / FAIL / INCONCLUSIVE（`.venv/bin/python verify_questions/run_checks.py Q001 --decision` 一次跑完決策 SQL 與所有斷言） | `select` | run 紀錄的「斷言結果」；失敗依 §7.3 分流 |
 | 6 診斷修復 | 根因分析（§9），修程式並閉環（§10） | `select`（含 `job_control.*`、`hidden.*`）、`poc_rebuild_views`、`pop_check_definitions`、`pop_update_mat_views`、`crawl_delete_rows`、`http_cache_evict`、`crawl_insert_filtered` | `issues/I###.md` 更新、程式 diff、測試結果 |
 | 7 回歸 | 定期只跑斷言、不補爬，找出退化 | `select` | LEDGER 狀態更新；退化就開 issue |
 

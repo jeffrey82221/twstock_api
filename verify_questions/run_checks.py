@@ -1,0 +1,134 @@
+"""執行問題卡的決策 SQL 與斷言（指令 2 驗證 SQL、指令 3／6 判定結果）。
+
+用法（repo 根目錄）：
+    .venv/bin/python verify_questions/run_checks.py Q001            # 一題
+    .venv/bin/python verify_questions/run_checks.py --all           # 全部問題卡
+    .venv/bin/python verify_questions/run_checks.py --status passing # 只跑某狀態（指令 6）
+    加 --json 輸出機器可讀結果；加 --decision 一併印出決策 SQL 的結果。
+
+問題卡格式見 README §6.1：
+- 「## 決策 SQL」下的第一個 ```sql 區塊是決策 SQL。
+- 「## 斷言」下每個「### Cn …」標題底下第一個 ```sql 區塊回傳違規列；
+  若之後還有一個 ```sql 區塊（前面文字含「可比對列數」），它回傳一個數字，
+  = 0 時結果為 INCONCLUSIVE。
+SQL 經 server.select 執行（與 MCP 同一個白名單與 LIMIT 包裝），執行前去掉 -- 註解。
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import glob
+import json
+import os
+import re
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(HERE))
+
+_SQL_BLOCK = re.compile(r"```sql\n(.*?)```", re.DOTALL)
+
+
+def _server():
+    with contextlib.redirect_stdout(sys.stderr):
+        import server
+    return server
+
+
+def _clean(sql: str) -> str:
+    return re.sub(r"--[^\n]*", "", sql).strip()
+
+
+def parse_card(path: str) -> dict:
+    text = open(path, encoding="utf-8").read()
+    front = re.match(r"---\n(.*?)\n---\n", text, re.DOTALL)
+    meta = {}
+    if front:
+        for line in front.group(1).splitlines():
+            m = re.match(r"^(\w+):\s*(.*?)\s*(#.*)?$", line)
+            if m:
+                meta[m.group(1)] = m.group(2)
+    decision = None
+    sec = re.search(r"^## 決策 SQL\n(.*?)(?=^## )", text, re.DOTALL | re.MULTILINE)
+    if sec and (b := _SQL_BLOCK.search(sec.group(1))):
+        decision = b.group(1)
+    checks = []
+    sec = re.search(r"^## 斷言.*?\n(.*?)(?=^## |\Z)", text, re.DOTALL | re.MULTILINE)
+    if sec:
+        for m in re.finditer(r"^### (C\d+)\s*(.*?)\n(.*?)(?=^### |\Z)", sec.group(1), re.DOTALL | re.MULTILINE):
+            blocks = list(_SQL_BLOCK.finditer(m.group(3)))
+            if not blocks:
+                continue
+            comparable = None
+            if len(blocks) > 1 and "可比對列數" in m.group(3)[blocks[0].end():blocks[1].start()]:
+                comparable = blocks[1].group(1)
+            checks.append({"id": m.group(1), "title": m.group(2).strip(),
+                           "sql": blocks[0].group(1), "comparable_sql": comparable})
+    return {"path": path, "meta": meta, "decision": decision, "checks": checks}
+
+
+def run_card(card: dict, with_decision: bool = False) -> dict:
+    srv = _server()
+    out = {"id": card["meta"].get("id"), "title": card["meta"].get("title"), "checks": []}
+    if with_decision and card["decision"]:
+        try:
+            out["decision"] = srv.select(_clean(card["decision"]))
+        except Exception as e:  # report, keep going
+            out["decision_error"] = f"{type(e).__name__}: {e}"
+    for c in card["checks"]:
+        r = {"id": c["id"], "title": c["title"]}
+        try:
+            rows = srv.select(_clean(c["sql"]), limit=200)
+            r["violations"] = len(rows)
+            r["sample"] = rows[:5]
+            if c["comparable_sql"]:
+                first = srv.select(_clean(c["comparable_sql"]))[0]
+                r["comparable"] = int(next(iter(first.values())))
+            if r.get("comparable") == 0:
+                r["result"] = "INCONCLUSIVE"
+            else:
+                r["result"] = "PASS" if not rows else "FAIL"
+        except Exception as e:
+            r["result"] = "ERROR"
+            r["error"] = f"{type(e).__name__}: {e}"
+        out["checks"].append(r)
+    return out
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("ids", nargs="*")
+    ap.add_argument("--all", action="store_true")
+    ap.add_argument("--status")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--decision", action="store_true")
+    args = ap.parse_args()
+    paths = sorted(glob.glob(os.path.join(HERE, "questions", "Q*.md")))
+    cards = [parse_card(p) for p in paths]
+    if not args.all:
+        if args.status:
+            cards = [c for c in cards if c["meta"].get("status") == args.status]
+        if args.ids:
+            cards = [c for c in cards if c["meta"].get("id") in args.ids]
+    results = [run_card(c, with_decision=args.decision) for c in cards]
+    if args.json:
+        print(json.dumps(results, ensure_ascii=False, indent=1, default=str))
+        return
+    for res in results:
+        print(f"## {res['id']} {res['title']}")
+        if "decision" in res:
+            for row in res["decision"]:
+                print("   decision:", json.dumps(row, ensure_ascii=False, default=str))
+        if "decision_error" in res:
+            print("   decision ERROR:", res["decision_error"])
+        for c in res["checks"]:
+            extra = f" comparable={c['comparable']}" if "comparable" in c else ""
+            detail = c.get("error") or (f"violations={c['violations']}{extra}")
+            print(f"   {c['id']} {c['result']:12s} {detail}  — {c['title']}")
+            if c["result"] == "FAIL":
+                for s in c["sample"][:3]:
+                    print("        e.g.", json.dumps(s, ensure_ascii=False, default=str))
+
+
+if __name__ == "__main__":
+    main()

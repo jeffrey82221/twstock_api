@@ -6,6 +6,11 @@
 
 | ID | 策略 | 標題 | 狀態 | 最後執行 | 未結 issue |
 | --- | --- | --- | --- | --- | --- |
+| [Q001](questions/Q001-valuation-per-percentile.md) | 估值 | 2330、2317、6488 本益比在近 3 年第幾百分位 | draft | — | — |
+| [Q002](questions/Q002-growth-revenue-momentum.md) | 成長 | 2330、2454、6488 月營收 YoY 連 3 月 > 20%，季營收對得起來 | draft | — | — |
+| [Q003](questions/Q003-quality-roe-debt.md) | 體質 | 2330、2882、1101 連 3 年 ROE > 15% 且負債比 < 50% | draft | — | — |
+| [Q004](questions/Q004-flow-foreign-institutional.md) | 籌碼 | 2330、2317、6488 外資持股、法人買賣超、借券趨勢 | draft | — | — |
+| [Q005](questions/Q005-income-dividend-consistency.md) | 股利 | 2330、2317、2882、1101 連 5 年配息與殖利率 | draft | — | — |
 
 ## Issues
 
@@ -18,23 +23,23 @@
 
 | pop 表 | 策略維度 | 覆蓋的問題 | 最近斷言結果 |
 | --- | --- | --- | --- |
-| `company_valuation` | 估值 | — | — |
+| `company_valuation` | 估值 | Q001, Q005 | — |
 | `market_valuation_summary` | 估值、市場 | — | — |
-| `monthly_revenue_twse` | 成長 | — | — |
+| `monthly_revenue_twse` | 成長 | Q002 | — |
 | `monthly_revenue` | 成長 | — | — |
-| `mops_quarterly_financials` | 成長 | — | — |
+| `mops_quarterly_financials` | 成長 | Q002, Q003 | — |
 | `financial_quarterly_yfinance` | 成長 | — | — |
 | `financial_yearly_yfinance` | 體質 | — | — |
-| `financial_analysis` | 體質 | — | — |
+| `financial_analysis` | 體質 | Q003 | — |
 | `raw_yearly_financials`（FinMind，無正規化表） | 體質 | — | — |
-| `dividend` | 股利 | — | — |
-| `dividend_yfinance` | 股利 | — | — |
-| `institutional_net_buy_sell` | 籌碼 | — | — |
-| `foreign_ownership` | 籌碼 | — | — |
-| `sbl_history` | 籌碼 | — | — |
-| `ohlcv_daily` | 技術 | — | — |
+| `dividend` | 股利 | Q005 | — |
+| `dividend_yfinance` | 股利 | Q005 | — |
+| `institutional_net_buy_sell` | 籌碼 | Q004 | — |
+| `foreign_ownership` | 籌碼 | Q004 | — |
+| `sbl_history` | 籌碼 | Q004 | — |
+| `ohlcv_daily` | 技術 | Q001 | — |
 | `chain_info_list` | 產業 | — | — |
-| `company_basic_info_list` | 產業 | — | — |
+| `company_basic_info_list` | 產業 | Q002, Q003（依賴鏈） | — |
 | `company_business_items` | 產業 | — | — |
 | `product_revenue` | 產業 | — | — |
 | `finmind_news` | 事件 | — | — |
