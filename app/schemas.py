@@ -1091,5 +1091,9 @@ class MopsQuarterlyFinancialsResponse(BaseModel):
     data_date: Optional[str] = Field(None, description="實際回傳季度結束日；當 as_of 落在季度中或無當季資料時會早於 as_of。")
     fiscal_year: Optional[int] = Field(None, description="財報西元年度。")
     quarter: Optional[int] = Field(None, description="財報季度，1 至 4。")
-    data: Optional[MopsQuarterlyFinancialsData] = Field(None, description="MOPS 季度營益率與 EPS 資料。")
+    data: Optional[MopsQuarterlyFinancialsData] = Field(
+        None, description="**單季**營收、營益率與 EPS（Q2–Q4 由年初至今累計值減去前一季累計值換算；前一季缺資料時對應欄位為 null）。"
+                          "金融業不在 t163sb06，只有 `eps`。")
+    data_ytd: Optional[MopsQuarterlyFinancialsData] = Field(
+        None, description="MOPS 原始的**年初至今累計**值（Q1 = 1–3 月、Q2 = 1–6 月 …、Q4 = 全年）。")
     source: str = Field(..., description="MOPS 官方來源註記與實際使用的 endpoint。")

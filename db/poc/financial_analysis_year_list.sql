@@ -6,10 +6,12 @@
 --   與既有 financial_year_list（`year_start_date` DATE，供 FinMind/yfinance 用）分開，
 --   因為 rule 20：不同資料源（MOPS t51sb02 vs FinMind/yfinance）分流各自 seed。
 -- 邊界：t51sb02 資料起始年為民國 101 / 西元 2012（app/mops_financial_analysis.py FA_MIN_YEAR）。
+-- 終點（rule 13，I008）：年報隔年才公布；每年 5 月起才納入前一年度（CURRENT_DATE - 4 個月的年份 - 1），
+--   不產生必定作廢的當年度列。
 SELECT
     stk_code,
     generate_series(
         GREATEST(EXTRACT(YEAR FROM incorporation_date)::INT, 2012),
-        EXTRACT(YEAR FROM CURRENT_DATE)::INT
+        EXTRACT(YEAR FROM CURRENT_DATE - INTERVAL '4 months')::INT - 1
     ) AS year
 FROM {{ schema }}.company_basic_info_list

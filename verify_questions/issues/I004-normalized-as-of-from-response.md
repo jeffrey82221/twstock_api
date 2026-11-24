@@ -3,7 +3,7 @@ id: I004
 title: 正規化 view 的 as_of 取自 API 回應，回應失敗時主鍵變成 NULL
 severity: S2
 layer: L5
-status: diagnosed
+status: fixing
 pop_tables: [company_valuation, dividend, dividend_yfinance, finmind_news, institutional_net_buy_sell, market_valuation_summary, monthly_revenue, mops_quarterly_financials, financial_quarterly_yfinance, financial_yearly_yfinance]
 seeds: []
 found_by: [Q001]
@@ -39,6 +39,13 @@ UNION ALL SELECT 'finmind_news', count(*) FILTER (WHERE as_of IS NULL), count(*)
 2. 上線：`poc_rebuild_views` → `pop_check_definitions` → `pop_update_mat_views`（IMMV DROP + 重建 = 對既有 seed 列重打 API）。重打成本：company_valuation 1,684（TWSE BWIBBU_d 依日期磁碟快取，約 115 個日期）、mops 355（MOPS 磁碟快取）、dividend 57 + finmind_news 95 + monthly_revenue 1（FinMind，共 153，須在 300 req/hr 內）、yfinance 三張共 2,366、institutional 682、market 115。
 3. **分批**：第一批只做實際受影響的 `company_valuation`、`mops_quarterly_financials`（與 I001 一起重建）；FinMind 三張待額度空檔、yfinance 三張另排時段。
 
-## 修復紀錄
+## 修復紀錄（2026-11-25，指令 5）
+
+- 第一批（實際有失敗列的 2 張）：`db/poc/company_valuation.sql`、`db/poc/mops_quarterly_financials.sql` 的 `as_of` 改取 raw 的 seed 日期；`db/poc/README.md` 同步。`tests/sql/` 197 passed（含 lineage）。
+- 上線：`pop_update_mat_views` 重建兩個 IMMV（18 秒；company_valuation 1,684 列走 backend 磁碟快取）。
+- **第二批尚未做**：`dividend`、`dividend_yfinance`、`finmind_news`、`institutional_net_buy_sell`、`market_valuation_summary`、`monthly_revenue`、`financial_quarterly_yfinance`、`financial_yearly_yfinance`（目前 0 列受影響）。重建會對既有 seed 列重打 API，其中 FinMind 三張共 153 次，須排在 FinMind 額度空檔。
 
 ## 重爬與驗證
+
+- `company_valuation`：NULL 主鍵 211 → 0。Q001 C1 PASS。
+- 附帶發現：`pop_check_definitions` 顯示 `sbl_history`、`monthly_revenue_twse` 也是 `changed`，是本次之前就存在的 SQL 與 pop 不一致（本次未動）。

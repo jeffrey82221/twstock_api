@@ -822,7 +822,9 @@ async def ohlcv(
         "* 上櫃：<https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade> `?date=YYYY/MM/DD&type=Daily&sect=EW&response=json`\n\n"
         "**同一日多支股票查詢** 共享 backend 磁碟 cache `/tmp/institutional_cache/{market}/{YYYYMMDD}.json.gz`。\n"
         "**資料起始日**：民國 101/5/2 = 2012-05-02，早於此日期回 400。\n"
-        "**未來收盤前查詢當日**：上游會回空 payload，本 endpoint 會回 `row=null`（found=true，只是當日尚未有資料）。"
+        "**非交易日回溯**：查詢日為週末或假日（全市場 payload 為空）時，往前找最多 10 個日曆天內最近的交易日；"
+        "`row.trade_date` 與 `data_date` 為實際交易日，頂層 `trade_date` 維持查詢日。上游下載失敗時不回溯。\n"
+        "**收盤前查詢當日**：上游回空 payload，會回溯到前一個交易日。"
     ),
 )
 async def institutional_net_buy_sell(
@@ -1168,6 +1170,9 @@ async def financial_analysis(
         "表單為 `TYPEK=sii|otc`, `year=民國年`, `season=1..4`，回傳 HTML 全市場表後過濾股票代號。\n\n"
         "**回傳欄位**：營業收入（百萬元）、毛利率、營業利益率、稅前純益率、稅後純益率（t163sb06），"
         "以及基本每股盈餘 EPS（t163sb04）。比率單位為 `%`，收入單位為百萬元，EPS 單位為新台幣元。\n\n"
+        "**單季 vs 累計**：MOPS 這兩張彙總表是**年初至今累計**（Q2 = 1–6 月、Q4 = 全年）。`data` 為**單季**值："
+        "Q2–Q4 以本季累計減前一季累計換算（比率先還原成金額再相減）；原始累計值放在 `data_ytd`。"
+        "金融業不在營益分析表（t163sb06），只回 `eps`，營收與比率為 null。\n\n"
         f"**最早資料**：實測 2330 最早可得季度為 `{mops_quarterly_financials.QUARTERLY_MIN_DATE.isoformat()}` "
         "（民國 102 年第 1 季）；早於此日回 HTTP 400。\n\n"
         "**as_of 行為**：`as_of` 為查詢基準日，省略時為今天；服務選取不晚於該日的最近完整季度，"

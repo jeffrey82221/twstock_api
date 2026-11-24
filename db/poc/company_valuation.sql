@@ -3,9 +3,11 @@
 -- 欄位 align CompanyValuationResponse + MarketValuationConstituent
 -- 主鍵：(stk_code, as_of)
 -- 設計理念（rule 13）：不做 WHERE 過濾，保留 raw 母體所有 rows（含 found=false 的非交易日列）。
+-- 主鍵（rule 7）：as_of 取 raw 的 seed 日期，不取回應 JSON；回應失敗（NULL）時主鍵才不會變成 NULL（I004）。
+--   成功列的回應 date 與 seed 日期全部相同（2026-11-25 實測 0 列不同），值不變。
 SELECT
     stk_code,
-    custom.parse_iso_date(company_valuation->>'date') AS as_of,
+    as_of,
     custom.parse_iso_date(company_valuation->>'data_date') AS data_date,
     company_valuation->>'stock_id' AS stock_id,
     company_valuation->>'reason' AS reason,

@@ -24,7 +24,8 @@
 股利股息（v0.0.8 新增）
 ========================
 - yfinance `Ticker.dividends` 回傳 pandas Series，index 為「除息日」（tz-aware Timestamp），
-  value 為「每股現金股利（元）」。`Ticker.actions` 額外多一欄 stock split，這裡只取 dividends。
+  value 為「每股現金股利（元）」，但已依之後的 split（台股配股）往回調整；本模組再用
+  `Ticker.splits` 還原成當年實際配發金額（見 split_unadjust_factors）。
 - 台股一般一年配息一次（少數半年配/季配），故同一 year 可能有 1~4 個 row；轉成 FinMind 同形
   rows 後可直接餵 service._pick_dividend（共用既有挑選邏輯，零分支）。
 - yfinance 不提供「股票股利」「股利公告日」「現金股利發放日」 → 對應欄位填 None；其餘日期一律
@@ -164,6 +165,24 @@ async def get_financial_statements_yf(stock_id: str, market: Optional[str]) -> l
 _yf_dividend_cache: TTLCache = TTLCache(maxsize=256, ttl=3600)
 
 
+def split_unadjust_factors(div_dates: list[str], splits: list[tuple[str, float]]) -> list[float]:
+    """每個除息日的還原倍數 = 除息日「之後」所有 split 比例的乘積。
+
+    Yahoo 把台股配股記成 split，並依之後的 split 往回調低歷史股利；乘上這個倍數即還原成
+    當年實際配發的每股現金（例：1101 2022-07-21 配股 10% → split 1.0999，2021-08-12 的
+    3.0621 × 1.0999 = 3.368 = 實際配發）。同日的 split 不算（該次股利本身未被調整）。
+    沒有 split 紀錄的其他還原調整（例：現金增資）無法由此反推。
+    """
+    out = []
+    for d in div_dates:
+        factor = 1.0
+        for split_date, ratio in splits:
+            if split_date > d and ratio and ratio > 0:
+                factor *= ratio
+        out.append(factor)
+    return out
+
+
 def _fetch_yfinance_dividends_sync(ticker_sym: str) -> list[dict[str, Any]]:
     """同步取 yfinance `Ticker.dividends` 並轉為 FinMind TaiwanStockDividend-style rows。
 
@@ -171,7 +190,8 @@ def _fetch_yfinance_dividends_sync(ticker_sym: str) -> list[dict[str, Any]]:
     - date: 除息日（YYYY-MM-DD，以 yfinance index 為準）
     - stock_id: 純股票代號（去掉 .TW/.TWO 後綴）
     - year: 除息日的西元年
-    - CashEarningsDistribution: 每股現金股利（元）
+    - CashEarningsDistribution: 每股現金股利（元），已用 Ticker.splits 還原成當年實際配發金額
+    - SplitUnadjustFactor: 還原倍數（1.0 = 之後沒有 split）
     - CashStatutorySurplus: 0（yfinance 不分項，全部歸入 CashEarningsDistribution）
     - StockEarningsDistribution: 0（yfinance 不提供股票股利）
     - StockStatutorySurplus: 0
@@ -189,6 +209,16 @@ def _fetch_yfinance_dividends_sync(ticker_sym: str) -> list[dict[str, Any]]:
 
     # 純股票代號（去 .TW / .TWO）— 保持與 FinMind data_id 一致
     stock_id = ticker_sym.rsplit(".", 1)[0]
+
+    # Yahoo 的 dividends 已依之後的 split（台股配股）往回調整；取 splits 還原成實際配發金額（I003）。
+    split_series = getattr(t, "splits", None)
+    splits: list[tuple[str, float]] = []
+    if split_series is not None and not split_series.empty:
+        for ts, ratio in split_series.items():
+            try:
+                splits.append((ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10], float(ratio)))
+            except (TypeError, ValueError):
+                continue
 
     rows: list[dict[str, Any]] = []
     for ts, v in div.items():
@@ -211,11 +241,13 @@ def _fetch_yfinance_dividends_sync(ticker_sym: str) -> list[dict[str, Any]]:
             cash = float(v)
         except (TypeError, ValueError):
             continue
+        (factor,) = split_unadjust_factors([d], splits)
         rows.append({
             "date": d,
             "stock_id": stock_id,
             "year": year,
-            "CashEarningsDistribution": cash,
+            "CashEarningsDistribution": round(cash * factor, 6),
+            "SplitUnadjustFactor": factor,
             "CashStatutorySurplus": 0,
             "StockEarningsDistribution": 0,
             "StockStatutorySurplus": 0,

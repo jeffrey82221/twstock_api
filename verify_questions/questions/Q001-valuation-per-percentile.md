@@ -15,7 +15,7 @@ crawl:
     filters: {stk_code: ["2330", "2317", "6488"]}
     order_by: ["month_start_date"]
     budget: 36               # TWSE／TPEx；近 12 個月
-issues: [I004, I005]
+issues: [I005]
 last_run: 2026-11-25
 ---
 
@@ -106,3 +106,4 @@ WHERE stk_code IN ('2330','2317','6488') AND data_date < as_of - 12
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
 | 2026-11-25 | FAIL（C1、C2） | [run](../runs/2026-11-25_Q001.md) | 6488 無估值；2330／2317 通過 |
+| 2026-11-25 | FAIL（C2） | — | 指令 5 後重跑：C1 PASS（I004 修正）；C2 仍為 I005（上櫃無估值） |

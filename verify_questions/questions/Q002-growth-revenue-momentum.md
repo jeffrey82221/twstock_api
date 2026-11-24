@@ -21,7 +21,7 @@ crawl:
     filters: {stk_code: ["2330", "2454", "6488"]}
     order_by: ["quarter_end"]
     budget: 18               # MOPS；6 季 × 3 檔
-issues: [I001, I002]
+issues: [I002]
 last_run: 2026-11-25
 ---
 
@@ -143,3 +143,4 @@ SELECT * FROM s WHERE n = 12 AND abs(ttm_value - sum12) > 0.005 * sum12
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
 | 2026-11-25 | FAIL（C3、C4、C5） | [run](../runs/2026-11-25_Q002.md) | 月營收可信；季報累計值、前視 |
+| 2026-11-25 | FAIL（C3、C4） | — | 指令 5 後重跑：C5 PASS（I001 修正）；C3、C4 待 I002 決策 |

@@ -3,7 +3,7 @@ id: I003
 title: dividend_yfinance 的現金股利是配股還原後的值，與實際配發金額不一致
 severity: S1
 layer: L1（部分 L0）
-status: diagnosed
+status: verifying
 pop_tables: [dividend_yfinance, raw_dividend_yfinance, raw_dividend_history_yfinance]
 seeds: [dividend_event_yfinance_list]
 found_by: [Q005]
@@ -43,6 +43,14 @@ Yahoo 的 `Ticker.dividends` 是依之後的配股（記為 split）與其他資
 2. 無法反推的情況（2882）列為 L0 已知限制，寫進 Q005「已知限制」與 `db/poc/README.md` 的 dividend_yfinance 章節：實際配發金額以 FinMind（`dividend`）為準。
 3. 重爬：只需 `dividend_event_yfinance_list` 中「除息日之後有 split」的股票的列；需先列出受影響股票（Yahoo 逐檔查 splits）。
 
-## 修復紀錄
+## 修復紀錄（2026-11-25，指令 5）
+
+- `app/yfinance_source.py`：新增 `split_unadjust_factors()`；每筆股利乘上「除息日之後所有 split 比例的乘積」還原成實際配發金額，rows 加 `SplitUnadjustFactor`；模組說明同步。`db/poc/README.md` 的 dividend_yfinance 章節註明「實際配發金額以 FinMind 為準」。
+- 測試：`tests/source/test_yfinance_dividend_source.py`（新檔，3 個）。
 
 ## 重爬與驗證
+
+- 直接呼叫：1101 2021-08-12 → 3.368119（FinMind 3.36811984）。
+- 受影響範圍：`dividend_event_yfinance_list` 296 檔中 126 檔在某些事件之後有 split；刪除並重爬這些檔「最後一次 split 之前」的事件 163 列（51 秒、0 錯誤、每次刪除都通過 1:1 驗證）。
+- 斷言：Q005 C1 違規 3 → 2。剩下的 2 列都是 2882（比值 1.0157、Yahoo 沒有 split 紀錄）＝ **L0**，無法在本系統修正。
+- **待使用者決定**：接受 L0 殘留（把 2882 寫進 Q005「已知限制」並讓 C1 排除沒有 split 紀錄的調整），或維持 FAIL 作為「yfinance 股利不可當實際配發金額」的提醒。

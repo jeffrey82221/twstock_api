@@ -4,9 +4,11 @@
 -- 主鍵顯示規則與 financial_quarterly 同 (`stk_code` + `as_of`)
 -- 設計理念（rule 13）：不做 WHERE 過濾，保留 raw 母體的所有 rows（含 found=false 的列）。
 -- 型別安全：numeric 欄位一律走 `->>`（回傳 text）再 `::NUMERIC`，jsonb null 安全轉為 SQL NULL。
+-- 主鍵（rule 7）：as_of 取 raw 的 seed 日期（季末日），不取回應 JSON（I004）。
+-- 數值為**單季**：endpoint 的 `data` 已由 MOPS 年初至今累計值換算成單季（I001），累計值在 raw JSON 的 `data_ytd`。
 SELECT
     stk_code,
-    custom.parse_iso_date(quarterly_financials->>'as_of') AS as_of,
+    as_of,
     quarterly_financials->>'stock_id' AS stock_id,
     quarterly_financials->>'company_name' AS company_name,
     quarterly_financials->>'market' AS market,
