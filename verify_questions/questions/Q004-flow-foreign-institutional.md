@@ -2,7 +2,7 @@
 id: Q004
 title: 2330、2317、6488 近 12 個月外資持股比是否上升、法人是否淨買超、借券是否增加？
 strategy: flow
-status: draft
+status: failing
 stocks: ["2330", "2317", "6488"]
 window: {since: 2025-12-05, until: 2026-11-25}
 pop_tables: [institutional_net_buy_sell, foreign_ownership, sbl_history]
@@ -19,8 +19,8 @@ crawl:
     filters: {stk_code: ["2330", "2317", "6488"]}
     order_by: ["month_start_date"]
     budget: 36               # TWSE t13sa870
-issues: []
-last_run: null
+issues: [I006, I007]
+last_run: 2026-11-25
 ---
 
 ## 決策情境
@@ -121,3 +121,4 @@ WHERE stk_code IN ('2330','2317','6488') AND as_of >= DATE '2025-12-05'
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-25 | FAIL（C1、C3） | [run](../runs/2026-11-25_Q004.md) | 假日取樣缺；6488 無外資持股 |
