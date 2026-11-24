@@ -292,6 +292,17 @@ uvicorn db_demo.main:app --host 0.0.0.0 --port 5100
 - 取樣日（每月 5 日）遇到週末或休市日時，`/api/company-valuation` 會回溯到最近交易日，所以每個月都應該有值，並以 `data_date` 標示實際交易日（例如 2026-09-05 是週六，實際資料日為 2026-09-04）。`raw_company_valuation` 若仍有 NULL，表示上游失敗（HTTP 502），不是非交易日造成的。
 
 
+**Test 4：端到端資料分析**
+
+> 我想比較 2330 和 2317 最近 7 天的 K-line data。
+
+It must include columns ['open', 'high', 'low', 'close']. volume and amount are optional.
+
+先確認哪個 pop 裡面的表適合做此研究，然後觀察資料是否已入庫，
+沒有的話用 `crawl_insert_filtered` 來補資料。
+
+
+
 # TWStock Query · 台灣上市櫃公司查詢平台
 
 > **Version: v0.0.11**
