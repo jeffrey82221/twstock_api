@@ -93,7 +93,7 @@ verify_questions/
 
 | 步驟 | 做什麼 | 用到的 MCP tool | 產出 |
 | --- | --- | --- | --- |
-| 1 盤點 | 拍下資料庫現況，和上一份比較 | `crawl_pop_tables`、`pop_raw_quality`、`crawl_status(1440)`、`http_stats(1440)` | `snapshots/<日期>.json`、LEDGER 品質趨勢與覆蓋矩陣 |
+| 1 盤點 | 拍下資料庫現況，和上一份比較（`.venv/bin/python verify_questions/snapshot.py` 一次做完四個呼叫並印出比較） | `crawl_pop_tables`、`pop_raw_quality`、`crawl_status(1440)`、`http_stats(1440)` | `snapshots/<日期>.json`、LEDGER 品質趨勢與覆蓋矩陣 |
 | 2 出題 | 依覆蓋缺口與策略維度（§5）寫問題卡 | `describe_table`、`select`（確認欄位與現有資料） | `questions/Q###.md`（`status: draft`） |
 | 3 補爬 | 依問題卡的 `crawl` 區塊補資料（規則見 §8） | `select` 看現有 → `crawl_insert_filtered` dry run → 實際寫入 | run 紀錄的「補爬」表 |
 | 4 取數 | 執行問題卡的決策 SQL | `select` | run 紀錄的「決策資料」與結論 |
