@@ -1,0 +1,1073 @@
+{
+ "taken_at": "2026-11-25T00:14:22+08:00",
+ "crawl_pop_tables": [
+  {
+   "table_name": "chain_info_list",
+   "kind": "seed",
+   "rows": 6889
+  },
+  {
+   "table_name": "chain_list",
+   "kind": "seed",
+   "rows": 47
+  },
+  {
+   "table_name": "company_basic_info_list",
+   "kind": "seed",
+   "rows": 868
+  },
+  {
+   "table_name": "company_finmind_list",
+   "kind": "seed",
+   "rows": 511
+  },
+  {
+   "table_name": "company_list",
+   "kind": "seed",
+   "rows": 1055
+  },
+  {
+   "table_name": "company_valuation_monthly_list",
+   "kind": "seed",
+   "rows": 1600
+  },
+  {
+   "table_name": "dividend_event_list",
+   "kind": "seed",
+   "rows": 41
+  },
+  {
+   "table_name": "dividend_event_yfinance_list",
+   "kind": "seed",
+   "rows": 420
+  },
+  {
+   "table_name": "financial_analysis_year_list",
+   "kind": "seed",
+   "rows": 291
+  },
+  {
+   "table_name": "financial_month_list",
+   "kind": "seed",
+   "rows": 1
+  },
+  {
+   "table_name": "financial_month_twse_list",
+   "kind": "seed",
+   "rows": 445
+  },
+  {
+   "table_name": "financial_quarter_yfinance_list",
+   "kind": "seed",
+   "rows": 835
+  },
+  {
+   "table_name": "financial_year_list",
+   "kind": "seed",
+   "rows": 100
+  },
+  {
+   "table_name": "financial_year_yfinance_list",
+   "kind": "seed",
+   "rows": 1071
+  },
+  {
+   "table_name": "finmind_news_monthly_list",
+   "kind": "seed",
+   "rows": 95
+  },
+  {
+   "table_name": "foreign_ownership_monthly_list",
+   "kind": "seed",
+   "rows": 52
+  },
+  {
+   "table_name": "institutional_monthly_list",
+   "kind": "seed",
+   "rows": 646
+  },
+  {
+   "table_name": "market_valuation_date_list",
+   "kind": "seed",
+   "rows": 115
+  },
+  {
+   "table_name": "mops_quarterly_financials_quarter_list",
+   "kind": "seed",
+   "rows": 313
+  },
+  {
+   "table_name": "ohlcv_monthly_list",
+   "kind": "seed",
+   "rows": 1093
+  },
+  {
+   "table_name": "product_revenue_filer_list",
+   "kind": "seed",
+   "rows": 168
+  },
+  {
+   "table_name": "product_revenue_filer_scope_list",
+   "kind": "seed",
+   "rows": 122
+  },
+  {
+   "table_name": "sbl_history_monthly_list",
+   "kind": "seed",
+   "rows": 336
+  },
+  {
+   "table_name": "company_business_items",
+   "kind": "immv",
+   "rows": 19571
+  },
+  {
+   "table_name": "company_valuation",
+   "kind": "immv",
+   "rows": 1600
+  },
+  {
+   "table_name": "dividend",
+   "kind": "immv",
+   "rows": 41
+  },
+  {
+   "table_name": "dividend_yfinance",
+   "kind": "immv",
+   "rows": 420
+  },
+  {
+   "table_name": "financial_analysis",
+   "kind": "immv",
+   "rows": 291
+  },
+  {
+   "table_name": "financial_quarterly_yfinance",
+   "kind": "immv",
+   "rows": 835
+  },
+  {
+   "table_name": "financial_yearly_yfinance",
+   "kind": "immv",
+   "rows": 1071
+  },
+  {
+   "table_name": "finmind_news",
+   "kind": "immv",
+   "rows": 1955
+  },
+  {
+   "table_name": "foreign_ownership",
+   "kind": "immv",
+   "rows": 52
+  },
+  {
+   "table_name": "institutional_net_buy_sell",
+   "kind": "immv",
+   "rows": 646
+  },
+  {
+   "table_name": "market_valuation_summary",
+   "kind": "immv",
+   "rows": 115
+  },
+  {
+   "table_name": "monthly_revenue",
+   "kind": "immv",
+   "rows": 1
+  },
+  {
+   "table_name": "monthly_revenue_twse",
+   "kind": "immv",
+   "rows": 445
+  },
+  {
+   "table_name": "mops_quarterly_financials",
+   "kind": "immv",
+   "rows": 313
+  },
+  {
+   "table_name": "ohlcv_daily",
+   "kind": "immv",
+   "rows": 22324
+  },
+  {
+   "table_name": "product_revenue",
+   "kind": "immv",
+   "rows": 547
+  },
+  {
+   "table_name": "raw_chain_info",
+   "kind": "immv",
+   "rows": 47
+  },
+  {
+   "table_name": "raw_company_info",
+   "kind": "immv",
+   "rows": 1055
+  },
+  {
+   "table_name": "raw_company_valuation",
+   "kind": "immv",
+   "rows": 1600
+  },
+  {
+   "table_name": "raw_dividend",
+   "kind": "immv",
+   "rows": 41
+  },
+  {
+   "table_name": "raw_dividend_history",
+   "kind": "immv",
+   "rows": 511
+  },
+  {
+   "table_name": "raw_dividend_history_yfinance",
+   "kind": "immv",
+   "rows": 1055
+  },
+  {
+   "table_name": "raw_dividend_yfinance",
+   "kind": "immv",
+   "rows": 420
+  },
+  {
+   "table_name": "raw_financial_analysis",
+   "kind": "immv",
+   "rows": 291
+  },
+  {
+   "table_name": "raw_finmind_news",
+   "kind": "immv",
+   "rows": 95
+  },
+  {
+   "table_name": "raw_foreign_ownership",
+   "kind": "immv",
+   "rows": 52
+  },
+  {
+   "table_name": "raw_institutional_net_buy_sell",
+   "kind": "immv",
+   "rows": 646
+  },
+  {
+   "table_name": "raw_market_valuation_summary",
+   "kind": "immv",
+   "rows": 115
+  },
+  {
+   "table_name": "raw_monthly_revenue",
+   "kind": "immv",
+   "rows": 1
+  },
+  {
+   "table_name": "raw_monthly_revenue_twse",
+   "kind": "immv",
+   "rows": 445
+  },
+  {
+   "table_name": "raw_mops_quarterly_financials",
+   "kind": "immv",
+   "rows": 313
+  },
+  {
+   "table_name": "raw_ohlcv_monthly",
+   "kind": "immv",
+   "rows": 1093
+  },
+  {
+   "table_name": "raw_product_revenue",
+   "kind": "immv",
+   "rows": 168
+  },
+  {
+   "table_name": "raw_product_revenue_filers",
+   "kind": "immv",
+   "rows": 122
+  },
+  {
+   "table_name": "raw_quarterly_financials_yfinance",
+   "kind": "immv",
+   "rows": 835
+  },
+  {
+   "table_name": "raw_sbl_history",
+   "kind": "immv",
+   "rows": 336
+  },
+  {
+   "table_name": "raw_yearly_financials",
+   "kind": "immv",
+   "rows": 100
+  },
+  {
+   "table_name": "raw_yearly_financials_yfinance",
+   "kind": "immv",
+   "rows": 1071
+  },
+  {
+   "table_name": "sbl_history",
+   "kind": "immv",
+   "rows": 18501
+  }
+ ],
+ "pop_raw_quality": [
+  {
+   "raw_view": "raw_chain_info",
+   "json_column": "segments",
+   "total_rows": 47,
+   "null_rows": 0,
+   "found_false_rows": 0,
+   "usable_rows": 47,
+   "sources": {
+    "(none)": 47
+   },
+   "usable_pct": 100.0
+  },
+  {
+   "raw_view": "raw_company_info",
+   "json_column": "basic",
+   "total_rows": 1055,
+   "null_rows": 0,
+   "found_false_rows": 187,
+   "usable_rows": 868,
+   "sources": {
+    "(none)": 187,
+    "TWSE OpenAPI t187ap03_L / TPEx OpenAPI mopsfin_t187ap03_O": 868
+   },
+   "usable_pct": 82.3
+  },
+  {
+   "raw_view": "raw_company_info",
+   "json_column": "business_items",
+   "total_rows": 1055,
+   "null_rows": 0,
+   "found_false_rows": 187,
+   "usable_rows": 868,
+   "sources": {
+    "經濟部商工登記公示資料 · 公司登記基本資料 (236EE382-...025E7C)": 868,
+    "(none)": 187
+   },
+   "usable_pct": 82.3
+  },
+  {
+   "raw_view": "raw_company_valuation",
+   "json_column": "company_valuation",
+   "total_rows": 1600,
+   "null_rows": 168,
+   "found_false_rows": 0,
+   "usable_rows": 1432,
+   "sources": {
+    "(none)": 168,
+    "TWSE BWIBBU_d (per-day)": 1432
+   },
+   "usable_pct": 89.5
+  },
+  {
+   "raw_view": "raw_dividend",
+   "json_column": "dividend",
+   "total_rows": 41,
+   "null_rows": 0,
+   "found_false_rows": 2,
+   "usable_rows": 39,
+   "sources": {
+    "FinMind v4 TaiwanStockDividend": 41
+   },
+   "usable_pct": 95.1
+  },
+  {
+   "raw_view": "raw_dividend_history",
+   "json_column": "dividend_history",
+   "total_rows": 511,
+   "null_rows": 0,
+   "found_false_rows": 49,
+   "usable_rows": 462,
+   "sources": {
+    "FinMind v4 TaiwanStockDividend": 511
+   },
+   "usable_pct": 90.4
+  },
+  {
+   "raw_view": "raw_dividend_history_yfinance",
+   "json_column": "dividend_history",
+   "total_rows": 1055,
+   "null_rows": 0,
+   "found_false_rows": 173,
+   "usable_rows": 882,
+   "sources": {
+    "yfinance Ticker.dividends": 1055
+   },
+   "usable_pct": 83.6
+  },
+  {
+   "raw_view": "raw_dividend_yfinance",
+   "json_column": "dividend",
+   "total_rows": 420,
+   "null_rows": 0,
+   "found_false_rows": 0,
+   "usable_rows": 420,
+   "sources": {
+    "yfinance Ticker.dividends": 420
+   },
+   "usable_pct": 100.0
+  },
+  {
+   "raw_view": "raw_financial_analysis",
+   "json_column": "financial_analysis",
+   "total_rows": 291,
+   "null_rows": 34,
+   "found_false_rows": 0,
+   "usable_rows": 257,
+   "sources": {
+    "(none)": 34,
+    "MOPS t51sb02 (https://mops.twse.com.tw/mops/web/t51sb02)": 257
+   },
+   "usable_pct": 88.3
+  },
+  {
+   "raw_view": "raw_finmind_news",
+   "json_column": "finmind_news",
+   "total_rows": 95,
+   "null_rows": 26,
+   "found_false_rows": 0,
+   "usable_rows": 69,
+   "sources": {
+    "FinMind TaiwanStockNews": 69,
+    "(none)": 26
+   },
+   "usable_pct": 72.6
+  },
+  {
+   "raw_view": "raw_foreign_ownership",
+   "json_column": "foreign_ownership",
+   "total_rows": 52,
+   "null_rows": 0,
+   "found_false_rows": 0,
+   "usable_rows": 52,
+   "sources": {
+    "TWSE MI_QFIIS": 52
+   },
+   "usable_pct": 100.0
+  },
+  {
+   "raw_view": "raw_institutional_net_buy_sell",
+   "json_column": "institutional_net_buy_sell",
+   "total_rows": 646,
+   "null_rows": 0,
+   "found_false_rows": 0,
+   "usable_rows": 646,
+   "sources": {
+    "TPEx dailyTrade (per-day)": 14,
+    "TWSE T86 (per-day)": 632
+   },
+   "usable_pct": 100.0
+  },
+  {
+   "raw_view": "raw_market_valuation_summary",
+   "json_column": "market_valuation_summary",
+   "total_rows": 115,
+   "null_rows": 0,
+   "found_false_rows": 0,
+   "usable_rows": 115,
+   "sources": {
+    "TWSE BWIBBU_d (per-day)": 115
+   },
+   "usable_pct": 100.0
+  },
+  {
+   "raw_view": "raw_monthly_revenue",
+   "json_column": "revenue",
+   "total_rows": 1,
+   "null_rows": 0,
+   "found_false_rows": 1,
+   "usable_rows": 0,
+   "sources": {
+    "FinMind v4 TaiwanStockMonthRevenue": 1
+   },
+   "usable_pct": 0.0
+  },
+  {
+   "raw_view": "raw_monthly_revenue_twse",
+   "json_column": "revenue",
+   "total_rows": 445,
+   "null_rows": 0,
+   "found_false_rows": 111,
+   "usable_rows": 334,
+   "sources": {
+    "TWSE OpenAPI t187ap05_L + MOPS t21sc03 (history)": 2,
+    "MOPS t21sc03 (history)": 332,
+    "TWSE/TPEx OpenAPI t187ap05 + MOPS t21sc03": 111
+   },
+   "usable_pct": 75.1
+  },
+  {
+   "raw_view": "raw_mops_quarterly_financials",
+   "json_column": "quarterly_financials",
+   "total_rows": 313,
+   "null_rows": 0,
+   "found_false_rows": 0,
+   "usable_rows": 313,
+   "sources": {
+    "MOPS t163sb06 + t163sb04": 313
+   },
+   "usable_pct": 100.0
+  },
+  {
+   "raw_view": "raw_ohlcv_monthly",
+   "json_column": "ohlcv",
+   "total_rows": 1093,
+   "null_rows": 0,
+   "found_false_rows": 0,
+   "usable_rows": 1093,
+   "sources": {
+    "TPEx tradingStock (per-stock-per-month)": 17,
+    "TWSE STOCK_DAY (per-stock-per-month)": 1076
+   },
+   "usable_pct": 100.0
+  },
+  {
+   "raw_view": "raw_product_revenue",
+   "json_column": "product_revenue",
+   "total_rows": 168,
+   "null_rows": 0,
+   "found_false_rows": 4,
+   "usable_rows": 164,
+   "sources": {
+    "公開資訊觀測站 (MOPS) - 各項產品業務營收統計表 (t05st08)": 168
+   },
+   "usable_pct": 97.6
+  },
+  {
+   "raw_view": "raw_product_revenue_filers",
+   "json_column": "filers",
+   "total_rows": 122,
+   "null_rows": 0,
+   "found_false_rows": 0,
+   "usable_rows": 122,
+   "sources": {
+    "MOPS ajax_t05st08_all": 122
+   },
+   "usable_pct": 100.0
+  },
+  {
+   "raw_view": "raw_quarterly_financials_yfinance",
+   "json_column": "financials",
+   "total_rows": 835,
+   "null_rows": 0,
+   "found_false_rows": 0,
+   "usable_rows": 835,
+   "sources": {
+    "yfinance Ticker.quarterly_financials (.TW / .TWO)": 835
+   },
+   "usable_pct": 100.0
+  },
+  {
+   "raw_view": "raw_sbl_history",
+   "json_column": "sbl_history",
+   "total_rows": 336,
+   "null_rows": 199,
+   "found_false_rows": 0,
+   "usable_rows": 137,
+   "sources": {
+    "(none)": 199,
+    "TWSE SBL t13sa870": 137
+   },
+   "usable_pct": 40.8
+  },
+  {
+   "raw_view": "raw_yearly_financials",
+   "json_column": "financials",
+   "total_rows": 100,
+   "null_rows": 0,
+   "found_false_rows": 17,
+   "usable_rows": 83,
+   "sources": {
+    "FinMind v4 TaiwanStockFinancialStatements": 100
+   },
+   "usable_pct": 83.0
+  },
+  {
+   "raw_view": "raw_yearly_financials_yfinance",
+   "json_column": "financials",
+   "total_rows": 1071,
+   "null_rows": 0,
+   "found_false_rows": 2,
+   "usable_rows": 1069,
+   "sources": {
+    "yfinance Ticker.quarterly_financials (.TW / .TWO)": 1071
+   },
+   "usable_pct": 99.8
+  }
+ ],
+ "crawl_status": [
+  {
+   "seed_table": "chain_info_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 6889,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "chain_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 47,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "company_basic_info_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 868,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "company_finmind_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 511,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "company_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 1055,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "company_valuation_monthly_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 1600,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "dividend_event_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 41,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "dividend_event_yfinance_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 420,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "financial_analysis_year_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 291,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "financial_month_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 1,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "financial_month_twse_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 445,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "financial_quarter_yfinance_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 835,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "financial_year_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 100,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "financial_year_yfinance_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 1071,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "finmind_news_monthly_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 95,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "foreign_ownership_monthly_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 52,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "institutional_monthly_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 646,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "market_valuation_date_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 115,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "mops_quarterly_financials_quarter_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 313,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "ohlcv_monthly_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 1093,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "product_revenue_filer_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 168,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "product_revenue_filer_scope_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 122,
+   "rows_per_hour": 0.0
+  },
+  {
+   "seed_table": "sbl_history_monthly_list",
+   "schedule": null,
+   "row_cnt": null,
+   "active": null,
+   "scheduled": false,
+   "runs_ok": 0,
+   "runs_failed": 0,
+   "runs_in_progress": 0,
+   "rows_inserted": 0,
+   "avg_run_seconds": null,
+   "last_run_at": null,
+   "last_status": null,
+   "last_message": null,
+   "last_error_at": null,
+   "last_error": null,
+   "pop_rows": 336,
+   "rows_per_hour": 0.0
+  }
+ ],
+ "http_stats": {
+  "minutes": 1440,
+  "endpoints": [
+   {
+    "endpoint": "/api/company/{id}/sbl-history",
+    "requests": 1,
+    "distinct_urls": 1,
+    "repeated_requests": 0,
+    "ok_2xx": 1,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.01,
+    "max_seconds": 0.0
+   },
+   {
+    "endpoint": "/api/ohlcv",
+    "requests": 1,
+    "distinct_urls": 1,
+    "repeated_requests": 0,
+    "ok_2xx": 1,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 7.08,
+    "max_seconds": 7.1
+   }
+  ],
+  "cache": {
+   "entries": 4014,
+   "ok_entries": 3846
+  }
+ }
+}
