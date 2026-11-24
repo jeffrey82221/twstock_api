@@ -59,6 +59,7 @@
 | 日期 | raw 平均 usable% | 最低三個 raw（usable%） | 新開／關閉 issue |
 | --- | --- | --- | --- |
 | 2026-11-25 | 86.1（23 個 json 欄位） | `raw_monthly_revenue` 0.0（僅 1 列）、`raw_sbl_history` 40.8、`raw_finmind_news` 72.6 | 指令 3 新開 I001–I008 |
+| 2026-11-25（指令 6 回歸） | 85.9 | `raw_monthly_revenue` 0.0、`raw_sbl_history` 46.5、`raw_finmind_news` 72.6 | 指令 4 開 I009、指令 5 開 I010；關閉 I001、I008、I009。回歸：passing 的 Q003 4／4 PASS。平均略降是因補爬新增了 I005 的上櫃估值 NULL 列 |
 
 ## 最新盤點發現（2026-11-25，`snapshots/2026-11-25.json`）
 
