@@ -98,7 +98,7 @@ verify_questions/
 | 3 補爬 | 依問題卡的 `crawl` 區塊補資料（規則見 §8） | `select` 看現有 → `crawl_insert_filtered` dry run → 實際寫入 | run 紀錄的「補爬」表 |
 | 4 取數 | 執行問題卡的決策 SQL | `select` | run 紀錄的「決策資料」與結論 |
 | 5 驗證 | 逐一執行斷言，判定 PASS / FAIL / INCONCLUSIVE | `select` | run 紀錄的「斷言結果」；失敗依 §7.3 分流 |
-| 6 診斷修復 | 根因分析（§9），修程式並閉環（§10） | `select`（含 `job_control.*`、`hidden.*`）、`poc_rebuild_views`、`pop_check_definitions`、`pop_update_mat_views` | `issues/I###.md` 更新、程式 diff、測試結果 |
+| 6 診斷修復 | 根因分析（§9），修程式並閉環（§10） | `select`（含 `job_control.*`、`hidden.*`）、`poc_rebuild_views`、`pop_check_definitions`、`pop_update_mat_views`、`crawl_delete_rows`、`http_cache_evict`、`crawl_insert_filtered` | `issues/I###.md` 更新、程式 diff、測試結果 |
 | 7 回歸 | 定期只跑斷言、不補爬，找出退化 | `select` | LEDGER 狀態更新；退化就開 issue |
 
 **補爬前後的差異**：補爬前的時間序列缺口是「還沒爬」，不算品質問題。完整性斷言一律在步驟 3 之後判定；補爬後仍然有洞，才是品質問題（seed 沒產生該格點，或爬取失敗）。
@@ -332,6 +332,7 @@ found_by: [Q005]
 ### 7.2 寫法規範
 
 - 單一 `SELECT` 或 `WITH`，不可含 `;`（MCP `select` 的限制）。可以讀 `pop`、`hidden`、`job_control`。
+- 送進 `select` 前去掉 `--` 註解：`select` 會把 SQL 包成子查詢，結尾的註解會吃掉外層的 `) LIMIT`。`checks/` 模板的說明寫在註解裡，代入參數後要先去掉。
 - 回傳的欄位要足以直接診斷：主鍵、日期，以及出問題的值本身，不要只回 `count(*)`。
 - 跨來源斷言要另附「可比對列數」查詢。可比對列數為 0 時，結果是 **INCONCLUSIVE**，不是 PASS。
 - 斷言只讀 `pop`，不讀 `poc`。`poc` view 每次查詢都會打 HTTP，結果不穩定，也會消耗額度。
@@ -515,10 +516,11 @@ endpoint 測試都在 `tests/endpoint/test_main_endpoints.py`（新聞另有 `te
 | 層 | 改哪裡 | 必跑測試 | 上線方式 | 既有資料處理 |
 | --- | --- | --- | --- | --- |
 | L0 | 不改資料；上游格式改版就按 L1 處理 | `RUN_UPSTREAM_CONTRACT_TESTS=1 pytest tests/upstream/ -m upstream_contract -q` | — | 寫進問題卡「已知限制」與 `db/poc/README.md` 對應章節 |
-| L1／L2 | `app/` | `pytest tests/source/ tests/endpoint/ -q`，並新增重現本 issue 的測試 | 重啟 uvicorn | §10.2 清 cache、刪壞列、重爬 |
+| L1／L2 | `app/` | `pytest tests/source/ tests/endpoint/ -q`，並新增重現本 issue 的測試 | 重啟 uvicorn | §10.2 重爬受影響的列 |
 | L3 | `db/poc/*_list.sql` | `pytest tests/sql/ -q` | `poc_rebuild_views` → `pop_check_definitions` → `pop_update_mat_views(dry_run=true)` → 執行（seed 只替換 `hidden` view，資料保留） | 新邊界外的舊列：保留或刪除，在 issue 寫明理由 |
 | L4／L5 | `db/poc/raw_*.sql`、`db/poc/<view>.sql` | `pytest tests/sql/ -q`；`RUN_POC_VIEW_SELECT_TESTS=1 pytest -m poc_view_select tests/live_sql/ -v` | 同 L3，但 IMMV 會 DROP 再重建，對所有既有 seed 列重打 API | 執行前先估重打成本（見下方注意事項） |
 | L6 | 排程、`job_control.http_config` | — | `crawl_set_schedule`／`crawl_pause` | §10.2 重爬被凍結的列 |
+| 已被修好的舊問題 | — | — | — | API 現在已回正確資料、只是舊列被凍結（例：§12 的借券 404）→ 直接 §10.2 重爬 |
 | L7 | `questions/Q###.md` | — | — | — |
 
 注意事項：
@@ -531,28 +533,41 @@ endpoint 測試都在 `tests/endpoint/test_main_endpoints.py`（新聞另有 `te
 
 seed 列一旦 insert，下游 IMMV 的那一列就固定了，修好 API 後舊列也不會自己變好。重爬步驟：
 
-1. **清 cache**：刪掉受影響 URL 的 `job_control.http_cache`。2xx 和 4xx 都會被 cache（預設 1 小時），不清的話重爬會拿到舊結果；5xx 不會被 cache。
-2. **刪除壞列**：從 `pop.<seed>` 刪掉受影響的 seed 列，pg_ivm 會同步刪除下游 IMMV 的對應列。刪上游 seed（如 `company_list`）**不會**連動刪下游 seed 表（`company_basic_info_list` 是獨立的表）。
-3. **重爬**：`crawl_insert_filtered`（同 §8.3 預算）。
-4. **重跑**：重跑 `found_by` 所列問題的斷言，結果寫回 issue。
+1. **確認 API 已是修好的版本**：直接 `curl` 一個受影響的 URL，確認回應已正確。
+2. **刪除壞列**：`crawl_delete_rows`，先 dry run，看 `matching_rows`、`pinned_responses`，以及每個下游 IMMV 的 `one_to_one`；確認後以 `dry_run=false` 執行，結果必須是 `deleted`。
+3. **確認快取**：`crawl_delete_rows` 已清掉它 pin 過的 URL。若還有其他相關 URL 在一小時內被抓過（2xx、4xx 都會被 cache），用 `http_cache_evict` 先 dry run 再清。
+4. **重爬**：`crawl_insert_filtered`（同 §8.3 預算）。
+5. **重跑**：重跑 `found_by` 所列問題的斷言，結果寫回 issue，並記一行到 LEDGER 的「重爬紀錄」。
 
-### 10.3 需要補的工具（由指令 0 建立）
+注意：
 
-目前 MCP 的 `select` 是唯讀，沒有刪列和清 cache 的 tool。指令 0 要在 [`server.py`](../server.py) 新增兩個寫入 tool，風格比照既有的 `crawl_insert_filtered`：預設 `dry_run=true`，回傳會影響的列數與 SQL。
+- 刪上游 seed（如 `company_list`）**不會**連動刪下游 seed 表（`company_basic_info_list` 是獨立的表）。
+- 該 seed 若有 cron 排程，刪掉的列也可能被 cron 先爬回來（效果等同重爬，但不在你的預算控制內）。大量重爬前可先 `crawl_pause`，完成後再依 `crawl_status` 原本的值 `crawl_set_schedule`。
+
+### 10.3 重爬工具與實測（2026-11-25，指令 0）
+
+[`server.py`](../server.py) 新增了兩個寫入 tool，邏輯在 [`pop_maintenance.py`](../pop_maintenance.py)，測試在 [`tests/pipeline/test_pop_maintenance.py`](../tests/pipeline/test_pop_maintenance.py)。兩者都預設 `dry_run=true`。
 
 | Tool | 行為 | 護欄 |
 | --- | --- | --- |
-| `crawl_delete_rows(table, filters, dry_run=true)` | `DELETE FROM pop.<seed> WHERE <filters>` | 必須是 seed table；`filters` 不可為空；回傳下游受影響的 IMMV；單次上限 500 列 |
-| `http_cache_evict(url_like, dry_run=true)` | `DELETE FROM job_control.http_cache WHERE url LIKE <url_like>` | `url_like` 必須含 `/api/` 路徑片段與至少一個股票代號或日期，避免清空整個 cache |
+| `crawl_delete_rows(table, filters, dry_run=true, pin_responses=true, allow_unverified=false)` | 在一個交易內：鎖住 seed → pin 回應 → `DELETE` → 驗證 IMMV → 移除 pin → commit | 必須是 seed table；`filters` 不可為空；單次上限 500 列；驗證失敗整批 rollback |
+| `http_cache_evict(url_like, dry_run=true)` | `DELETE FROM job_control.http_cache WHERE url LIKE <url_like>` | `url_like` 必須含 `/api/` 與 4 位以上數字（股票代號或日期）；單次上限 5000 筆 |
 
-建好後，先用 1 列實測：刪除一個 seed 列時，pg_ivm 的維護是否會觸發 API 呼叫（比對刪除前後的 `http_stats`）。把結果寫進本節。
+**為什麼刪除這麼麻煩**：在真實 DB 實測（pg_ivm 1.17，每個實驗都在交易內 rollback）得到四個事實：
 
-工具建好前的替代做法（手動，需要使用者同意）：
+| 實驗 | 結果 |
+| --- | --- |
+| API 沒開時刪一列 | 失敗：`Failed to connect to host.docker.internal port 5002`。pg_ivm 會對被刪的列**重跑 IMMV 查詢，包含 API 呼叫** |
+| 回應沒變的列（2330 2020-01-05） | 1 次 API 呼叫；raw 1 列、正規化 154 列都正確刪除 |
+| 回應已變的列（2330 2015-08-05：當初 404，現在 200） | seed 列刪掉了，但 raw 列留著，沒有 pin 就會成為**孤兒** |
+| 直接 `DELETE FROM pop.raw_sbl_history` | 被拒：`cannot change materialized view`，孤兒只能用整張 `refresh_immv` 清（每個 seed 列重打 API） |
 
-```bash
-docker exec -it postgres-db psql -U postgres -d app_db \
-  -c "DELETE FROM job_control.http_cache WHERE url LIKE '%/2330/sbl-history?as_of=2015-%'"
-```
+重爬的情境幾乎都是「回應已變」，所以 `crawl_delete_rows` 會先 **pin**：把每個下游 `raw_*` 已存的回應依 URL 寫進 `http_cache`（NULL 寫成 404），讓 pg_ivm 重算出與當初相同的結果。URL 由 `db/poc/raw_*.sql` 把 `custom.http_get_content(<url>)` 改寫成 `<url>` 算出，22 個 raw view 都適用（有測試檢查）。驗證方式是：與 seed 1:1 的 IMMV（`raw_*` 與 `company_valuation` 這類一列對一列的表）必須剛好少掉被刪的列數；不符就 rollback，所以不會留下孤兒。
+
+**1 列實測（真的 commit）**：`sbl_history_monthly_list {stk_code: "2330", month_start_date: "2015-08-05"}`
+
+- 刪除：pin 1 筆、**0 次 API 呼叫**；`raw_sbl_history` 262 → 261 列（已驗證），`sbl_history` 沒有該月的列，不變；pin 已清除。
+- 重爬：`crawl_insert_filtered` insert 1 列，0.04 秒。原本 NULL 的 raw 列變成可用，有 49 筆借券紀錄，`sbl_history` 也多了 49 列。
 
 ### 10.4 護欄
 
@@ -566,7 +581,7 @@ docker exec -it postgres-db psql -U postgres -d app_db \
 
 把下列文字貼給 Claude Code（在本專案目錄）。`<...>` 換成實際值。
 
-### 指令 0：初始化（只做一次）
+### 指令 0：初始化（只做一次；2026-11-25 已完成，結果見 §10.3）
 
 ```text
 依 verify_questions/README.md §3 建立資料夾骨架（LEDGER.md 依 §6.4、questions/ runs/ issues/ checks/ snapshots/），
@@ -616,7 +631,7 @@ crawl_status(lookback_minutes=1440)、http_stats(minutes=1440)，存成 snapshot
 ```text
 依 verify_questions/README.md §10 修復 <I###>（照 issue 裡已寫好的方案）：
 開 feature branch 修改 → 補上能重現本 issue 的測試 → 跑該層的必跑測試 → 上線（重啟 API 或重建 view／IMMV，先 dry run）→
-依 §10.2 清 cache、刪壞列、重爬 → 重跑 found_by 所列問題的斷言。
+依 §10.2 用 crawl_delete_rows 刪壞列（先 dry run）、必要時 http_cache_evict、crawl_insert_filtered 重爬 → 重跑 found_by 所列問題的斷言。
 每一步的實際數字寫回 issue；斷言全部通過才把 status 改為 closed。回報 diff 與測試結果，等我確認再 commit。
 ```
 
@@ -651,7 +666,7 @@ draft 少於 3 題時執行指令 2 補 3 題。補爬遵守 §8.3。不要執�
 
 | 觀察 | 證據 | 初步判斷（待指令 4 確認） |
 | --- | --- | --- |
-| `raw_sbl_history` usable 僅 40.5%（200／336 列 NULL） | NULL 全是 HTTP 404，集中在 2005-01 ～ 2015-08；2330 在 2015-09 之後 0 列 NULL | seed 起點早於 API 實際可得資料（L3），或 backend 處理舊年份有誤（L1）。屬 S4，但若 L1 則可能是 S2 |
+| `raw_sbl_history` usable 僅 40.5%（200／336 列 NULL） | NULL 全是 HTTP 404，集中在 2005-01 ～ 2015-08；2330 在 2015-09 之後 0 列 NULL。**2026-11-25 更新**：2330 2015-08-05 現在 API 回 200，重爬後有 49 筆（§10.3），剩 199 列 | 很可能是 2026-11-23 backend 回溯修正前被凍結的舊列，屬「已被修好的舊問題」，只需 §10.2 重爬。仍要抽查更早年份（2005–2014）是否也拿得到，拿不到的部分才是 L3／L0 |
 | `raw_monthly_revenue_twse` 有 111 列 found=false | 全部是 as_of 2010-01 ～ 2013-01；2013-02 之後全部可用 | 同上：seed 邊界（L3）或 MOPS t21sc03 舊格式（IFRS 前）parser 不支援（L1） |
 | `raw_company_info` 有 187 列 found=false（17.7%） | 這些公司進不了 `company_basic_info_list`，所有主題 seed 都不會有它們 | 需要確認是興櫃／下市（L0，已知限制）還是漏抓（L1） |
 | `raw_finmind_news` usable 72.6%（26 列 NULL） | — | 待診斷（FinMind 限流 L6？） |
