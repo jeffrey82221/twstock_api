@@ -225,6 +225,13 @@ _VIEW_WHERE_OVERRIDES = {
     "raw_financial_analysis": ["stk_code = '2330'"],
     "raw_mops_quarterly_financials": ["stk_code = '2330'"],
     "mops_quarterly_financials": ["stk_code = '2330'"],
+    # /revenue/twse fans out to up to 26 MOPS t21sc03 full-market pages. The
+    # natural first row (first company, 2010-01) is all cold pages, which ran
+    # past the 45s http.timeout_msec on CI (PR #80). `as_of` is a plain
+    # pass-through of month_start_date, so this pushes down to the seed.
+    "raw_monthly_revenue_twse": [
+        "stk_code = '2330' AND as_of >= CURRENT_DATE - INTERVAL '3 months'"
+    ],
 }
 
 _VIEW_REQUIRED_DATA_COLUMNS = {

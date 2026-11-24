@@ -195,6 +195,16 @@ def test_mops_upstream_failures_are_5xx_not_cached_404(client, monkeypatch):
     assert client.get("/api/company/2330/quarterly-financials", params={"as_of": "2024-05-10"}).status_code == 502
 
 
+def test_revenue_twse_upstream_timeout_is_504(client, monkeypatch):
+    """/revenue/twse fans out to many MOPS pages; a budget timeout must be a
+    504 (retried by http_cache), not a 200 that looks like "no revenue"."""
+    async def timed_out_revenue(*args, **kwargs):
+        return {"found": False, "stock_id": "2330", "as_of": "2010-01-01", "reason": "upstream_timeout", "source": "test"}
+
+    monkeypatch.setattr(main, "query_revenue_twse", timed_out_revenue)
+    assert client.get("/api/company/2330/revenue/twse", params={"as_of": "2010-01-01"}).status_code == 504
+
+
 def test_valuation_upstream_error_is_502_and_no_data_is_404(client, monkeypatch):
     """TWSE BWIBBU_d failures must be 5xx (retried) rather than a cached 404."""
     reasons = {"reason": "upstream_error"}

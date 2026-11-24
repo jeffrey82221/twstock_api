@@ -547,7 +547,15 @@ async def api_company_revenue_twse(
     stock_id: str,
     as_of: str | None = Query(None, description=_AS_OF_DESC),
 ):
-    return await query_revenue_twse(stock_id, as_of)
+    result = await query_revenue_twse(stock_id, as_of)
+    reason = result.get("reason")
+    if reason in _UPSTREAM_REASON_STATUS:
+        # 504：不被 DB http_cache 快取，下次重試（見 _UPSTREAM_REASON_STATUS 說明）。
+        raise HTTPException(
+            status_code=_UPSTREAM_REASON_STATUS[reason],
+            detail=f"TWSE/MOPS revenue upstream {reason} for stock_id={stock_id!r}",
+        )
+    return result
 
 
 @app.get(
