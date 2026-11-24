@@ -17,7 +17,10 @@ Two groups of tools:
   (``Pipeline.pop_definition_drift`` / ``Pipeline.update_mat_views``).
 
 Tools that write: ``crawl_set_schedule``, ``crawl_pause``,
-``poc_rebuild_views``, and ``pop_update_mat_views`` with ``dry_run=false``.
+``poc_rebuild_views``, and -- with ``dry_run=false`` -- ``crawl_insert_filtered``,
+``crawl_delete_rows``, ``http_cache_evict`` and ``pop_update_mat_views``.
+The re-crawl helpers behind ``crawl_delete_rows`` / ``http_cache_evict`` live in
+``pop_maintenance.py``.
 
 Connection lifecycle -- opening, closing, DSN -- is entirely owned by
 ``pg_tool.py``; this file does not create or hold a ``psycopg`` connection
@@ -594,6 +597,77 @@ def crawl_insert_filtered(
     result["insert_seconds"] = round(time.perf_counter() - t0, 2)
     result["pending_after"] = max(pending - inserted, 0)
     return result
+
+
+@mcp.tool()
+def crawl_delete_rows(
+    table: Annotated[str, Field(description="seed table 名稱，例如 sbl_history_monthly_list")],
+    filters: Annotated[
+        dict[str, str | int | float | bool | list[str | int | float | bool]],
+        Field(description=(
+            "pop.<table> 欄位篩選，格式同 crawl_insert_filtered；不可為空。"
+            "例如 {\"stk_code\": \"2330\", \"month_start_date\": [\"2015-07-05\", \"2015-08-05\"]}。"
+        )),
+    ],
+    dry_run: Annotated[
+        bool, Field(description="true（預設）只回傳符合筆數、樣本與下游 IMMV；確認後再以 false 執行")
+    ] = True,
+    pin_responses: Annotated[
+        bool, Field(description="刪除前把 raw_* 已存的回應暫存進 http_cache（預設 true，見下方說明）")
+    ] = True,
+    allow_unverified: Annotated[
+        bool, Field(description="下游沒有 1:1 的 IMMV 可驗證時仍執行（預設 false，會 rollback）")
+    ] = False,
+    timeout_seconds: Annotated[int, Field(ge=1, le=600)] = 120,
+) -> dict[str, Any]:
+    """刪除 pop.<table> 中符合條件的 seed 列，供重爬使用（dry_run=false 時為寫入操作）。
+
+    pg_ivm 刪除時會對被刪的列重跑下游 IMMV 的查詢（含 API 呼叫），再刪掉逐欄位相符的
+    IMMV 列；API 現在的回應若和當初 insert 時不同（重爬的情境幾乎都是如此），IMMV 列會
+    刪不掉而變成孤兒（IMMV 不允許直接 DML）。因此本 tool 在同一個交易內：
+    (1) pin：把下游 raw_* 已存的回應依 URL 寫進 http_cache，讓 pg_ivm 重算出相同結果；
+    (2) DELETE；(3) 驗證每個與 seed 1:1 的 IMMV 剛好少了被刪的列數，否則整批 rollback；
+    (4) 移除 pin 的快取，讓之後 crawl_insert_filtered 重爬時抓即時資料。
+    單次上限 500 列；執行期間鎖住該 seed，cron insert 會等待。dry_run 也會回報可 pin 的筆數。
+    """
+    import pop_maintenance
+
+    _check_seed_table(table)
+    p = _get_pipeline()
+    conn = _db.get_conn()
+    try:
+        with _stdout_to_stderr():
+            return pop_maintenance.delete_seed_rows(
+                conn, p, table, filters, dry_run=dry_run, timeout_seconds=timeout_seconds,
+                pin_responses=pin_responses, allow_unverified=allow_unverified)
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def http_cache_evict(
+    url_like: Annotated[str, Field(description=(
+        "SQL LIKE 樣式，須含 '/api/' 與股票代號或日期（4 位以上數字），"
+        "例如 '%/api/company/2330/sbl-history?as_of=2015-%'"
+    ))],
+    dry_run: Annotated[
+        bool, Field(description="true（預設）只回傳符合筆數、status 分布與樣本 URL")
+    ] = True,
+) -> dict[str, Any]:
+    """刪除 job_control.http_cache 中 url 符合 url_like 的快取（dry_run=false 時為寫入操作）。
+
+    2xx 與 4xx 回應會被快取（TTL 見 job_control.http_config.cache_ttl_seconds，預設 3600 秒）。
+    API 修好後 1 小時內重爬會拿到舊結果，所以重爬前先清。crawl_delete_rows 已自動清掉它
+    pin 過的 URL；本 tool 用於其他情況（例如還沒進 pop 的列、修好 API 後要重打的 URL）。
+    單次上限 5000 筆。
+    """
+    import pop_maintenance
+
+    conn = _db.get_conn()
+    try:
+        return pop_maintenance.evict_http_cache(conn, url_like, dry_run=dry_run)
+    finally:
+        conn.close()
 
 
 @mcp.tool()

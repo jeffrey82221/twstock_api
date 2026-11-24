@@ -188,6 +188,8 @@ claude mcp get twstock-db   # 應顯示 Status: ✔ Connected
 | `pop_raw_quality()` | 各 `raw_*` 的可用率（NULL / found=false 比例與 source 分佈），找出白爬的資料 |
 | `crawl_set_schedule(table, period_seconds, row_cnt)` | **寫入**：建立或更新該表的爬取排程 |
 | `crawl_pause(table)` | **寫入**：停止該表的爬取排程（已灌的資料保留） |
+| `crawl_delete_rows(table, filters, dry_run)` | **寫入**（`dry_run=false` 時）：刪除符合條件的 seed 列以便重爬；先把已存的回應 pin 進 `http_cache`，並驗證下游 IMMV 沒留下孤兒列，否則 rollback。原理與實測見 [`verify_questions/README.md` §10.3](verify_questions/README.md#103-重爬工具與實測2026-11-25指令-0) |
+| `http_cache_evict(url_like, dry_run)` | **寫入**（`dry_run=false` 時）：清掉 URL 符合 LIKE 樣式的 `job_control.http_cache`（樣式須含 `/api/` 與股票代號或日期） |
 
 Schema 維護（改完 `db/poc/*.sql` 後使用；對應 `Pipeline.create_views` / `pop_definition_drift` / `update_mat_views`）：
 
@@ -206,7 +208,7 @@ Schema 維護（改完 `db/poc/*.sql` 後使用；對應 `Pipeline.create_views`
 
 注意：`poc.raw_*` 等 view 在 SELECT 時會透過 `custom.http_get_content` 呼叫步驟 (7) 的 API（port 5002）。API 沒啟動時查詢會拿到 NULL 或失敗；即使 API 有啟動，查詢也可能很慢。看資料內容時優先查 `pop` 的 materialized view，查 `poc` view 時務必帶小的 `limit`。
 
-**安全性說明**：`crawl_set_schedule` / `crawl_pause` 會修改 `cron.job`，其餘 tool 唯讀。`select` 的唯讀保護只靠 `server.py` 的 SQL 白名單，連線本身用的是 `postgres` superuser，也沒有 statement timeout 或 connection pool。因此只適合本機開發使用，不要對外開放或指向正式資料庫。
+**安全性說明**：`crawl_set_schedule` / `crawl_pause` 會修改 `cron.job`；`crawl_insert_filtered`、`crawl_delete_rows`、`http_cache_evict`、`pop_update_mat_views` 在 `dry_run=false` 時會寫入，`poc_rebuild_views` 會重建 poc schema；其餘 tool 唯讀。`select` 的唯讀保護只靠 `server.py` 的 SQL 白名單，連線本身用的是 `postgres` superuser，也沒有 statement timeout 或 connection pool。因此只適合本機開發使用，不要對外開放或指向正式資料庫。
 
 **移除**：`claude mcp remove twstock-db -s local`
 
