@@ -2,8 +2,8 @@
 id: I007
 title: 法人買賣超的取樣日遇假日沒有回溯到前一個交易日
 severity: S2
-layer: null
-status: open
+layer: L1
+status: diagnosed
 pop_tables: [raw_institutional_net_buy_sell, institutional_net_buy_sell]
 seeds: [institutional_monthly_list]
 found_by: [Q004]
@@ -23,16 +23,20 @@ WHERE stk_code = '2330' AND as_of >= DATE '2025-12-05' ORDER BY as_of
 ```
 
 ## 證據
-
-（指令 4 填寫）
+- [`app/institutional_source.py`](../../app/institutional_source.py) `get_institutional_net_buy_sell`：當日全市場 payload 為空（非交易日）時回 `found=True, row=None`，沒有回溯。
+- 因為 found=True，`pop_raw_quality` 把這些列算成可用（可用率指標的盲點）。
+- 對照：`valuation_source` 會回溯到最近交易日並以 `data_date` 標示。
 
 ## 根因
 
-（指令 4 填寫）
+法人 adapter 不回溯非交易日。L1。
 
 ## 修復方案
 
-（指令 4 填寫）
+1. `institutional_source.get_institutional_net_buy_sell`：payload 為空時往前回溯，最多 10 個日曆日（全市場 payload 依日期磁碟快取，跨股共用）；`row.trade_date` 為實際交易日，頂層 `trade_date` 維持查詢日（seed 主鍵不變）。回溯 10 天仍無資料才回 `row=None`。
+2. rule 18：欄位不變 → 就地修正。
+3. 測試：`tests/source/` 新增 institutional 的回溯案例（目前沒有專屬 source 測試）。
+4. 重爬：`raw_institutional_net_buy_sell` 中 `row` 為 null 的列（目前 Q004 三檔 9 列；全表需先查）。
 
 ## 修復紀錄
 

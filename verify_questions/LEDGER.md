@@ -16,14 +16,15 @@
 
 | ID | 嚴重度 | 層級 | 標題 | 狀態 | 發現於 | 修復 commit |
 | --- | --- | --- | --- | --- | --- | --- |
-| [I001](issues/I001-mops-quarterly-financials-ytd.md) | S1 | — | mops_quarterly_financials 營收與 EPS 為年初至今累計 | open | Q002, Q003 | — |
-| [I002](issues/I002-point-in-time-look-ahead.md) | S1 | — | as_of 看得到尚未公布的月營收與季報 | open | Q002 | — |
-| [I003](issues/I003-yfinance-dividend-adjusted.md) | S1 | — | dividend_yfinance 現金股利為配股還原值 | open | Q005 | — |
-| [I004](issues/I004-normalized-as-of-from-response.md) | S2 | — | 正規化 view 的 as_of 取自回應，失敗列主鍵為 NULL | open | Q001 | — |
-| [I005](issues/I005-otc-valuation-missing.md) | S2 | — | 上櫃股沒有估值資料 | open | Q001 | — |
-| [I006](issues/I006-otc-foreign-ownership-missing.md) | S2 | — | 上櫃股沒有外資持股資料 | open | Q004 | — |
-| [I007](issues/I007-institutional-weekend-no-fallback.md) | S2 | — | 法人買賣超取樣日遇假日不回溯 | open | Q004 | — |
-| [I008](issues/I008-financial-analysis-current-year.md) | S4 | — | financial_analysis_year_list 產生當年度 | open | Q003 | — |
+| [I001](issues/I001-mops-quarterly-financials-ytd.md) | S1 | L1 | mops_quarterly_financials 營收與 EPS 為年初至今累計 | diagnosed | Q002, Q003 | — |
+| [I002](issues/I002-point-in-time-look-ahead.md) | S1 | L2／L3 設計（待決定） | as_of 看得到尚未公布的月營收與季報 | diagnosed | Q002 | — |
+| [I003](issues/I003-yfinance-dividend-adjusted.md) | S1 | L1＋L0 | dividend_yfinance 現金股利為配股還原值 | diagnosed | Q005 | — |
+| [I004](issues/I004-normalized-as-of-from-response.md) | S2 | L5 | 正規化 view 的 as_of 取自回應，失敗列主鍵為 NULL | diagnosed | Q001 | — |
+| [I005](issues/I005-otc-valuation-missing.md) | S2 | L1 新上游（待研究） | 上櫃股沒有估值資料 | diagnosed | Q001 | — |
+| [I006](issues/I006-otc-foreign-ownership-missing.md) | S2 | L1 新上游（待研究） | 上櫃股沒有外資持股資料 | diagnosed | Q004 | — |
+| [I007](issues/I007-institutional-weekend-no-fallback.md) | S2 | L1 | 法人買賣超取樣日遇假日不回溯 | diagnosed | Q004 | — |
+| [I008](issues/I008-financial-analysis-current-year.md) | S4 | L3 | financial_analysis_year_list 產生當年度 | diagnosed | Q003 | — |
+| [I009](issues/I009-mops-quarterly-financial-companies.md) | S2 | L1 | 金融股沒有季財務資料（營益分析表不含金融業） | diagnosed | Q003（指令 4 發現） | — |
 
 ## 覆蓋矩陣（pop 表 × 問題）
 
