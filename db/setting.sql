@@ -281,10 +281,15 @@ BEGIN
     --    "source_errors", e.g. FinMind 402 "Requests reach the upper limit"
     --    wrapped as found=false): caching them would hand the failure to
     --    every retry within the TTL.
+    --    CASE (not AND) so that a missing key / 4xx (v_json NULL) yields
+    --    false instead of NULL -- NOT NULL would skip caching every response
+    --    without "source_errors" -- and jsonb_array_length never sees a
+    --    non-array (no EXCEPTION block may catch that error here).
     IF v_ttl_s > 0
        AND (v_json IS NOT NULL OR v_status BETWEEN 400 AND 499)
-       AND NOT (jsonb_typeof(v_json -> 'source_errors') = 'array'
-                AND jsonb_array_length(v_json -> 'source_errors') > 0) THEN
+       AND NOT (CASE WHEN jsonb_typeof(v_json -> 'source_errors') = 'array'
+                     THEN jsonb_array_length(v_json -> 'source_errors') > 0
+                     ELSE false END) THEN
         INSERT INTO job_control.http_cache (url, status_code, content, fetched_at)
         VALUES (p_url, v_status, v_json, clock_timestamp())
         ON CONFLICT (url) DO UPDATE

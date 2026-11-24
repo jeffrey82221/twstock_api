@@ -520,3 +520,97 @@ class TestGetCompanyValuation:
                   "estimated_shares", "market_cap", "eps_ttm", "bvps", "dps",
                   "included_in_per", "included_in_pbr", "included_in_yield"):
             assert c[k] == m[k], f"mismatch on {k}"
+
+
+# =============================================================================
+# 回溯最近交易日（_fetch_latest_trading_day + by-company / by-market）
+# =============================================================================
+
+class TestLatestTradingDayFallback:
+    """查詢日為週末 / 休市日時回溯最近交易日；上游失敗時立即停止回溯。"""
+
+    FRIDAY = date(2026, 9, 4)
+    SATURDAY = date(2026, 9, 5)
+    MONDAY = date(2026, 9, 7)
+
+    _payload = {
+        "2330": {"stock_name": "台積電", "close_price": 1000.0,
+                 "per": 25.0, "pbr": 8.0, "dividend_yield": 1.0},
+    }
+    _basic = {"2330": {"paid_in_capital": 259_303_804_580, "short_name": "台積電"}}
+
+    def _patch_days(self, monkeypatch, days: dict):
+        """days: date -> payload（dict 或 None 代表上游失敗）；未列出的日期回 {}（非交易日）。"""
+        calls: list[date] = []
+
+        async def _fake_fetch(d):
+            calls.append(d)
+            return days.get(d, {})
+
+        async def _fake_basic_loader():
+            return dict(self._basic)
+
+        monkeypatch.setattr(vs, "_fetch_twse_bwibbu_day", _fake_fetch)
+        monkeypatch.setattr(vs, "load_basic_table", _fake_basic_loader)
+        return calls
+
+    @pytest.mark.asyncio
+    async def test_trading_day_no_lookback(self, monkeypatch):
+        calls = self._patch_days(monkeypatch, {self.FRIDAY: self._payload})
+        r = await vs.get_company_valuation("2330", self.FRIDAY)
+        assert r["found"] is True
+        assert r["date"] == r["data_date"] == "2026-09-04"
+        assert calls == [self.FRIDAY]
+
+    @pytest.mark.asyncio
+    async def test_weekend_falls_back_to_friday(self, monkeypatch):
+        calls = self._patch_days(monkeypatch, {self.FRIDAY: self._payload})
+        r = await vs.get_company_valuation("2330", self.SATURDAY)
+        assert r["found"] is True
+        assert r["date"] == "2026-09-05"
+        assert r["data_date"] == "2026-09-04"
+        assert r["constituent"]["per"] == 25.0
+        assert calls == [self.SATURDAY, self.FRIDAY]
+
+    @pytest.mark.asyncio
+    async def test_upstream_error_stops_lookback(self, monkeypatch):
+        calls = self._patch_days(monkeypatch, {self.SATURDAY: None, self.FRIDAY: self._payload})
+        r = await vs.get_company_valuation("2330", self.SATURDAY)
+        assert r["found"] is False
+        assert r["reason"] == "upstream_error"
+        assert r["data_date"] is None
+        assert calls == [self.SATURDAY]
+
+    @pytest.mark.asyncio
+    async def test_lookback_exhausted(self, monkeypatch):
+        calls = self._patch_days(monkeypatch, {})
+        r = await vs.get_company_valuation("2330", self.MONDAY)
+        assert r["found"] is False
+        assert r["reason"] == "no_market_data"
+        assert len(calls) == vs.MAX_LOOKBACK_DAYS + 1
+
+    @pytest.mark.asyncio
+    async def test_stock_missing_on_trading_day_does_not_look_further(self, monkeypatch):
+        calls = self._patch_days(monkeypatch, {self.FRIDAY: self._payload})
+        r = await vs.get_company_valuation("0000", self.SATURDAY)
+        assert r["found"] is False
+        assert r["reason"] == "stock_id_not_listed"
+        assert r["data_date"] == "2026-09-04"
+        assert calls == [self.SATURDAY, self.FRIDAY]
+
+    @pytest.mark.asyncio
+    async def test_market_summary_falls_back(self, monkeypatch):
+        self._patch_days(monkeypatch, {self.FRIDAY: self._payload})
+        r = await vs.get_market_valuation_summary(self.SATURDAY)
+        assert r["found"] is True
+        assert r["date"] == "2026-09-05"
+        assert r["data_date"] == "2026-09-04"
+        assert r["summary"]["constituent_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_market_summary_upstream_error(self, monkeypatch):
+        self._patch_days(monkeypatch, {self.SATURDAY: None})
+        r = await vs.get_market_valuation_summary(self.SATURDAY)
+        assert r["found"] is False
+        assert r["reason"] == "upstream_error"
+        assert r["summary"] is None

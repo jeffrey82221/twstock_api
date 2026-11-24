@@ -4,9 +4,12 @@
 -- 攤平：每列 = 該次呼叫命中的 31 日視窗內的一筆借券還券紀錄
 -- 設計理念（rule 16）：只用 CROSS JOIN LATERAL + COALESCE 保空陣列攤平，符合 pg_ivm 相容性。
 -- 設計理念（rule 13）：不做額外 WHERE 過濾；found=false 或 records=[] 的月份自然攤平 0 列。
+-- as_of 直接沿用 raw_sbl_history.as_of（= 呼叫時帶入的 month_start_date，與回應 JSON 的
+--   as_of 相同）而非從 JSON 解析：plain pass-through 欄位可讓 `WHERE as_of >= ...` 下推到
+--   sbl_history_monthly_list，只打需要的月份（與 foreign_ownership 同做法）。
 SELECT
     stk_code,
-    custom.parse_iso_date(sbl_history->>'as_of') AS as_of,
+    as_of,
     sbl_history->>'stock_id' AS stock_id,
     custom.parse_iso_date(sbl_history->>'data_date') AS data_date,
     custom.parse_iso_date(record->>'transaction_date') AS transaction_date,

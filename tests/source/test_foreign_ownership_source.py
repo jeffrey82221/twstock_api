@@ -124,3 +124,50 @@ def test_custom_lookback_can_be_widened(monkeypatch, tmp_path):
     requested.clear()
     row = asyncio.run(fos.get_foreign_ownership("2330", date(2024, 3, 5), max_lookback_days=90))
     assert row["trade_date"] == "2024-01-01"
+
+
+def _blocked_response(url: str):
+    import httpx
+
+    request = httpx.Request("GET", url)
+    return httpx.Response(307, request=request, text="<html>TWSE block page</html>")
+
+
+def test_fetch_day_upstream_block_raises_and_is_rate_limited(monkeypatch, tmp_path):
+    # TWSE's WAF answers blocked IPs with a 307 + HTML block page (no followable Location).
+    # That must surface as an upstream error, not as an empty "non-trading day" payload.
+    import httpx
+    import pytest
+
+    from app.sources import UpstreamFetchError, _request_source_errors
+
+    monkeypatch.setattr(fos, "CACHE_ROOT", tmp_path)
+
+    async def fake_get(self, url, **kwargs):
+        return _blocked_response(url)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+
+    async def run():
+        _request_source_errors.set([])
+        with pytest.raises(UpstreamFetchError):
+            await fos._fetch_day(date(2026, 8, 28))
+        return list(_request_source_errors.get())
+
+    errors = asyncio.run(run())
+    assert len(errors) == 1 and errors[0].status_code == 307 and errors[0].is_rate_limited
+    assert not list(tmp_path.iterdir())  # failure is not cached
+
+
+def test_upstream_error_stops_lookback(monkeypatch, tmp_path):
+    import pytest
+
+    from app.sources import UpstreamFetchError
+
+    def responder(d):
+        raise UpstreamFetchError("blocked")
+
+    requested = _no_sleep_fetch(monkeypatch, tmp_path, responder)
+    with pytest.raises(UpstreamFetchError):
+        asyncio.run(fos.get_foreign_ownership("2330", date(2026, 8, 31)))
+    assert requested == [date(2026, 8, 31)]  # no day-by-day hammering of a blocking upstream

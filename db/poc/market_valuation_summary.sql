@@ -8,6 +8,7 @@
 SELECT
     valuation_date,
     custom.parse_iso_date(market_valuation_summary->>'date') AS as_of,
+    custom.parse_iso_date(market_valuation_summary->>'data_date') AS data_date,
     market_valuation_summary->>'market_scope' AS market_scope,
     market_valuation_summary->>'calculation_method' AS calculation_method,
     (market_valuation_summary->'summary'->>'total_market_cap')::NUMERIC AS total_market_cap,

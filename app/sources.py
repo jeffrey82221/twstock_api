@@ -105,6 +105,17 @@ class UpstreamBudgetExceeded(Exception):
     """Raised by `run_within_budget` when the total budget runs out."""
 
 
+class UpstreamFetchError(Exception):
+    """An upstream request failed (HTTP error / block page / timeout) and the
+    error has already been recorded via `_record_source_error`.
+
+    Raised instead of returning an empty result so callers can tell a
+    transient upstream failure apart from "no data": endpoints map it to a
+    5xx, which `db/setting.sql` does not cache in `job_control.http_cache`,
+    and look-back loops stop instead of hammering a blocking upstream.
+    """
+
+
 async def run_within_budget(coro, budget_s: float = UPSTREAM_TOTAL_BUDGET_S):
     """Await `coro` for at most `budget_s` seconds.
 
@@ -136,8 +147,11 @@ def _classify_http_exc(exc: Exception, url: str) -> tuple[Optional[int], str, bo
             body_preview = exc.response.text[:200]
         except Exception:
             body_preview = ""
-        # 429 是明確 rate-limit；403 常見於反爬、部分 5xx 也常伴隨限流
-        if status == 429 or status == 403:
+        # 429 是明確 rate-limit；403 常見於反爬、部分 5xx 也常伴隨限流。
+        # 3xx 走到這裡代表 follow_redirects 後仍停在轉址（沒有可跟的 Location）：
+        # TWSE 的 WAF 對被擋的 IP（例如 GitHub Actions runner）回 307 + 封鎖頁，
+        # 不是「該日無資料」，應視為限流。
+        if status in (403, 429) or 300 <= status < 400:
             is_rate_limited = True
     elif isinstance(exc, httpx.TimeoutException):
         body_preview = "timeout"
@@ -1085,11 +1099,13 @@ async def get_product_revenue_filers(ym: str, market: str) -> list[str]:
         ) as client:
             co_ids, _form_fields, _url2 = await _fetch_filer_list(client, ym, market)
     except Exception as e:
+        status, msg, rl = _classify_http_exc(e, MOPS_REDIRECT_URL_FOR_ALL)
         _record_source_error(SourceError(
             source="MOPS",
             url=MOPS_REDIRECT_URL_FOR_ALL,
-            status_code=None,
-            message=f"get_product_revenue_filers({ym},{market}) failed: {type(e).__name__}: {str(e)[:200]}",
+            status_code=status,
+            message=f"get_product_revenue_filers({ym},{market}) failed: {msg}",
+            is_rate_limited=rl,
         ))
         return []
     return sorted(co_ids)
@@ -1177,8 +1193,11 @@ async def _fetch_filer_list(client: httpx.AsyncClient, ym: str, typek: str) -> t
         _mops_filer_cache[cache_key] = result
         return result
     except Exception:
-        _mops_filer_cache[cache_key] = (set(), None, None)
-        return set(), None, None
+        # 不快取失敗：原本把 (set(), None, None) 寫進 6 小時 TTL cache 並吞掉例外，
+        # 一次 MOPS 暫時失敗（CI IP 被擋 / timeout）就讓該 (ym, market) 6 小時內
+        # 都回「無人申報」，而且呼叫端記錄不到 source error，DB http_cache 也會
+        # 把這個空結果當成功快取。改為往上拋，由呼叫端記錄錯誤。
+        raise
 
 
 async def _fetch_detail_at(client: httpx.AsyncClient, stock_id: str, form_fields: dict, referer: str) -> dict:
@@ -1360,5 +1379,6 @@ async def get_product_revenue_at(stock_id: str, as_of_year: int, as_of_month: in
         ))
         out["error"] = f"MOPS 處理錯誤：{type(e).__name__}: {str(e)[:120]}"
 
-    _product_revenue_at_cache[cache_key] = out
+    if not out.get("error"):  # 上游暫時失敗不快取，下次重試
+        _product_revenue_at_cache[cache_key] = out
     return out

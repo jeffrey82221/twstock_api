@@ -95,7 +95,8 @@ query was slow/timed out against the real backend:
   Direct inspection confirmed stk_code `2330` (TSMC) has SBL history in
   essentially every month and responds in ~0.2-2s, so the test targets it
   with `WHERE stk_code = '2330'` instead of relying on the natural
-  (unfiltered, unordered) first row.
+  (unfiltered, unordered) first row, further limited to the last 3 months
+  (`as_of` is a pass-through column, so the predicate reaches the seed).
 """
 
 from __future__ import annotations
@@ -206,7 +207,14 @@ _VIEW_WHERE_OVERRIDES = {
     "foreign_ownership": [
         "stk_code = '2330' AND as_of >= CURRENT_DATE - INTERVAL '3 months'"
     ],
-    "sbl_history": ["stk_code = '2330'"],
+    # `as_of` is a plain pass-through of the seed's month_start_date, so this
+    # pushes down and only ~3 months hit TWSE SBL. Without it the query walks
+    # 2330 month by month from 2005, and when TWSE's WAF blocks the runner
+    # (307 block page) every month comes back empty until the statement
+    # timeout -- ~70 extra requests that only prolong the block (PR #80 CI).
+    "sbl_history": [
+        "stk_code = '2330' AND as_of >= CURRENT_DATE - INTERVAL '3 months'"
+    ],
     # Natural first row is (first company, year 2012..) -> one slow MOPS
     # call; pin to a company that reliably has data.
     "financial_analysis": ["stk_code = '2330'"],
@@ -217,7 +225,89 @@ _VIEW_WHERE_OVERRIDES = {
     "raw_financial_analysis": ["stk_code = '2330'"],
     "raw_mops_quarterly_financials": ["stk_code = '2330'"],
     "mops_quarterly_financials": ["stk_code = '2330'"],
+    # /revenue/twse fans out to up to 26 MOPS t21sc03 full-market pages. The
+    # natural first row (first company, 2010-01) is all cold pages, which ran
+    # past the 45s http.timeout_msec on CI (PR #80). `as_of` is a plain
+    # pass-through of month_start_date, so this pushes down to the seed.
+    "raw_monthly_revenue_twse": [
+        "stk_code = '2330' AND as_of >= CURRENT_DATE - INTERVAL '3 months'"
+    ],
+    # Same row (and so the same URL, already in http_cache) as
+    # raw_monthly_revenue_twse; `as_of` is a pass-through here too.
+    "monthly_revenue_twse": [
+        "stk_code = '2330' AND as_of >= CURRENT_DATE - INTERVAL '3 months'"
+    ],
+    # The natural first row of these raw views is a legitimate 404 (observed:
+    # 1593 is 上櫃, so TWSE BWIBBU_d has no valuation for it; no SBL events /
+    # FinMind news in its first month). The 404 body becomes a NULL payload,
+    # which `_null_payload_columns` rejects, so target a row that has data.
+    # `as_of` is a pass-through column in all three, so this pushes down.
+    "raw_sbl_history": [
+        "stk_code = '2330' AND as_of >= CURRENT_DATE - INTERVAL '3 months'"
+    ],
+    "raw_finmind_news": [
+        "stk_code = '2330' AND as_of >= CURRENT_DATE - INTERVAL '3 months'"
+    ],
+    "raw_company_valuation": [
+        "stk_code = '2330' AND as_of >= CURRENT_DATE - INTERVAL '3 months'"
+    ],
+    # Natural first row (1593) walks months of 404s until one has news;
+    # 2330 has news in its first month. stk_code is a pass-through column.
+    "finmind_news": ["stk_code = '2330'"],
 }
+
+
+def _recent_month_start(months_ago: int = 3):
+    """First month_start_date >= CURRENT_DATE - `months_ago` months, i.e.
+    the first row `as_of >= CURRENT_DATE - INTERVAL '3 months'` selects from
+    a seed of month starts."""
+    import calendar
+    from datetime import date
+
+    today = date.today()
+    year, month = today.year, today.month - months_ago
+    while month <= 0:
+        month += 12
+        year -= 1
+    floor = date(year, month, min(today.day, calendar.monthrange(year, month)[1]))
+    if floor.day == 1:
+        return floor
+    return date(year + (month == 12), month % 12 + 1, 1)
+
+
+# API URLs behind the views whose first call is slow on a cold runner:
+# MOPS full-market downloads that run past the API's 25s
+# UPSTREAM_TOTAL_BUDGET_S (the API answers 504 and finishes the download in
+# the background). Sequentially those cost ~100s of the CI run.
+# `live_prewarm` requests each URL in a background thread as soon as the API
+# is up -- retrying until it answers 200 -- so the downloads overlap with the
+# ~55 cheap views, and the test for each listed view waits for its URL first.
+#
+# The URLs are the first row each view's `_VIEW_WHERE_OVERRIDES` entry
+# selects (2330: incorporated 1987, so the seeds' floors apply -- year 2012,
+# quarter 2013-03-31, recent month). If a seed rule changes and a URL no
+# longer matches, the test is still correct, just slower.
+#
+# Prewarm talks to the API directly, NOT through Postgres: a long SELECT
+# keeps its job_control.http_cache upserts uncommitted until it ends, so
+# every other session fetching the same URL (e.g. /api/company/2330/basic)
+# would block on that row lock.
+_PREWARM_URLS = {
+    "/api/v1/fundamentals/financial-analysis?stock_id=2330&year=2012": (
+        "raw_financial_analysis", "financial_analysis",
+    ),
+    "/api/company/2330/quarterly-financials?as_of=2013-03-31": (
+        "raw_mops_quarterly_financials", "mops_quarterly_financials",
+    ),
+    f"/api/company/2330/revenue/twse?as_of={_recent_month_start().isoformat()}": (
+        "raw_monthly_revenue_twse", "monthly_revenue_twse",
+    ),
+}
+PREWARM_DEADLINE_S = 240
+_PREWARM_ATTEMPT_TIMEOUT_S = 60
+_PREWARM_RETRY_SLEEP_S = 3
+
+_JSONB_OID = 3802
 
 _VIEW_REQUIRED_DATA_COLUMNS = {
     "foreign_ownership": (
@@ -406,17 +496,98 @@ def live_poc_schema(live_pg_dsn):
     return p
 
 
+def _select_sql(view: str, where_clause) -> str:
+    sql = f"SELECT * FROM poc.{view}"
+    if where_clause:
+        sql += f" WHERE {where_clause}"
+    return sql + " LIMIT 1;"
+
+
+def _select_one(dsn: str, select_sql: str, timeout_s: int):
+    """Run `select_sql`; return (columns, type_oids, row). Raises on DB error."""
+    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(f"SET statement_timeout = '{timeout_s}s';")
+        cur.execute(select_sql)
+        row = cur.fetchone()
+        columns = [d.name for d in cur.description]
+        type_oids = [d.type_code for d in cur.description]
+    return columns, type_oids, row
+
+
+def _calls_http(view: str) -> bool:
+    with open(os.path.join(REPO_ROOT, "db", "poc", f"{view}.sql"), "r", encoding="utf-8") as f:
+        return "http_get_content" in f.read()
+
+
+def _null_payload_columns(view: str, columns, type_oids, row) -> list:
+    """jsonb columns of an HTTP-backed (raw_*) view that came back NULL.
+
+    `custom.http_get_content` returns NULL for any non-2xx response (e.g. the
+    API's 504 when an upstream exceeds its budget). The row's key columns
+    (stk_code, year, as_of ...) are still filled in, so "not every column is
+    NULL" alone would pass on a failed call.
+    """
+    if row is None or not _calls_http(view):
+        return []
+    return [
+        name for name, oid, value in zip(columns, type_oids, row)
+        if oid == _JSONB_OID and value is None
+    ]
+
+
+@pytest.fixture(scope="module")
+def live_prewarm(live_app_server) -> Iterator[dict]:
+    """Request every `_PREWARM_URLS` URL in a background thread (see the
+    comment there). Yields {view: threading.Event}; an event is set once its
+    URL answered 200 (or a non-retryable 4xx), or `PREWARM_DEADLINE_S` ran
+    out, and the test for that view waits on it."""
+    import threading
+
+    _ = live_app_server
+    deadline = time.time() + PREWARM_DEADLINE_S
+    events: dict = {}
+
+    def _warm(path: str, done) -> None:
+        url = f"http://127.0.0.1:{APP_PORT}{path}"
+        try:
+            while time.time() < deadline:
+                try:
+                    with urllib.request.urlopen(url, timeout=_PREWARM_ATTEMPT_TIMEOUT_S):
+                        return
+                except urllib.error.HTTPError as exc:
+                    if exc.code < 500:
+                        return
+                except (urllib.error.URLError, OSError):
+                    pass
+                time.sleep(_PREWARM_RETRY_SLEEP_S)
+        finally:
+            done.set()
+
+    threads = []
+    for path, views in _PREWARM_URLS.items():
+        done = threading.Event()
+        for view in views:
+            events[view] = done
+        threads.append(threading.Thread(target=_warm, args=(path, done), daemon=True))
+    for thread in threads:
+        thread.start()
+    yield events
+    for thread in threads:
+        thread.join(timeout=5)
+
+
 # ---------------------------------------------------------------------------
 # The test itself -- `sql_path` is parametrized in DAG order by the
 # `pytest_generate_tests` hook in tests/conftest.py.
 # ---------------------------------------------------------------------------
 
 
-def test_view_select_one_row_succeeds(live_app_server, live_poc_schema, sql_path):
+def test_view_select_one_row_succeeds(live_app_server, live_poc_schema, live_prewarm, sql_path):
     """`SELECT * FROM poc.<view> LIMIT 1` must succeed and return one real
-    (not entirely-NULL) row -- confirming the full HTTP-backed pipeline
-    actually works end to end for this view, not just that its SQL is
-    syntactically valid.
+    row -- confirming the full HTTP-backed pipeline actually works end to
+    end for this view, not just that its SQL is syntactically valid. For
+    HTTP-backed views "real" means the response JSON is not NULL (a non-2xx
+    response becomes NULL, see `_null_payload_columns`).
 
     Uses the same SQL shape as `Pipeline.check_view_run_speed()`
     (`SELECT * FROM poc.{table} LIMIT 1`), with a per-view `WHERE`
@@ -424,53 +595,53 @@ def test_view_select_one_row_succeeds(live_app_server, live_poc_schema, sql_path
     unreliable -- see the module docstring for how each was found via
     direct inspection against the live backend. A single 60s
     `DEFAULT_TIMEOUT_S` applies to every view; none need more once the
-    `WHERE` overrides are in place.
+    `WHERE` overrides are in place. Slow views wait for `live_prewarm`.
     """
     _ = live_app_server
     view = sql_path[: -len(".sql")]
     where_clauses = _VIEW_WHERE_OVERRIDES.get(view) or [None]
     timeout_s = _VIEW_TIMEOUT_OVERRIDES_S.get(view, DEFAULT_TIMEOUT_S)
+    if view in live_prewarm:
+        live_prewarm[view].wait(timeout=PREWARM_DEADLINE_S)
 
     row = None
     columns: list = []
+    type_oids: list = []
     select_sql = ""
     for where_clause in where_clauses:
-        select_sql = f"SELECT * FROM poc.{view}"
-        if where_clause:
-            select_sql += f" WHERE {where_clause}"
-        select_sql += " LIMIT 1;"
-
-        conn = psycopg.connect(live_poc_schema._db_tool._dsn, autocommit=True)
+        select_sql = _select_sql(view, where_clause)
         try:
-            with conn.cursor() as cur:
-                cur.execute(f"SET statement_timeout = '{timeout_s}s';")
-                try:
-                    cur.execute(select_sql)
-                except Exception as exc:  # noqa: BLE001 - surface exact SQL + DB error per view
-                    hint = (
-                        _timeout_hint(view, where_clause)
-                        if isinstance(exc, psycopg.errors.QueryCanceled)
-                        else ""
-                    )
-                    pytest.fail(
-                        f"poc.{view} 無法成功 SELECT 單行：{type(exc).__name__}: {exc}\n\n"
-                        f"執行的 SQL：\n{select_sql}{hint}\n\n"
-                        f"--- API running log (最後 {_API_LOG_TAIL_LINES} 行) ---\n{_api_log_tail()}",
-                        pytrace=False,
-                    )
-                row = cur.fetchone()
-                columns = [d.name for d in cur.description]
-                cur.execute("RESET statement_timeout;")
-        finally:
-            conn.close()
+            columns, type_oids, row = _select_one(live_poc_schema._db_tool._dsn, select_sql, timeout_s)
+        except Exception as exc:  # noqa: BLE001 - surface exact SQL + DB error per view
+            hint = (
+                _timeout_hint(view, where_clause)
+                if isinstance(exc, psycopg.errors.QueryCanceled)
+                else ""
+            )
+            pytest.fail(
+                f"poc.{view} 無法成功 SELECT 單行：{type(exc).__name__}: {exc}\n\n"
+                f"執行的 SQL：\n{select_sql}{hint}\n\n"
+                f"--- API running log (最後 {_API_LOG_TAIL_LINES} 行) ---\n{_api_log_tail()}",
+                pytrace=False,
+            )
         if row is not None:
             break
 
-    assert row is not None, f"poc.{view} 回傳 0 列，預期至少 1 列（{select_sql}）"
+    assert row is not None, (
+        f"poc.{view} 回傳 0 列，預期至少 1 列（{select_sql}）\n\n"
+        f"--- API running log (最後 {_API_LOG_TAIL_LINES} 行) ---\n{_api_log_tail()}"
+    )
     assert len(row) == len(columns)
     assert any(value is not None for value in row), (
         f"poc.{view} 回傳的單行所有欄位皆為 NULL，可能代表上游呼叫實際上沒有取得任何資料："
         f"{dict(zip(columns, row))}"
+    )
+    null_payload = _null_payload_columns(view, columns, type_oids, row)
+    assert not null_payload, (
+        f"poc.{view} 的 HTTP 回應欄位 {null_payload} 為 NULL：API 回了非 2xx"
+        f"（例如上游超過時限的 504），不是真的取得資料：{dict(zip(columns, row))}\n\n"
+        f"執行的 SQL：\n{select_sql}\n\n"
+        f"--- API running log (最後 {_API_LOG_TAIL_LINES} 行) ---\n{_api_log_tail()}"
     )
     if "found" in columns:
         assert row[columns.index("found")] is True, (

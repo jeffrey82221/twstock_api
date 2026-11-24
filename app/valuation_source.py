@@ -34,7 +34,13 @@
     * `total_rows` = 上游 payload 原始筆數
 
 磁碟 cache：`/tmp/valuation_cache/twse/{YYYYMMDD}.json.gz`（gzip JSON, atomic 寫 tmp then rename）
-非交易日 / 上游空 payload 也 cache 空 dict，避免重打。
+非交易日 / 上游空 payload 也 cache 空 dict，避免重打；但「今天」的空 payload 不 cache
+（可能只是尚未收盤，收盤後要能重抓）。
+
+**回溯最近交易日**：查詢日為非交易日（週末 / 國定假日）或當日尚未收盤時，往前逐日找
+最近一個有資料的交易日（最多 `MAX_LOOKBACK_DAYS` 天，且不早於 `VALUATION_MIN_DATE`），
+回應以 `data_date` 標示實際交易日，`date` 仍為查詢日。上游失敗時立即停止回溯
+（`reason="upstream_error"`），避免在上游限流時連續多打。
 
 **擴充空間**：`_fetch_twse_bwibbu_day(d)` 為 (date) 粒度純函式；
 `iter_month_dates(year, month)` 提供未來逐月歷史補抓的日期序列 helper（本次不做 DB 寫入）。
@@ -68,6 +74,15 @@ CACHE_ROOT = Path("/tmp/valuation_cache")
 VALUATION_MIN_DATE = date(2005, 9, 2)
 
 TWSE_BWIBBU_URL = "https://www.twse.com.tw/exchangeReport/BWIBBU_d"
+
+# 回溯上限：台股最長連續休市為春節（約 9 天含週末），14 天留足餘裕
+MAX_LOOKBACK_DAYS = 14
+
+_CALCULATION_METHOD = (
+    "estimated_market_cap_weighted "
+    "(shares = paid_in_capital / 10; par-value convention)"
+)
+_SOURCE = "TWSE BWIBBU_d (per-day)"
 
 # 台股面額慣例：10 元 / 股（絕大多數上市普通股）
 PAR_VALUE = 10.0
@@ -130,10 +145,11 @@ def _parse_float(s: Any) -> Optional[float]:
 # TWSE BWIBBU_d — per-day 全上市 payload
 # =============================================================================
 
-async def _fetch_twse_bwibbu_day(d: date) -> dict[str, dict]:
+async def _fetch_twse_bwibbu_day(d: date) -> Optional[dict[str, dict]]:
     """回傳 stk_code -> row dict（該日全上市股票 PER / PBR / 殖利率 / 收盤價）。
 
-    cache miss 時打上游、寫磁碟 cache；非交易日 / 空 payload 回 {} 也 cache。
+    * 非交易日 / 空 payload → `{}`（cache；今天除外，可能只是尚未收盤）
+    * 上游失敗（重試 3 次仍失敗）→ `None`（不 cache），讓呼叫端與「沒資料」區分
     """
     cached = _cache_read(d)
     if cached is not None:
@@ -166,11 +182,34 @@ async def _fetch_twse_bwibbu_day(d: date) -> dict[str, dict]:
         _record_source_error(SourceError(
             source="TWSE", url=url, status_code=status, message=msg, is_rate_limited=rl,
         ))
-        return {}
+        return None
 
     parsed = _parse_bwibbu_payload(data)
-    _cache_write(d, parsed)
+    if parsed or d < date.today():
+        _cache_write(d, parsed)
     return parsed
+
+
+async def _fetch_latest_trading_day(
+    d: date, max_lookback_days: int = MAX_LOOKBACK_DAYS,
+) -> tuple[Optional[date], Optional[dict[str, dict]]]:
+    """從 d 往前找最近一個有資料的交易日。
+
+    回傳：
+      * `(data_date, payload)`：找到交易日（payload 非空）
+      * `(None, {})`：回溯範圍內全部無資料
+      * `(None, None)`：途中上游失敗（立即停止，不再往前打）
+    """
+    floor = max(VALUATION_MIN_DATE, d - timedelta(days=max(max_lookback_days, 0)))
+    current = d
+    while current >= floor:
+        payload = await _fetch_twse_bwibbu_day(current)
+        if payload is None:
+            return None, None
+        if payload:
+            return current, payload
+        current -= timedelta(days=1)
+    return None, {}
 
 
 def _parse_bwibbu_payload(data: dict) -> dict[str, dict]:
@@ -401,39 +440,31 @@ def aggregate_market_summary(
 # =============================================================================
 
 async def get_market_valuation_summary(d: date, sample_size: int = 5) -> dict:
-    """取得指定交易日全市場 PER / 殖利率 / 股價淨值比彙總。
+    """取得 d 當日（或之前最近交易日）全市場 PER / 殖利率 / 股價淨值比彙總。
 
-    * payload 為空（非交易日 / 當日尚未收盤 / 上游失敗）
-      → `found=False`（依 repo 慣例，讓 endpoint 回 404）
+    * d 為非交易日 / 尚未收盤 → 回溯最近交易日，`data_date` 標示實際日期
+    * 回溯範圍內都沒資料 → `found=False`，`reason="no_market_data"`（endpoint 回 404）
+    * 上游失敗 → `found=False`，`reason="upstream_error"`（endpoint 回 502）
     """
-    payload = await _fetch_twse_bwibbu_day(d)
+    data_date, payload = await _fetch_latest_trading_day(d)
+    base = {
+        "date": d.isoformat(),
+        "data_date": data_date.isoformat() if data_date else None,
+        "market_scope": "TWSE (上市)",
+        "calculation_method": _CALCULATION_METHOD,
+        "source": _SOURCE,
+    }
     if not payload:
         return {
             "found": False,
-            "date": d.isoformat(),
-            "market_scope": "TWSE (上市)",
-            "calculation_method": (
-                "estimated_market_cap_weighted "
-                "(shares = paid_in_capital / 10; par-value convention)"
-            ),
-            "source": "TWSE BWIBBU_d (per-day)",
+            **base,
+            "reason": "upstream_error" if payload is None else "no_market_data",
             "summary": None,
         }
 
     basic = await load_basic_table()
     agg = aggregate_market_summary(payload, basic, sample_size=sample_size)
-
-    return {
-        "found": True,
-        "date": d.isoformat(),
-        "market_scope": "TWSE (上市)",
-        "calculation_method": (
-            "estimated_market_cap_weighted "
-            "(shares = paid_in_capital / 10; par-value convention)"
-        ),
-        "source": "TWSE BWIBBU_d (per-day)",
-        "summary": agg,
-    }
+    return {"found": True, **base, "reason": None, "summary": agg}
 
 
 # =============================================================================
@@ -441,88 +472,49 @@ async def get_market_valuation_summary(d: date, sample_size: int = 5) -> dict:
 # =============================================================================
 
 async def get_company_valuation(stock_id: str, d: date) -> dict:
-    """取得單一上市公司於指定交易日的估值單股明細。
+    """取得單一上市公司於 d 當日（或之前最近交易日）的估值單股明細。
 
-    * 上游 payload 為空（非交易日 / 當日尚未收盤 / 上游失敗）
-      → `found=False`，`reason="no_market_data"`（endpoint 回 404）
-    * 股票代號不在當日 payload 中
-      → `found=False`，`reason="stock_id_not_listed"`（endpoint 回 404）
-    * 上游有資料但缺 close / shares → `found=False`，reason 對應雷同 market aggregator
-    * 上游有完整資料 → `found=True`，`constituent` 欄位包含反推後的每股資料 + 估算股數 / 市值
+    * d 為非交易日 / 尚未收盤 → 回溯最近交易日，`data_date` 標示實際日期
+    * 回溯範圍內都沒資料 → `found=False`，`reason="no_market_data"`（endpoint 回 404）
+    * 上游失敗 → `found=False`，`reason="upstream_error"`（endpoint 回 502）
+    * 股票代號不在該交易日 payload 中 → `found=False`，`reason="stock_id_not_listed"`
+      （不再往前找：BWIBBU_d 每個交易日都列出全部上市股，當天沒有就代表不在涵蓋範圍）
+    * 該交易日有資料但缺 close / shares → `found=False`，reason 對應雷同 market aggregator
+    * 有完整資料 → `found=True`，`constituent` 含反推後的每股資料 + 估算股數 / 市值
     """
     code = (stock_id or "").strip()
-    if not code:
+
+    def _result(found: bool, reason: Optional[str], data_date: Optional[date] = None,
+                constituent: Optional[dict] = None) -> dict:
         return {
-            "found": False,
+            "found": found,
             "date": d.isoformat(),
+            "data_date": data_date.isoformat() if data_date else None,
             "stock_id": code,
-            "reason": "stock_id_not_listed",
-            "calculation_method": (
-                "estimated_market_cap_weighted "
-                "(shares = paid_in_capital / 10; par-value convention)"
-            ),
-            "source": "TWSE BWIBBU_d (per-day)",
-            "constituent": None,
+            "reason": reason,
+            "calculation_method": _CALCULATION_METHOD,
+            "source": _SOURCE,
+            "constituent": constituent,
         }
 
-    payload = await _fetch_twse_bwibbu_day(d)
+    if not code:
+        return _result(False, "stock_id_not_listed")
+
+    data_date, payload = await _fetch_latest_trading_day(d)
+    if payload is None:
+        return _result(False, "upstream_error")
     if not payload:
-        return {
-            "found": False,
-            "date": d.isoformat(),
-            "stock_id": code,
-            "reason": "no_market_data",
-            "calculation_method": (
-                "estimated_market_cap_weighted "
-                "(shares = paid_in_capital / 10; par-value convention)"
-            ),
-            "source": "TWSE BWIBBU_d (per-day)",
-            "constituent": None,
-        }
+        return _result(False, "no_market_data")
 
     row = payload.get(code)
     if row is None:
-        return {
-            "found": False,
-            "date": d.isoformat(),
-            "stock_id": code,
-            "reason": "stock_id_not_listed",
-            "calculation_method": (
-                "estimated_market_cap_weighted "
-                "(shares = paid_in_capital / 10; par-value convention)"
-            ),
-            "source": "TWSE BWIBBU_d (per-day)",
-            "constituent": None,
-        }
+        return _result(False, "stock_id_not_listed", data_date)
 
     basic = await load_basic_table()
     c, reason = build_constituent_row(code, row, basic.get(code))
     if c is None:
-        return {
-            "found": False,
-            "date": d.isoformat(),
-            "stock_id": code,
-            "reason": reason,
-            "calculation_method": (
-                "estimated_market_cap_weighted "
-                "(shares = paid_in_capital / 10; par-value convention)"
-            ),
-            "source": "TWSE BWIBBU_d (per-day)",
-            "constituent": None,
-        }
-
-    return {
-        "found": True,
-        "date": d.isoformat(),
-        "stock_id": code,
-        "reason": None,
-        "calculation_method": (
-            "estimated_market_cap_weighted "
-            "(shares = paid_in_capital / 10; par-value convention)"
-        ),
-        "source": "TWSE BWIBBU_d (per-day)",
-        "constituent": c,
-    }
+        return _result(False, reason, data_date)
+    return _result(True, None, data_date, c)
 
 
 # =============================================================================

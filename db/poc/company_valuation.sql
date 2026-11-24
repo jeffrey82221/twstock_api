@@ -6,6 +6,7 @@
 SELECT
     stk_code,
     custom.parse_iso_date(company_valuation->>'date') AS as_of,
+    custom.parse_iso_date(company_valuation->>'data_date') AS data_date,
     company_valuation->>'stock_id' AS stock_id,
     company_valuation->>'reason' AS reason,
     company_valuation->>'calculation_method' AS calculation_method,

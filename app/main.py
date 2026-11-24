@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from . import finmind_news_source, foreign_ownership_source, icchain, institutional_source, mops_financial_analysis, mops_quarterly_financials, ohlcv_source, twse_sbl_source, valuation_source
+from .sources import UpstreamFetchError
 from .schemas import (
     BusinessItemsResponse,
     ChainResponse,
@@ -546,7 +547,15 @@ async def api_company_revenue_twse(
     stock_id: str,
     as_of: str | None = Query(None, description=_AS_OF_DESC),
 ):
-    return await query_revenue_twse(stock_id, as_of)
+    result = await query_revenue_twse(stock_id, as_of)
+    reason = result.get("reason")
+    if reason in _UPSTREAM_REASON_STATUS:
+        # 504：不被 DB http_cache 快取，下次重試（見 _UPSTREAM_REASON_STATUS 說明）。
+        raise HTTPException(
+            status_code=_UPSTREAM_REASON_STATUS[reason],
+            detail=f"TWSE/MOPS revenue upstream {reason} for stock_id={stock_id!r}",
+        )
+    return result
 
 
 @app.get(
@@ -861,7 +870,8 @@ async def institutional_net_buy_sell(
         "早於此日期回 HTTP 400，不同股票實際第一筆事件可能較晚。\n\n"
         "**as_of 行為**：以 `as_of` 為完成還券日期上限，往前最多 `max_lookback_days` 天（預設 31，即一個 31 日視窗）"
         "尋找最近有資料的日期；視窗內沒有還券事件時回 404。需要更長回溯時可調大 `max_lookback_days`"
-        "（每多 31 天多打一次上游）。\n\n"
+        "（每多 31 天多打一次上游）。"
+        "上游失敗（含 TWSE WAF 封鎖頁）回 502，不被 DB http_cache 快取。\n\n"
         "官方免費、無 API key；服務依股票／日期視窗 gzip 快取，避免重複請求。"
     ),
 )
@@ -880,7 +890,11 @@ async def sbl_history(
         ))
     if as_of > date.today():
         raise HTTPException(status_code=400, detail="`as_of` must be <= today")
-    result = await twse_sbl_source.get_sbl_history(stock_id, as_of, max_lookback_days)
+    try:
+        result = await twse_sbl_source.get_sbl_history(stock_id, as_of, max_lookback_days)
+    except UpstreamFetchError as exc:
+        # 502 而非 404：db/setting.sql 會快取 4xx，上游暫時失敗（TWSE 封鎖頁）不能變成「無資料」。
+        raise HTTPException(status_code=502, detail=f"TWSE SBL upstream error: {exc}")
     if not result.get("found"):
         raise HTTPException(status_code=404, detail=(
             f"no SBL history for stock_id={stock_id!r} at or before {as_of.isoformat()}"
@@ -905,6 +919,7 @@ async def sbl_history(
         "民國日期轉為 `YYYY-MM-DD`；回應的 `data_date` / `row.trade_date` 是實際資料日，可能早於使用者輸入的 `as_of`。\n\n"
         "**成本與限流**：官方免費且不需 API key。資料只能逐日下載；fallback 過程的連續 cache miss 間隔 3 秒，"
         "並以 `/tmp/foreign_ownership_cache/{YYYYMMDD}.json.gz` 快取整日全市場 CSV，因此重複查詢不會重打上游。"
+        "上游失敗（含 TWSE WAF 307 封鎖頁）立即停止回溯並回 502，不被 DB http_cache 快取。"
     ),
 )
 async def company_foreign_ownership(
@@ -925,7 +940,11 @@ async def company_foreign_ownership(
         raise HTTPException(status_code=400, detail=f"`as_of` must be >= {foreign_ownership_source.MIN_DATE.isoformat()}")
     if query_date > date.today():
         raise HTTPException(status_code=400, detail="`as_of` must be <= today")
-    row = await foreign_ownership_source.get_foreign_ownership(stock_id.strip(), query_date, max_lookback_days)
+    try:
+        row = await foreign_ownership_source.get_foreign_ownership(stock_id.strip(), query_date, max_lookback_days)
+    except UpstreamFetchError as exc:
+        # 502：不被 DB http_cache 快取，下次重試（見 _UPSTREAM_REASON_STATUS 說明）。
+        raise HTTPException(status_code=502, detail=f"TWSE MI_QFIIS upstream error: {exc}")
     return {
         "found": row is not None,
         "stock_id": stock_id.strip(),
@@ -934,6 +953,12 @@ async def company_foreign_ownership(
         "row": row,
         "source": "TWSE MI_QFIIS",
     }
+
+
+# Upstream-backed endpoints (MOPS, TWSE BWIBBU_d): a transient upstream failure must not look like a
+# permanent "no data" 404, because db/setting.sql caches 4xx responses in
+# job_control.http_cache but retries 5xx on the next call.
+_UPSTREAM_REASON_STATUS = {"upstream_timeout": 504, "upstream_error": 502}
 
 
 @app.get(
@@ -954,7 +979,9 @@ async def company_foreign_ownership(
         "* `估市值 = close × estimated_shares`\n\n"
         "**排除規則**：收盤價或 `paid_in_capital` 缺 → 完全排除；PER / PBR / yield 個別缺值時只影響對應指標的加總。\n\n"
         "**資料起始日**：2005-09-02（民國 94/9/2）。早於此日期回 400。\n"
-        "**非交易日 / 當日尚未收盤**：回 HTTP 404（`found=false`）。\n"
+        "**非交易日 / 當日尚未收盤**：自動回溯最近交易日（最多 14 天），`data_date` 標示實際交易日，"
+        "`date` 仍為查詢日；回溯範圍內都無資料回 HTTP 404（`reason=\"no_market_data\"`）。\n"
+        "**上游失敗**：回 HTTP 502（`reason=\"upstream_error\"`；不被 DB http_cache 快取，下次會重試）。\n"
         "**磁碟 cache**：`/tmp/valuation_cache/twse/{YYYYMMDD}.json.gz`（gzip JSON）。"
     ),
 )
@@ -987,11 +1014,12 @@ async def market_valuation_summary(
         raise HTTPException(status_code=400, detail="`date` must be <= today")
     result = await valuation_source.get_market_valuation_summary(d, sample_size=sample_size)
     if not result.get("found"):
+        reason = result.get("reason") or "no_market_data"
         raise HTTPException(
-            status_code=404,
+            status_code=_UPSTREAM_REASON_STATUS.get(reason, 404),
             detail=(
-                f"no market valuation data for {d.isoformat()} "
-                "(非交易日、當日尚未收盤、或上游暫時無回應)"
+                f"no market valuation data on or before {d.isoformat()} "
+                f"(reason={reason})"
             ),
         )
     return result
@@ -1013,7 +1041,9 @@ async def market_valuation_summary(
         "* `每股純益 EPS  = close / PER`\n"
         "* `每股股利 DPS  = close × yield% / 100`\n\n"
         "**錯誤 / 空值對應**：\n"
-        "* 非交易日 / 當日尚未收盤 → HTTP 404，`reason=\"no_market_data\"`\n"
+        "* 非交易日 / 當日尚未收盤 → 自動回溯最近交易日（最多 14 天），`data_date` 標示實際交易日\n"
+        "* 回溯範圍內都無資料 → HTTP 404，`reason=\"no_market_data\"`\n"
+        "* 上游失敗 → HTTP 502，`reason=\"upstream_error\"`（不被 DB http_cache 快取，下次會重試）\n"
         "* `stock_id` 不在當日 payload → HTTP 404，`reason=\"stock_id_not_listed\"`\n"
         "* 缺 close / paid_in_capital → HTTP 404，`reason ∈ {\"no_price\", \"no_shares\"}`\n\n"
         "**資料起始日**：2005-09-02。早於此日期回 400。"
@@ -1050,19 +1080,13 @@ async def company_valuation(
     if not result.get("found"):
         reason = result.get("reason") or "not_found"
         raise HTTPException(
-            status_code=404,
+            status_code=_UPSTREAM_REASON_STATUS.get(reason, 404),
             detail=(
-                f"no valuation data for stock_id={stock_id!r} on {d.isoformat()} "
+                f"no valuation data for stock_id={stock_id!r} on or before {d.isoformat()} "
                 f"(reason={reason})"
             ),
         )
     return result
-
-
-# MOPS-backed endpoints: a transient upstream failure must not look like a
-# permanent "no data" 404, because db/setting.sql caches 4xx responses in
-# job_control.http_cache but retries 5xx on the next call.
-_UPSTREAM_REASON_STATUS = {"upstream_timeout": 504, "upstream_error": 502}
 
 
 @app.get(

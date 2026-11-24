@@ -912,7 +912,8 @@ class MarketValuationSummaryResponse(BaseModel):
     * 上游：<https://www.twse.com.tw/exchangeReport/BWIBBU_d> `?date=YYYYMMDD&selectType=ALL&response=json`
     * 對應頁面：<https://www.twse.com.tw/zh/trading/historical/bwibbu-day.html>
     * 資料起始日：2005-09-02（民國 94/9/2）。早於此日期回 400。
-    * 每日收盤後更新；非交易日 / 當日尚未收盤 → payload 為空，本 endpoint 回 404 (`found=false`)。
+    * 每日收盤後更新；非交易日 / 當日尚未收盤 → 回溯最近交易日（最多 14 天），以 `data_date` 標示。
+      回溯範圍內都無資料 → 404 (`reason="no_market_data"`)；上游失敗 → 502 (`reason="upstream_error"`)。
     * 磁碟 cache：`/tmp/valuation_cache/twse/{YYYYMMDD}.json.gz`。
     * 全市場指標為 **市值加權**：市值 = 收盤價 × (paid_in_capital / 10)。這是**估算**，
       因台股面額慣例為 10 元、未扣除庫藏股，量級對得上實際值但存在誤差。
@@ -929,8 +930,10 @@ class MarketValuationSummaryResponse(BaseModel):
     """
     model_config = ConfigDict(extra="allow")
 
-    found: bool = Field(..., description="是否有可用資料；false 表示非交易日 / 當日尚未收盤 / 上游失敗。")
+    found: bool = Field(..., description="是否有可用資料；false 表示回溯範圍內無交易日資料或上游失敗。")
     date: str = Field(..., description="查詢日（`YYYY-MM-DD`）。")
+    data_date: Optional[str] = Field(None, description="實際資料交易日（`YYYY-MM-DD`）；查詢日為非交易日時早於 `date`，無資料時為 null。")
+    reason: Optional[str] = Field(None, description="`found=false` 時的原因：`no_market_data` / `upstream_error`。")
     market_scope: str = Field(..., description="市場範圍描述（本 endpoint 僅上市；上櫃須另接資料源）。")
     calculation_method: str = Field(..., description="計算方法標記。目前固定為 `estimated_market_cap_weighted`。")
     source: str = Field(..., description="資料來源註記。")
@@ -942,7 +945,8 @@ class CompanyValuationResponse(BaseModel):
 
     * 上游：同 `/api/market-valuation-summary` （TWSE `BWIBBU_d`）
     * 資料起始日：2005-09-02（民國 94/9/2）。早於此日期回 400。
-    * 每日收盤後更新；非交易日 / 當日尚未收盤 → payload 為空 → 404 (`found=false`, `reason="no_market_data"`)。
+    * 每日收盤後更新；非交易日 / 當日尚未收盤 → 回溯最近交易日（最多 14 天），以 `data_date` 標示。
+      回溯範圍內都無資料 → 404 (`reason="no_market_data"`)；上游失敗 → 502 (`reason="upstream_error"`)。
     * 股票代號不在當日 payload → 404 (`found=false`, `reason="stock_id_not_listed"`)。
     * 缺 close / paid_in_capital → 404 (`found=false`, `reason ∈ {"no_price", "no_shares"}`)。
     * 磁碟 cache 與 `/api/market-valuation-summary` 共用（`/tmp/valuation_cache/twse/{YYYYMMDD}.json.gz`）；同日 by-company + by-market 只會打上游一次。
@@ -952,14 +956,16 @@ class CompanyValuationResponse(BaseModel):
     """
     model_config = ConfigDict(extra="allow")
 
-    found: bool = Field(..., description="是否找到該股於指定日的完整資料。false 表示非交易日 / 未上市 / 缺 close / 缺 shares。")
+    found: bool = Field(..., description="是否找到該股於指定日（或之前最近交易日）的完整資料。false 表示無交易日資料 / 上游失敗 / 未上市 / 缺 close / 缺 shares。")
     date: str = Field(..., description="查詢日（`YYYY-MM-DD`）。")
+    data_date: Optional[str] = Field(None, description="實際資料交易日（`YYYY-MM-DD`）；查詢日為非交易日時早於 `date`，無資料時為 null。")
     stock_id: str = Field(..., description="查詢的股票代號（trim 後）。")
     reason: Optional[str] = Field(
         None,
         description=(
             "當 `found=false` 時的原因："
-            "`no_market_data`（該日整體無資料）/ "
+            "`no_market_data`（回溯範圍內無交易日資料）/ "
+            "`upstream_error`（TWSE 上游失敗）/ "
             "`stock_id_not_listed`（代號不在當日 payload 中）/ "
             "`no_price` / `no_shares`（該股當日缺對應欄位）。"
         ),

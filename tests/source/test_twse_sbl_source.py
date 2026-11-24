@@ -87,3 +87,18 @@ def test_wider_lookback_walks_multiple_windows(monkeypatch):
     assert result["found"] is True and result["data_date"] == "2023-12-20"
     assert len(windows) == 3
     assert windows[-1][0] == date(2024, 3, 5) - timedelta(days=92)
+
+
+def test_upstream_error_propagates_instead_of_not_found(monkeypatch):
+    # A failed window must not become found=False (-> 404, which the DB http_cache keeps).
+    import pytest
+
+    from app.sources import UpstreamFetchError
+
+    def responder(start, end):
+        raise UpstreamFetchError("blocked")
+
+    windows = _sbl_fixture(monkeypatch, responder)
+    with pytest.raises(UpstreamFetchError):
+        asyncio.run(sbl.get_sbl_history("2330", date(2024, 3, 5), max_lookback_days=93))
+    assert len(windows) == 1

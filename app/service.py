@@ -33,8 +33,10 @@ from .sources import (
     get_product_revenue_at,
     get_product_revenue_filers,
     get_source_errors,
+    UpstreamBudgetExceeded,
     get_twse_monthly_revenue_all,
     load_basic_table,
+    run_within_budget,
 )
 from .yfinance_source import get_dividend_yf, get_financial_statements_yf
 
@@ -390,22 +392,10 @@ async def query_revenue(stock_id: str, as_of_str: Optional[str] = None) -> dict[
 # v0.0.9 原始實作只拿 t187ap05，使 TTM/TTM-YoY 始終為 null；後續 patch 加入 MOPS 歷史來源→
 # 現在 ttm_value / ttm_yoy_pct 與 query_revenue (FinMind) 一致可計算。
 # 單位換算：證交所體系「當月營收」單位為仟元；FinMind revenue 為元，需 ×1000。
-@with_source_error_tracking
-async def query_revenue_twse(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
-    stock_id = stock_id.strip()
-    as_of = _resolve_as_of(as_of_str)
-
-    # 依 basic 表的 market 決定走 L 或 O；拿不到則兩個都試
-    basic = await _get_basic(stock_id)
-    market = (basic or {}).get("market") if basic else None
-    if market == "上市":
-        market_codes: tuple[str, ...] = ("L",)
-    elif market == "上櫃":
-        market_codes = ("O",)
-    else:
-        market_codes = ("L", "O")
-
-    import calendar as _cal
+async def _fetch_revenue_twse_upstream(
+    stock_id: str, as_of: date, market_codes: tuple[str, ...],
+) -> tuple[Optional[dict], Optional[str], list[dict], Optional[str]]:
+    """query_revenue_twse 的上游部分：t187ap05 最新月 + MOPS t21sc03 歷史。"""
     from app.sources import get_mops_revenue_history
 
     # ---- Step 1: 從 t187ap05 取「最新一個月」（僅當 as_of 正好在 t187ap05 公告月以後時才用）----
@@ -449,6 +439,44 @@ async def query_revenue_twse(stock_id: str, as_of_str: Optional[str] = None) -> 
             history = rows_hist
             matched_mops_market = mkt
             break
+
+    return t187ap05_matched, t187ap05_code, history, matched_mops_market
+
+
+@with_source_error_tracking
+async def query_revenue_twse(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
+    stock_id = stock_id.strip()
+    as_of = _resolve_as_of(as_of_str)
+
+    # 依 basic 表的 market 決定走 L 或 O；拿不到則兩個都試
+    basic = await _get_basic(stock_id)
+    market = (basic or {}).get("market") if basic else None
+    if market == "上市":
+        market_codes: tuple[str, ...] = ("L",)
+    elif market == "上櫃":
+        market_codes = ("O",)
+    else:
+        market_codes = ("L", "O")
+
+    import calendar as _cal
+
+    # Step 1-2 打 t187ap05 + 最多 26 頁 MOPS t21sc03（每頁 30s timeout、重試 3 次），冷啟動時
+    # 總時間沒有上限，會超過 Postgres http.timeout_msec（45s），DB 端拿不到任何回應
+    # （PR #80 test-live-sql）。限制在 UPSTREAM_TOTAL_BUDGET_S 內；逾時回 reason=upstream_timeout
+    # → route 回 504（不被 http_cache 快取），背景下載仍會完成並寫入 cache，下次就快了。
+    try:
+        t187ap05_matched, t187ap05_code, history, matched_mops_market = await run_within_budget(
+            _fetch_revenue_twse_upstream(stock_id, as_of, market_codes)
+        )
+    except UpstreamBudgetExceeded:
+        return {
+            "found": False,
+            "stock_id": stock_id,
+            "as_of": as_of.isoformat(),
+            "reason": "upstream_timeout",
+            "source": "TWSE/TPEx OpenAPI t187ap05 + MOPS t21sc03",
+            "error": "TWSE/MOPS 未在時限內回應，請稍後重試。",
+        }
 
     # ---- Step 3: 合併 t187ap05 最新月（若有）+ MOPS 歷史 ----
     merged: list[dict] = []
