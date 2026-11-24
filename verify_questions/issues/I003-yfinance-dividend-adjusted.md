@@ -2,8 +2,8 @@
 id: I003
 title: dividend_yfinance 的現金股利是配股還原後的值，與實際配發金額不一致
 severity: S1
-layer: null
-status: open
+layer: L1（部分 L0）
+status: diagnosed
 pop_tables: [dividend_yfinance, raw_dividend_yfinance, raw_dividend_history_yfinance]
 seeds: [dividend_event_yfinance_list]
 found_by: [Q005]
@@ -29,16 +29,19 @@ WHERE abs(f.cash_dividend - y.cash_dividend) > 0.01
 ```
 
 ## 證據
-
-（指令 4 填寫）
+- 1101：FinMind 記錄 2022-07-21 配股 0.999 元（= 10%）；Yahoo `Ticker.splits` 有 2022-07-21 = 1.0999282。2021-08-12 現金股利 3.0621 × 1.0999 = 3.368 = FinMind 實際值。
+- 2882：比值 1.0157，但 Yahoo 在 2020 年後**沒有任何 split 紀錄**，推測為現金增資等其他還原調整。
+- [`app/yfinance_source.py`](../../app/yfinance_source.py) 直接把 `Ticker.dividends` 當成「每股現金股利（元）」，註解寫「`Ticker.actions` 額外多一欄 stock split，這裡只取 dividends」。
 
 ## 根因
 
-（指令 4 填寫）
+Yahoo 的 `Ticker.dividends` 是依之後的配股（記為 split）與其他資本事件還原調整過的值，adapter 當成實際配發金額輸出。配股部分可用 `Ticker.splits` 反推（L1）；沒有 split 紀錄的調整（2882）無法從 Yahoo 反推（L0）。
 
 ## 修復方案
 
-（指令 4 填寫）
+1. `app/yfinance_source.py`：取 `Ticker.splits`，每筆股利乘上「除息日之後所有 split 比例的乘積」還原成實際金額；回應加 `adjusted_for_splits: true`。
+2. 無法反推的情況（2882）列為 L0 已知限制，寫進 Q005「已知限制」與 `db/poc/README.md` 的 dividend_yfinance 章節：實際配發金額以 FinMind（`dividend`）為準。
+3. 重爬：只需 `dividend_event_yfinance_list` 中「除息日之後有 split」的股票的列；需先列出受影響股票（Yahoo 逐檔查 splits）。
 
 ## 修復紀錄
 
