@@ -3,7 +3,7 @@ id: I009
 title: 金融股（如 2882）沒有季財務資料：adapter 要求營益分析表有該股
 severity: S2
 layer: L1
-status: diagnosed
+status: closed
 pop_tables: [raw_mops_quarterly_financials, mops_quarterly_financials]
 seeds: [mops_quarterly_financials_quarter_list]
 found_by: [Q003]
@@ -34,6 +34,12 @@ adapter 以營益分析表為必要條件，金融業只出現在綜合損益表
 2. 測試：`tests/source/test_mops_quarterly_financials_source.py` 新增「只在綜合損益表出現」的案例。
 3. 重爬：2882 的 12 列（與 I001 一起重爬）。
 
-## 修復紀錄
+## 修復紀錄（2026-11-25，指令 5）
+
+- `app/mops_quarterly_financials.py`：`_ytd_row()` 在營益分析表沒有該股、但綜合損益表有時仍回傳（營收／比率 null、只有 EPS）；`_scan_quarters` 改用它判斷是否找到。
+- 測試：`test_financial_company_found_with_eps_only`。
 
 ## 重爬與驗證
+
+- 直接呼叫：2882 2025-09-30 → found、Q3 單季 EPS 1.95。
+- 與 I001 一起重爬：2882 的 12 列 NULL → 0 列。Q003 C4 可比對組數 15 → 17（含 2882）並 PASS。

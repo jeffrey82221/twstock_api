@@ -2,7 +2,7 @@
 id: Q003
 title: 2330、2882、1101 是否連續 3 年 ROE > 15% 且負債比 < 50%？
 strategy: quality
-status: failing
+status: passing
 stocks: ["2330", "2882", "1101"]
 window: {since: 2021, until: 2025}
 pop_tables: [financial_analysis, mops_quarterly_financials]
@@ -21,7 +21,7 @@ crawl:
     filters: {stk_code: ["2330", "2882", "1101"]}
     order_by: ["quarter_end"]
     budget: 24               # MOPS；8 季 × 3 檔（2024–2025）
-issues: [I001, I008]
+issues: []
 last_run: 2026-11-25
 ---
 
@@ -98,3 +98,4 @@ JOIN (SELECT stk_code, fiscal_year::int AS y FROM pop.mops_quarterly_financials
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
 | 2026-11-25 | FAIL（C2、C4） | [run](../runs/2026-11-25_Q003.md) | financial_analysis 可信；當年度空列、季 EPS 累計 |
+| 2026-11-25 | PASS | — | 指令 5 後重跑：全部通過（I001、I008、I009 修正） |

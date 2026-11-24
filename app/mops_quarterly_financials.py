@@ -197,6 +197,54 @@ def _not_found(stock: str, as_of: date, year_tw: int, quarter: int, period_end: 
     }
 
 
+_AMOUNT_FIELDS = ("revenue_millions", "eps")
+_RATIO_FIELDS = ("gross_margin_pct", "operating_margin_pct", "pretax_margin_pct", "net_margin_pct")
+
+
+def _ytd_row(stock: str, operating: dict[str, dict[str, Any]], income: Optional[dict[str, dict[str, Any]]]) -> Optional[dict[str, Any]]:
+    """One company's year-to-date row from the two MOPS tables, or None if absent from both.
+
+    Financial companies are not in t163sb06 (operating analysis: gross margin
+    etc. do not apply to them) but are in t163sb04, so EPS alone still counts.
+    """
+    op = operating.get(stock)
+    inc = (income or {}).get(stock)
+    if op is None and inc is None:
+        return None
+    row: dict[str, Any] = {"stock_id": stock, "company_name": (op or {}).get("company_name") or (inc or {}).get("company_name")}
+    for field in _AMOUNT_FIELDS[:1] + _RATIO_FIELDS:
+        row[field] = (op or {}).get(field)
+    row["eps"] = (inc or {}).get("eps")
+    return row
+
+
+def single_quarter(ytd: dict[str, Any], prev_ytd: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """Single-quarter values from two year-to-date rows of the same fiscal year.
+
+    MOPS t163sb06 / t163sb04 report Q2-Q4 cumulatively (Q2 = Jan-Jun). Amounts
+    are differenced; ratios are turned back into amounts (ratio x revenue),
+    differenced, and divided by the quarter's revenue. A field is None when
+    either side is missing -- never the cumulative value in disguise.
+    """
+    out = {"stock_id": ytd.get("stock_id"), "company_name": ytd.get("company_name")}
+    prev = prev_ytd or {}
+
+    def diff(field: str) -> Optional[float]:
+        a, b = ytd.get(field), prev.get(field)
+        return round(a - b, 2) if a is not None and b is not None else None
+
+    for field in _AMOUNT_FIELDS:
+        out[field] = diff(field)
+    rev_q, rev, prev_rev = out["revenue_millions"], ytd.get("revenue_millions"), prev.get("revenue_millions")
+    for field in _RATIO_FIELDS:
+        r, pr = ytd.get(field), prev.get(field)
+        if None in (r, pr, rev, prev_rev) or not rev_q:
+            out[field] = None
+        else:
+            out[field] = round((r * rev - pr * prev_rev) / rev_q, 2)
+    return out
+
+
 async def _scan_quarters(stock: str, as_of: date) -> dict[str, Any]:
     year_tw, quarter, period_end = _period_for(as_of)
     basic = await load_basic_table()
@@ -209,14 +257,21 @@ async def _scan_quarters(stock: str, as_of: date) -> dict[str, Any]:
             operating, income = await asyncio.gather(_fetch("operating", market, year_tw, quarter), _fetch("income", market, year_tw, quarter))
             if operating is None:
                 return _not_found(stock, as_of, year_tw, quarter, period_end, "upstream_error")
-            if stock not in operating:
+            ytd = _ytd_row(stock, operating, income)
+            if ytd is None:
                 continue
-            op = operating[stock]
-            inc = (income or {}).get(stock, {})
+            if quarter == 1:
+                data = dict(ytd)
+            else:
+                prev_op, prev_inc = await asyncio.gather(
+                    _fetch("operating", market, year_tw, quarter - 1), _fetch("income", market, year_tw, quarter - 1))
+                if prev_op is None or prev_inc is None:
+                    return _not_found(stock, as_of, year_tw, quarter, period_end, "upstream_error")
+                data = single_quarter(ytd, _ytd_row(stock, prev_op, prev_inc))
             return {
-                "found": True, "stock_id": stock, "company_name": op.get("company_name") or inc.get("company_name"),
+                "found": True, "stock_id": stock, "company_name": ytd.get("company_name"),
                 "market": market, "as_of": as_of.isoformat(), "data_date": period_end.isoformat(),
-                "fiscal_year": period_end.year, "quarter": quarter, "data": {**op, "eps": inc.get("eps")},
+                "fiscal_year": period_end.year, "quarter": quarter, "data": data, "data_ytd": ytd,
                 "source": "MOPS t163sb06 + t163sb04",
             }
         year_tw, quarter, period_end = _previous_period(year_tw, quarter)

@@ -35,7 +35,7 @@ import asyncio
 import gzip
 import json
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -54,6 +54,10 @@ CACHE_ROOT = Path("/tmp/institutional_cache")
 
 # TWSE T86 (per-day 全市場) — 官方最早提供日期：民國 101/5/2 = 2012-05-02
 INSTITUTIONAL_MIN_DATE = date(2012, 5, 2)
+
+# 查詢日不是交易日（週末、國定假日、春節）時，往前找最近交易日的日曆天數上限。
+# 全市場 payload 依日期磁碟快取、跨股共用，回溯的額外上游請求只在第一次發生。
+MAX_LOOKBACK_DAYS = 10
 
 TWSE_T86_URL = "https://www.twse.com.tw/rwd/zh/fund/T86"
 TPEX_DAILY_TRADE_URL = "https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade"
@@ -288,6 +292,25 @@ async def _fetch_per_day_market(market: str, d: date) -> dict[str, dict]:
     return {}
 
 
+async def _latest_trading_day(market: str, d: date) -> tuple[date, dict[str, dict]]:
+    """(交易日, 全市場 payload)：查詢日或之前最近、且在 MAX_LOOKBACK_DAYS 內有資料的交易日。
+
+    非交易日的空 payload 會寫進磁碟 cache；下載失敗回 {} 但不寫 cache。所以空 payload
+    且 cache 沒有該日時代表上游失敗，停止回溯，避免把失敗誤當成假日一路往前打。
+    """
+    cache_key = {"上市": "twse", "上櫃": "tpex"}.get(market)
+    for back in range(MAX_LOOKBACK_DAYS + 1):
+        day = d - timedelta(days=back)
+        if day < INSTITUTIONAL_MIN_DATE:
+            break
+        day_map = await _fetch_per_day_market(market, day)
+        if day_map:
+            return day, day_map
+        if cache_key is None or _cache_read(cache_key, day) is None:
+            break
+    return d, {}
+
+
 async def get_institutional_net_buy_sell(stk_code: str, d: date) -> dict:
     """取得指定股票、指定交易日的三大法人買賣超明細。
 
@@ -310,7 +333,7 @@ async def get_institutional_net_buy_sell(stk_code: str, d: date) -> dict:
         }
 
     market = info.get("market") or ""
-    day_map = await _fetch_per_day_market(market, d)
+    data_day, day_map = await _latest_trading_day(market, d)
     row = day_map.get(stk_code)
 
     if market == "上市":
@@ -337,8 +360,9 @@ async def get_institutional_net_buy_sell(stk_code: str, d: date) -> dict:
         "stk_code": stk_code,
         "market": market or None,
         "trade_date": d.isoformat(),
+        "data_date": data_day.isoformat(),
         "row": {
-            "trade_date": d.isoformat(),
+            "trade_date": data_day.isoformat(),
             "stk_code": stk_code,
             "stock_name": stock_name,
             "foreign_investors_net_buy_sell": row.get("foreign_investors_net_buy_sell"),

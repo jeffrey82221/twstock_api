@@ -3,7 +3,7 @@ id: I001
 title: mops_quarterly_financials 的營收與 EPS 是年初至今累計值，不是單季
 severity: S1
 layer: L1
-status: diagnosed
+status: closed
 pop_tables: [mops_quarterly_financials, raw_mops_quarterly_financials]
 seeds: [mops_quarterly_financials_quarter_list]
 found_by: [Q002, Q003]
@@ -43,6 +43,15 @@ MOPS t163sb06／t163sb04 的彙總表是**年初至今累計**（Q2 = 1–6 月�
 3. 測試：`tests/source/test_mops_quarterly_financials_source.py` 新增 Q2／Q4 換算與前一季缺資料的案例。
 4. 重爬：`mops_quarterly_financials_quarter_list` 全部 355 列（crawl_delete_rows 依 stk_code 分批、pin 回應）→ crawl_insert_filtered。MOPS HTML 走磁碟快取，預估真實上游請求 < 50。
 
-## 修復紀錄
+## 修復紀錄（2026-11-25，指令 5）
+
+- `app/mops_quarterly_financials.py`：新增 `single_quarter()`；Q2–Q4 另取同年前一季（磁碟快取）換算單季，`data` = 單季、`data_ytd` = 累計；前一季下載失敗回 upstream_error，前一季缺資料時單季欄位為 null。
+- `app/schemas.py`、`app/main.py`：回應新增 `data_ytd` 與說明。`db/poc/mops_quarterly_financials.sql` 欄位不變（rule 18 就地修正），註解說明單季語意；`db/poc/README.md` 同步。
+- 測試：`tests/source/test_mops_quarterly_financials_source.py` +6（單季換算、Q4 = 全年 − 9M、Q1 不多抓、前一季缺／失敗）。全套離線測試 420 passed。
 
 ## 重爬與驗證
+
+- 直接呼叫：2330 2026 Q2 → `revenue_millions` 1,270,380.25（= 4–6 月月營收合計）、EPS 27.25；`data_ytd` 2,404,483.69／49.33。
+- crawl_delete_rows：`mops_quarterly_financials_quarter_list` 355 列（16 檔）、pin 355、0 次 API；接著 `pop_update_mat_views` 在 seed 為空時重建 `mops_quarterly_financials`（I004 一起），0 次重打。
+- 重爬：依 http_log 還原原本的 356 組 (stk_code, 季末日)（比刪除多 1 組，為先前 rollback 過的請求），全部 insert；1101 一批遇 15 秒傳輸逾時、整批 rollback 後以 row_cnt=2 重試成功。結果 356 列、1 列 NULL（8463 2013-Q1，上市前，404 正常）。
+- 斷言：Q002 C5 PASS（12 組可比對）、Q003 C4 PASS（17 組可比對）。

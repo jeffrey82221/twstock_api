@@ -310,23 +310,26 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 - **上游 SQL**：[raw_mops_quarterly_financials](#raw_mops_quarterly_financials)
 - **HTTP API endpoint**：無（純 JSON 攤平）
 - 欄位 align `MopsQuarterlyFinancialsResponse` + `MopsQuarterlyFinancialsData`。
+- **數值為單季**（2026-11-25 修正，verify_questions I001）：MOPS t163sb06／t163sb04 是年初至今累計，endpoint 的 `data` 已換算成單季（Q2–Q4 = 本季累計 − 前一季累計，比率先還原成金額再相減）；原始累計值在 raw JSON 的 `data_ytd`。
+- 金融業不在 t163sb06，只有 `eps`，營收與比率為 NULL（I009）。
+- 主鍵 `as_of` 取 raw 的 seed 季末日，不取回應 JSON（rule 7，I004）。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `raw_mops_quarterly_financials.stk_code` |
-| `as_of` | DATE | 查詢基準日 | `quarterly_financials.as_of` |
+| `as_of` | DATE | 查詢基準日（seed 季末日） | `raw_mops_quarterly_financials.as_of` |
 | `stock_id` | TEXT | 股票代號 | `quarterly_financials.stock_id` |
 | `company_name` | TEXT | 公司名稱 | `quarterly_financials.company_name` |
 | `market` | TEXT | `sii` / `otc` | `quarterly_financials.market` |
 | `data_date` | DATE | 實際季度結束日 | `quarterly_financials.data_date` |
 | `fiscal_year` | NUMERIC | 財報西元年度 | `quarterly_financials.fiscal_year` |
 | `quarter` | NUMERIC | 財報季度 1~4 | `quarterly_financials.quarter` |
-| `revenue_millions` | NUMERIC | 營業收入（百萬元） | `quarterly_financials.data.revenue_millions` |
+| `revenue_millions` | NUMERIC | 單季營業收入（百萬元） | `quarterly_financials.data.revenue_millions` |
 | `gross_margin_pct` | NUMERIC | 毛利率 (%) | `quarterly_financials.data.gross_margin_pct` |
 | `operating_margin_pct` | NUMERIC | 營業利益率 (%) | `quarterly_financials.data.operating_margin_pct` |
 | `pretax_margin_pct` | NUMERIC | 稅前純益率 (%) | `quarterly_financials.data.pretax_margin_pct` |
 | `net_margin_pct` | NUMERIC | 稅後純益率 (%) | `quarterly_financials.data.net_margin_pct` |
-| `eps` | NUMERIC | 基本每股盈餘（元） | `quarterly_financials.data.eps` |
+| `eps` | NUMERIC | 單季基本每股盈餘（元） | `quarterly_financials.data.eps` |
 
 ---
 
@@ -341,7 +344,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `year` | INT | 查詢西元年（≥ 2012） | `generate_series(GREATEST(incorporation_year, 2012), 今年)` |
+| `year` | INT | 查詢西元年（≥ 2012） | `generate_series(GREATEST(incorporation_year, 2012), year(今天 − 4 個月) − 1)`：年報隔年才公布，每年 5 月起才納入前一年度（I008） |
 
 ---
 
@@ -609,7 +612,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `raw_company_valuation.stk_code` |
-| `as_of` | DATE | 查詢日 | `company_valuation.date` |
+| `as_of` | DATE | 查詢日（seed 日期；回應失敗時仍有值，I004） | `raw_company_valuation.as_of` |
 | `stock_id` | TEXT | 股票代號 | `company_valuation.stock_id` |
 | `reason` | TEXT | `found=false` 原因 | `company_valuation.reason` |
 | `calculation_method` | TEXT | 計算方法標記 | `company_valuation.calculation_method` |
@@ -1189,7 +1192,8 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 
 - **上游 SQL**：[raw_dividend_yfinance](#raw_dividend_yfinance)
 - **HTTP API endpoint**：無（純 JSON 攤平）
-- 欄位完全與 [dividend](#dividend) align,只差在資料源（yfinance vs FinMind）。`stock_dividend` / `cash_payment_date` / `stock_ex_dividend_date` / `announcement_date` 上游 endpoint 已回 null/0,此處保留同 schema。
+- 欄位完全與 [dividend](#dividend) align,只差在資料源（yfinance vs FinMind）。
+- `cash_dividend`：Yahoo 的 `Ticker.dividends` 會依之後的配股（記為 split）往回調低；endpoint 已用 `Ticker.splits` 還原成當年實際配發金額（I003）。沒有 split 紀錄的其他還原調整（例：2882 2021–2022，比值 1.0157）無法反推，**實際配發金額以 [dividend](#dividend)（FinMind）為準**。`stock_dividend` / `cash_payment_date` / `stock_ex_dividend_date` / `announcement_date` 上游 endpoint 已回 null/0,此處保留同 schema。
 - 設計理念（rule 15）：每列對應歷史一次真實股利事件（by `reference_date`）。
 - 設計理念（rule 13）：不做 WHERE 過濾,保留 raw 母體所有 rows。
 

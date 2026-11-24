@@ -19,7 +19,7 @@ crawl:
     filters: {stk_code: ["2330", "2317", "6488"]}
     order_by: ["month_start_date"]
     budget: 36               # TWSE t13sa870
-issues: [I006, I007]
+issues: [I006, I007, I010]
 last_run: 2026-11-25
 ---
 
@@ -122,3 +122,4 @@ WHERE stk_code IN ('2330','2317','6488') AND as_of >= DATE '2025-12-05'
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
 | 2026-11-25 | FAIL（C1、C3） | [run](../runs/2026-11-25_Q004.md) | 假日取樣缺；6488 無外資持股 |
+| 2026-11-25 | FAIL（C1、C3） | — | 指令 5 後重跑：C1 違規 9 → 8（I007 重爬中斷，等 I010）；C3 為 I006 |
