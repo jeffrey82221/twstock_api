@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 import httpx
 
-from .sources import SourceError, _classify_http_exc, _record_source_error, load_basic_table
+from .sources import SourceError, UpstreamFetchError, _classify_http_exc, _record_source_error, load_basic_table
 
 SBL_URL = "https://www.twse.com.tw/SBL/t13sa870"
 # Verified from 2330's full-range response: this is the earliest completion
@@ -118,7 +118,9 @@ async def _fetch_window(stock_id: str, start: date, end: date) -> list[dict[str,
         url = str(response.url) if "response" in locals() else SBL_URL
         status, message, rate_limited = _classify_http_exc(exc, url)
         _record_source_error(SourceError(source="TWSE SBL", url=url, status_code=status, message=message, is_rate_limited=rate_limited))
-        return []
+        # 不回 []：空清單代表「視窗內無還券事件」，會被當成 found=False → 404，
+        # 而 DB http_cache 會快取 4xx，讓一次 TWSE 封鎖變成長期的「無資料」。
+        raise UpstreamFetchError(message) from exc
     _cache_write(path, {"rows": rows})
     return rows
 

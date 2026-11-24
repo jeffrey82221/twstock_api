@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 import httpx
 
-from .sources import SourceError, _classify_http_exc, _record_source_error
+from .sources import SourceError, UpstreamFetchError, _classify_http_exc, _record_source_error
 
 MI_QFIIS_URL = "https://www.twse.com.tw/fund/MI_QFIIS"
 MIN_DATE = date(2004, 2, 11)
@@ -122,7 +122,9 @@ async def _fetch_day(report_date: date) -> dict[str, dict]:
         _record_source_error(SourceError(
             source="TWSE", url=url, status_code=status, message=message, is_rate_limited=rate_limited,
         ))
-        return {}
+        # 不回 {}：空 payload 代表「非交易日」，會讓 get_foreign_ownership 繼續往前回溯，
+        # 在 TWSE 封鎖（307 封鎖頁）時一路猛打上游、延長封鎖。
+        raise UpstreamFetchError(message) from exc
     _cache_write(report_date, payload)
     return payload
 
@@ -137,6 +139,7 @@ async def get_foreign_ownership(
       * 遇到「有資料的交易日（payload 非空）但沒有該股」即停止並回 None：MI_QFIIS 每個交易日
         都列出全部上市股，當天沒有就代表該股不在涵蓋範圍（上櫃股、尚未掛牌或已下市），再往前
         找只會白打上游。非交易日（payload 為空）才繼續往前。
+      * 上游失敗（HTTP 錯誤 / 封鎖頁 / timeout）立即拋出 `UpstreamFetchError`，不繼續回溯。
     """
     floor = max(MIN_DATE, as_of - timedelta(days=max(max_lookback_days, 0)))
     current = as_of

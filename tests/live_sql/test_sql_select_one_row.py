@@ -95,7 +95,8 @@ query was slow/timed out against the real backend:
   Direct inspection confirmed stk_code `2330` (TSMC) has SBL history in
   essentially every month and responds in ~0.2-2s, so the test targets it
   with `WHERE stk_code = '2330'` instead of relying on the natural
-  (unfiltered, unordered) first row.
+  (unfiltered, unordered) first row, further limited to the last 3 months
+  (`as_of` is a pass-through column, so the predicate reaches the seed).
 """
 
 from __future__ import annotations
@@ -206,7 +207,14 @@ _VIEW_WHERE_OVERRIDES = {
     "foreign_ownership": [
         "stk_code = '2330' AND as_of >= CURRENT_DATE - INTERVAL '3 months'"
     ],
-    "sbl_history": ["stk_code = '2330'"],
+    # `as_of` is a plain pass-through of the seed's month_start_date, so this
+    # pushes down and only ~3 months hit TWSE SBL. Without it the query walks
+    # 2330 month by month from 2005, and when TWSE's WAF blocks the runner
+    # (307 block page) every month comes back empty until the statement
+    # timeout -- ~70 extra requests that only prolong the block (PR #80 CI).
+    "sbl_history": [
+        "stk_code = '2330' AND as_of >= CURRENT_DATE - INTERVAL '3 months'"
+    ],
     # Natural first row is (first company, year 2012..) -> one slow MOPS
     # call; pin to a company that reliably has data.
     "financial_analysis": ["stk_code = '2330'"],
@@ -466,7 +474,10 @@ def test_view_select_one_row_succeeds(live_app_server, live_poc_schema, sql_path
         if row is not None:
             break
 
-    assert row is not None, f"poc.{view} 回傳 0 列，預期至少 1 列（{select_sql}）"
+    assert row is not None, (
+        f"poc.{view} 回傳 0 列，預期至少 1 列（{select_sql}）\n\n"
+        f"--- API running log (最後 {_API_LOG_TAIL_LINES} 行) ---\n{_api_log_tail()}"
+    )
     assert len(row) == len(columns)
     assert any(value is not None for value in row), (
         f"poc.{view} 回傳的單行所有欄位皆為 NULL，可能代表上游呼叫實際上沒有取得任何資料："
