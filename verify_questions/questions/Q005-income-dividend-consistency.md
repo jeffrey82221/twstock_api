@@ -2,7 +2,7 @@
 id: Q005
 title: 2330、2317、2882、1101 是否連續 5 年配發現金股利？目前殖利率多少？
 strategy: income
-status: draft
+status: failing
 stocks: ["2330", "2317", "2882", "1101"]
 window: {since: 2021, until: 2026-11-25}
 pop_tables: [dividend, dividend_yfinance, company_valuation]
@@ -25,8 +25,8 @@ crawl:
     filters: {stk_code: ["2882", "1101"]}
     order_by: ["valuation_date"]
     budget: 12               # TWSE；最近 6 個月
-issues: []
-last_run: null
+issues: [I003]
+last_run: 2026-11-25
 ---
 
 ## 決策情境
@@ -112,3 +112,4 @@ WHERE stk_code IN ('2330','2317','2882','1101')
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-25 | FAIL（C1） | [run](../runs/2026-11-25_Q005.md) | yfinance 股利為還原值 |

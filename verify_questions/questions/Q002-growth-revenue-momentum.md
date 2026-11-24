@@ -2,7 +2,7 @@
 id: Q002
 title: 2330、2454、6488 月營收 YoY 是否連續 3 個月 > 20%，且季營收與月營收對得起來？
 strategy: growth
-status: draft
+status: failing
 stocks: ["2330", "2454", "6488"]
 window: {since: 2025-11-01, until: 2026-11-25}
 pop_tables: [monthly_revenue_twse, mops_quarterly_financials]
@@ -21,8 +21,8 @@ crawl:
     filters: {stk_code: ["2330", "2454", "6488"]}
     order_by: ["quarter_end"]
     budget: 18               # MOPS；6 季 × 3 檔
-issues: []
-last_run: null
+issues: [I001, I002]
+last_run: 2026-11-25
 ---
 
 ## 決策情境
@@ -142,3 +142,4 @@ SELECT * FROM s WHERE n = 12 AND abs(ttm_value - sum12) > 0.005 * sum12
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-25 | FAIL（C3、C4、C5） | [run](../runs/2026-11-25_Q002.md) | 月營收可信；季報累計值、前視 |

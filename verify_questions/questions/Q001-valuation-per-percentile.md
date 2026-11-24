@@ -2,7 +2,7 @@
 id: Q001
 title: 2330、2317、6488 目前本益比在自身近 3 年的第幾百分位？
 strategy: valuation
-status: draft
+status: failing
 stocks: ["2330", "2317", "6488"]
 window: {since: 2023-11-01, until: 2026-11-25}
 pop_tables: [company_valuation, ohlcv_daily]
@@ -15,8 +15,8 @@ crawl:
     filters: {stk_code: ["2330", "2317", "6488"]}
     order_by: ["month_start_date"]
     budget: 36               # TWSE／TPEx；近 12 個月
-issues: []
-last_run: null
+issues: [I004, I005]
+last_run: 2026-11-25
 ---
 
 ## 決策情境
@@ -58,11 +58,12 @@ LEFT JOIN pop.company_valuation v ON v.stk_code = e.stk_code AND v.as_of = e.as_
 WHERE v.stk_code IS NULL AND e.as_of <= CURRENT_DATE
 ```
 
-### C2 availability — 已爬的估值列都有收盤價（raw 不是 NULL）
+### C2 availability — 已爬的估值 raw 列都可用（讀 raw：正規化表的 as_of 取自回應，失敗列的 as_of 會是 NULL，見 I004）
 ```sql
-SELECT stk_code, as_of, data_date, close_price, reason
-FROM pop.company_valuation
-WHERE stk_code IN ('2330','2317','6488') AND as_of >= DATE '2023-11-01' AND close_price IS NULL
+SELECT stk_code, as_of
+FROM pop.raw_company_valuation
+WHERE stk_code IN ('2330','2317','6488') AND as_of >= DATE '2023-11-01'
+  AND (company_valuation IS NULL OR company_valuation->>'found' = 'false')
 ```
 
 ### C3 internal — PER／PBR 可由收盤價、EPS、BVPS 互推（誤差 5%），數值在合理範圍
@@ -104,3 +105,4 @@ WHERE stk_code IN ('2330','2317','6488') AND data_date < as_of - 12
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-25 | FAIL（C1、C2） | [run](../runs/2026-11-25_Q001.md) | 6488 無估值；2330／2317 通過 |
