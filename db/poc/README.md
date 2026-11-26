@@ -64,7 +64,7 @@ poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https:
     - **命名慣例**：保留原名給「默認或原始資料源」（路徑上常為 FinMind），新增另一張以資料源名稱作尾綴（`_yfinance_list`、`_twse_list`），對應的 raw view 也沿用同尾綴，以便 diff 最小並保留既有下游不動。
     - **例子1**：`financial_year_list` (FinMind、300 req/hr) vs `financial_year_yfinance_list` (yfinance、每小時數千次)。yfinance 可先拉高 LIMIT 快速拉齊，FinMind 保守進度，兩邊互不阻塞。
     - **例子2**：`financial_month_list` (FinMind `/api/company/{stock_id}/revenue`、300 req/hr) vs `financial_month_twse_list` (TWSE OpenAPI + MOPS t21sc03、TWSE OpenAPI 無明顯 quota + MOPS 內部有 24h cache，實際寬鬆很多)。月頻資料母體實際上非常大（~1900 家 × 每家實際上市以來月份），共用 seed 時 FinMind 建議保守值 1/tick 會拉低 TWSE 端進度；拆分後 TWSE 端可獨立以 4/tick（初版，後續 probe）壓縮拉齊時間。
-    - **例子3**：`company_list`（TWSE OpenAPI `raw_company_info`；yfinance `raw_dividend_history_yfinance` 原本也在此，I015 起改讀 `company_basic_info_list`）vs `company_finmind_list`（FinMind `raw_dividend_history`）。共用時實測：`company_list` 以 36 家/分推進，FinMind 約 100 次後回 402 "Requests reach the upper limit"，之後每家公司的 `raw_dividend_history` 都被固定成 found=false 空列（seed 已插入、IMMV 不會再重抓），一輪下來 154/454 列作廢。拆分後 `company_finmind_list` 只讀 `pop.company_list`，以 ≤ 300/hr 獨立排程。
+    - **例子3**：`company_list`（TWSE OpenAPI `raw_company_info`；yfinance `raw_dividend_history_yfinance` 原本也在此，I015 起兩條股利路徑都改讀 `company_basic_info_list`）vs `company_finmind_list`（FinMind `raw_dividend_history`）。共用時實測：`company_list` 以 36 家/分推進，FinMind 約 100 次後回 402 "Requests reach the upper limit"，之後每家公司的 `raw_dividend_history` 都被固定成 found=false 空列（seed 已插入、IMMV 不會再重抓），一輪下來 154/454 列作廢。拆分後 `company_finmind_list` 只讀 `pop.company_basic_info_list`（上市櫃，I015），以 ≤ 300/hr 獨立排程。
     - **判斷方式**：一張 `_list` 的直接下游 `raw_*` 若打到兩個以上不同限流的資料源，就該拆；可用 MCP `pop_raw_quality` 看各 raw 的 found=false 比例、`http_stats` 看各 endpoint 請求量確認。
     - Rule 20 與 rule 14、rule 15 相輔：rule 14 讓不同時間維度分 `_list`（monthly / yearly / quarterly）；rule 15 讓事件性 vs 連續型資料分 `_list`；rule 20 讓不同上游實作分 `_list`。
 21. **展開型純 view 若下游多方消費，要物化成 `_list` 切斷 lateral 傳染**。當一張 view 用 `CROSS JOIN LATERAL jsonb_array_elements(...)` 把 `raw_*` 的 JSONB 攤成多列（一列變 N 列的 fan-out），且有**多張下游** view 直接讀它，pg_ivm 展開整條 SQL 時每個下游都會各自把 lateral 重新算一遍。若那條 lateral 鏈上游是 `raw_*`（背後掛 `http_get_content`），每次下游 refresh 都會**間接**觸發上游 endpoint 重複被呼叫（即使 `raw_*` 已經是 mat view，pg_ivm 對 view chain 的展開行為仍會把整條路徑作為單一表達式重新推算，導致效能崩塌）。
@@ -168,7 +168,6 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 2. [raw_chain_info](#raw_chain_info)
 3. [chain_info_list](#chain_info_list)
 4. [company_list](#company_list)
-4a. [company_finmind_list](#company_finmind_list)
 5. [product_revenue_filer_scope_list](#product_revenue_filer_scope_list)
 6. [raw_product_revenue_filers](#raw_product_revenue_filers)
 7. [product_revenue_filer_list](#product_revenue_filer_list)
@@ -176,6 +175,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 9. [product_revenue](#product_revenue)
 10. [raw_company_info](#raw_company_info)
 11. [company_basic_info_list](#company_basic_info_list)
+11a. [company_finmind_list](#company_finmind_list)
 12. [company_business_items](#company_business_items)
 13. [financial_year_list](#financial_year_list)
 14. [raw_yearly_financials](#raw_yearly_financials)
@@ -1074,14 +1074,15 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 
 ## company_finmind_list
 
-- **上游 SQL**：[company_list](#company_list)
-- **HTTP API endpoint**：無（純 SQL，內容與 `company_list` 相同）
-- **設計理念（rule 20 例子3）**：FinMind 專用的公司 seed，只餵 `raw_dividend_history`，讓 FinMind 以 ≤ 300 req/hr 獨立排程，不被 `company_list`（TWSE / yfinance 速度）拖進限流。只讀 `pop.company_list`，所以進度永遠落在 `company_list` 之後。
+- **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
+- **HTTP API endpoint**：無（純 SQL，內容與 `company_basic_info_list` 的上市櫃公司相同）
+- **設計理念（rule 20 例子3）**：FinMind 專用的公司 seed，只餵 `raw_dividend_history`，讓 FinMind 以 ≤ 300 req/hr 獨立排程，不被 `company_list`（TWSE / yfinance 速度）拖進限流。只讀 `pop.company_basic_info_list`，所以進度永遠落在 `company_list` 之後。
+- **只取上市櫃（I015）**：`company_list` 是產業鏈公司全集，含興櫃／已下市代號。資料庫的分析母體是目前上市櫃公司，股利歷史也對齊同一個母體。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
-| `stk_code` | TEXT | 股票代號 | `company_list.stk_code` |
-| `company_name` | TEXT | 公司名稱 | `company_list.company_name` |
+| `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
+| `company_name` | TEXT | 公司名稱 | `company_basic_info_list.company_name` |
 
 ---
 
