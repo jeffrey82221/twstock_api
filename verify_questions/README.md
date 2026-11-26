@@ -663,7 +663,7 @@ crawl_status(lookback_minutes=1440)、http_stats(minutes=1440)，存成 snapshot
 依 verify_questions/README.md §10 修復 <I###>（照 issue 裡已寫好的方案）：
 開 feature branch 修改 → 補上能重現本 issue 的測試 → 跑該層的必跑測試 → 上線（重啟 API 或重建 view／IMMV，先 dry run）→
 依 §10.2 用 crawl_delete_rows 刪壞列（先 dry run）、必要時 http_cache_evict、crawl_insert_filtered 重爬 → 重跑 found_by 所列問題的斷言。
-每一步的實際數字寫回 issue；斷言全部通過才把 status 改為 closed。回報 diff 與測試結果，等我確認再 commit。
+每一步的實際數字寫回 issue；斷言全部通過才把 status 改為 closed。完成後執行指令 8（commit、push、確認 PR check 全過）。
 ```
 
 ### 指令 6：回歸
@@ -680,6 +680,27 @@ crawl_status(lookback_minutes=1440)、http_stats(minutes=1440)，存成 snapshot
 指令 1 → 挑一題（優先順序：failing > 最久未跑的 draft > 最久未跑的 passing）執行指令 3 → 對新開的 issue 執行指令 4 →
 draft 少於 3 題時執行指令 2 補 3 題。補爬遵守 §8.3。不要執行指令 5，把建議修復的 issue 依 §7.4 嚴重度排好列給我。
 ```
+
+### 指令 8：提交並確認 PR check 全過（每次改 pipeline 邏輯或解完一個 issue 都要做）
+
+觸發時機：只要改了 data pipeline 邏輯（`app/`、`db/poc/*.sql`、`db/setting.sql`、`pipeline.py`、`pop_maintenance.py`、`server.py` 等），或解完一個 issue（指令 5 把 status 改為 closed），就立刻執行，不要累積多個改動才一起提交。
+
+```text
+依 verify_questions/README.md 指令 8 提交這次的改動：
+1. 跑該層的必跑測試（至少 `pytest -q` 全綠）。
+2. git commit（訊息以 `robot:` 開頭，寫明 issue 編號、根因、修法、實測數字），然後 git push 到目前的 feature branch。
+3. 找出這個 branch 對 develop 的 PR（`gh pr list --head <branch> --base develop`）；
+   develop 不存在時用這個 branch 現有 PR 的 base。沒有 PR 就開一個（base develop），不要 merge。
+4. 等這次 push 觸發的 CI 跑完（`gh pr checks <PR> --watch`），確認所有 check 都通過。
+5. 有 check 失敗就補救：用 `gh run view <run-id> --log-failed` 找出原因。
+   - 程式或測試造成的（包括測試裡寫死、已和新邏輯不一致的值）：修好 → 回到第 1 步，再 commit、push、等 CI。
+   - 上游環境造成的（例如 TWSE／MOPS 對 CI runner 回 307 WAF 封鎖頁、`rate_limited=True`、FinMind 402）：
+     附上 log 證據，用 `gh run rerun <run-id> --failed` 重跑一次；重跑仍失敗才當成程式問題處理。
+   重複直到所有 check 都通過。
+6. 把 commit hash、PR 連結、CI 結果（含補救過程）寫回對應的 issue 與 LEDGER。
+```
+
+注意：前一次 push 的 CI 還沒通過時，不要開始下一個 issue。每個 issue 都要在 check 全過的狀態下收尾，CI 失敗才找得到是哪一次改動造成的。
 
 ### 持續執行
 
