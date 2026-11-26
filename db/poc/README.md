@@ -11,7 +11,7 @@
 1. 非 `_list` 結尾的 SQL **禁止** 使用 mutable 操作（例如 `::DATE`, `http_get`）。
 2. `_list` 結尾的 SQL **不可** 呼叫 `http_get_content`。
     - **例外：DAG 根節點 seed**。不引用 `{{ schema }}`、沒有任何上游的 `_list`（rule 8 的「純上游 seed」，目前只有 `chain_list` 打 `/chains`）可以呼叫一次 endpoint 取得實體清單——它沒有其他資料來源，改成 `raw_` 也還是需要一張上游 `_list`。條件：只打一個不帶參數的 URL（不隨列數放大），且排程頻率低（`chain_list` 為每日一次；URL 另有 `job_control.http_cache` 命中）。有上游的 `_list` 一律不可呼叫，應改讀已物化的上游表（例：`company_list` 讀 `chain_info_list`，不自己打 `/api/chain/*`）。
-3. 若需要 mutable 邏輯或型別轉換,請封裝為 immutable function 放在 `db/settings.sql`。
+3. 若需要 mutable 邏輯或型別轉換,請封裝為 immutable function 放在 `db/setting.sql`。
 4. 每個 PoC SQL 對應一個 table/view。
 
 ### `_list.sql` 角色
@@ -52,7 +52,7 @@ incremental materialized view 建構,可以與 `_list` 表同步擴充資料,避
 poc schema 的 SQL 會經 `pipeline.py` 展開成 pop schema 的 [pg_ivm](https://github.com/sraoss/pg_ivm) incremental materialized view。因此 poc SQL 除了「邏輯正確」還要同時滿足「pg_ivm 相容」、「seed pattern 相容」，以及「LineageX 靜態解析相容」（rule 22）。
 
 16. **只用 INNER JOIN 與 CROSS JOIN**。pg_ivm 不支援 `LEFT / RIGHT / FULL OUTER JOIN`，連 `LEFT JOIN LATERAL` 也不行。攤平 JSON array 時若要保留空 array 的父列，請在上游 raw view 內以 `COALESCE(json_field, '[]'::jsonb)` 保證非空，再用 `INNER JOIN LATERAL jsonb_array_elements(...)` 或 `CROSS JOIN LATERAL jsonb_array_elements(...)` 攤平，不要用 `LEFT JOIN LATERAL`。
-    - 同理避免：window functions、`DISTINCT`（除非上游本身無重複，可省略）、`GROUP BY`、WHERE 內的 subquery、CTE（WITH clause）。若邏輯必須用到，請看能否推到上游 `raw_` 表或包成 `db/settings.sql` 的 immutable function。
+    - 同理避免：window functions、`DISTINCT`（除非上游本身無重複，可省略）、`GROUP BY`、WHERE 內的 subquery、CTE（WITH clause）。若邏輯必須用到，請看能否推到上游 `raw_` 表或包成 `db/setting.sql` 的 immutable function。
 17. **事件 key 選擇 (取代 rule 13 例外的默認作法)**。當事件層 endpoint 回傳多個候選日期欄位（如 `/dividend/history` 回 `cash_ex_dividend_date` / `stock_ex_dividend_date` / `reference_date` / `announcement_date`），`_list.sql` 攤平事件的 key 必須選「所有已知歷史列都非 NULL」的欄位（如 `reference_date`），不要選「少數為 NULL」的欄位（如 `cash_ex_dividend_date` — 只有股票股利、無現金股利的年份為 NULL）。
     - 判斷方式：先 sample 歷史 event 統計每個候選欄位的 NULL 率；NULL 率 = 0% 的欄位優先。
     - 若所有候選都偶有 NULL，才動用 rule 13 例外的 `WHERE <key> IS NOT NULL`，並在 SQL 註解說明原因。

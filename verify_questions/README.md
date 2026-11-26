@@ -25,17 +25,18 @@
 
 一題問題通常橫跨多張 `pop` 表與多個上游，最容易暴露單元測試看不到的整合問題。
 
-四個原則：
+五個原則：
 
 - **斷言就是 SQL**：每個斷言是一句可以直接丟給 MCP `select` 的 `SELECT`，回傳「違規列」，0 列＝通過。
 - **補爬是按需的**：只爬問題需要的列，不等 cron 輪到，也不浪費 API 額度。
 - **修復要閉環**：程式改好不算完。seed 列一旦 insert，IMMV 結果就固定了，所以還要清 cache、刪壞列、重爬，再重跑原本失敗的斷言，issue 才能關。
 - **不為了通過而放寬斷言**：斷言只有在能說明「現實就是如此」時才可以改（例：春節休市），而且要寫進問題卡的「已知限制」。
+- **品質維度照 DAMA**：斷言依 DAMA-DMBOK2 的六個核心維度（完整、唯一、及時、有效、準確、一致）加三個延伸維度（精確、可取得、合理）分類，一般定義見 [`DATA_QUALITY_DIMENSIONS.md`](DATA_QUALITY_DIMENSIONS.md)，在本專案的意思與檢核手法見 §7.1。LEDGER 用「表 × 維度」矩陣追蹤哪些格子還沒驗過。沒驗過不等於沒問題：Q001–Q008 的 39 個斷言只有 1 個驗唯一性，2026-11-26 補盤一次就在 4 張表找到重複（§12.1）。
 
 ```
             ┌───────────────── 指令 1 盤點 ─────────────────┐
             ▼                                               │
-   snapshots/ ＋ LEDGER 覆蓋矩陣                              │
+   snapshots/ ＋ LEDGER 維度矩陣                              │
             │                                               │
       指令 2 出題 ─► questions/Q###.md (draft)               │
             │                                               │
@@ -68,22 +69,31 @@ claude mcp get twstock-db                 # Status: ✔ Connected
 curl -s http://localhost:5002/api/health  # API 存活
 ```
 
+沒通過時：
+
+- **API 沒在跑**：在 repo 根目錄以背景方式執行 `.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 5002`，再確認 health 回 200。
+- **MCP 連不上**：`server.py` 的 tool 也可以直接呼叫，結果相同（`run_checks.py`、`snapshot.py` 就是這樣做的）：`.venv/bin/python -c "import server; print(server.select('SELECT 1'))"`。寫入類 tool（`crawl_insert_filtered` 等）同樣先 dry run。在 run 紀錄的「前置條件」寫明用的是哪一種。
+- **API 跑的是工作目錄的程式**：`git status` 顯示 `app/` 有未 commit 的改動時，先看 diff。補爬會把當下 API 的回應凍結進 IMMV，所以不要補爬受這些改動影響的 endpoint，並寫進 run 紀錄。
+
 ## 3. 資料夾結構
 
 ```
 verify_questions/
-├── README.md               # 本文件：方法與 AI 指令
-├── LEDGER.md               # 總帳：問題狀態、issue 清單、覆蓋矩陣、品質趨勢
-├── questions/              # 問題卡，一題一檔
+├── README.md                   # 本文件：方法與 AI 指令
+├── DATA_QUALITY_DIMENSIONS.md  # DAMA 資料品質維度的一般定義（§7.1 的依據）
+├── LEDGER.md                   # 總帳：問題狀態、issue 清單、維度矩陣、剖析基線、品質趨勢
+├── questions/                  # 問題卡，一題一檔
 │   └── Q001-valuation-per-percentile.md
-├── runs/                   # 每次執行一份：補爬紀錄、斷言結果、決策資料、結論
+├── runs/                       # 每次執行一份：補爬紀錄、斷言結果、維度結論、決策資料、結論
 │   └── 2026-11-24_Q001.md
-├── issues/                 # 資料品質問題，一個根因一檔
+├── issues/                     # 資料品質問題，一個根因一檔
 │   └── I001-sbl-history-pre2015-404.md
-├── checks/                 # 可重用的斷言模板（Jinja 參數，同 db/poc 的 {{ schema }} 慣例）
-├── retry_failed.py         # 重爬被凍結的上游失敗列（§10.5）
+├── checks/                     # 可重用的斷言模板（Jinja 參數，同 db/poc 的 {{ schema }} 慣例）
 │   └── ohlcv_daily/ohlc_consistency.sql
-└── snapshots/              # 每次盤點的 MCP 原始輸出
+├── snapshot.py                 # 指令 1 盤點：四個 MCP 呼叫＋維度剖析（§7.5）
+├── run_checks.py               # 執行問題卡的決策 SQL 與斷言
+├── retry_failed.py             # 重爬被凍結的上游失敗列（§10.5）
+└── snapshots/                  # 每次盤點的 MCP 原始輸出與剖析
     └── 2026-11-24.json
 ```
 
@@ -94,11 +104,11 @@ verify_questions/
 
 | 步驟 | 做什麼 | 用到的 MCP tool | 產出 |
 | --- | --- | --- | --- |
-| 1 盤點 | 拍下資料庫現況，和上一份比較（`.venv/bin/python verify_questions/snapshot.py` 一次做完四個呼叫並印出比較） | `crawl_pop_tables`、`pop_raw_quality`、`crawl_status(1440)`、`http_stats(1440)` | `snapshots/<日期>.json`、LEDGER 品質趨勢與覆蓋矩陣 |
-| 2 出題 | 依覆蓋缺口與策略維度（§5）寫問題卡 | `describe_table`、`select`（確認欄位與現有資料） | `questions/Q###.md`（`status: draft`） |
+| 1 盤點 | 拍下資料庫現況，和上一份比較（`.venv/bin/python verify_questions/snapshot.py` 一次做完四個呼叫與 §7.5 維度剖析，並印出比較） | `crawl_pop_tables`、`pop_raw_quality`、`crawl_status(1440)`、`http_stats(1440)`、`select` | `snapshots/<日期>.json`、LEDGER 品質趨勢、維度矩陣、剖析基線 |
+| 2 出題 | 依維度矩陣的空格、覆蓋缺口與策略維度（§5）寫問題卡 | `describe_table`、`select`（確認欄位與現有資料） | `questions/Q###.md`（`status: draft`） |
 | 3 補爬 | 依問題卡的 `crawl` 區塊補資料（規則見 §8） | `select` 看現有 → `crawl_insert_filtered` dry run → 實際寫入 | run 紀錄的「補爬」表 |
 | 4 取數 | 執行問題卡的決策 SQL | `select` | run 紀錄的「決策資料」與結論 |
-| 5 驗證 | 逐一執行斷言，判定 PASS / FAIL / INCONCLUSIVE（`.venv/bin/python verify_questions/run_checks.py Q001 --decision` 一次跑完決策 SQL 與所有斷言） | `select` | run 紀錄的「斷言結果」；失敗依 §7.3 分流 |
+| 5 驗證 | 逐一執行斷言，判定 PASS / FAIL / INCONCLUSIVE（`.venv/bin/python verify_questions/run_checks.py Q001 --decision` 一次跑完決策 SQL 與所有斷言，每個斷言旁印出它的 DAMA 維度；印成 `[?]` 代表標籤不在 §7.1，要改），再依維度彙整 | `select` | run 紀錄的「斷言結果」與「維度結論」；失敗依 §7.3 分流 |
 | 6 診斷修復 | 根因分析（§9），修程式並閉環（§10） | `select`（含 `job_control.*`、`hidden.*`）、`poc_rebuild_views`、`pop_check_definitions`、`pop_update_mat_views`、`crawl_delete_rows`、`http_cache_evict`、`crawl_insert_filtered` | `issues/I###.md` 更新、程式 diff、測試結果 |
 | 7 回歸 | 定期只跑斷言、不補爬，找出退化 | `select` | LEDGER 狀態更新；退化就開 issue |
 
@@ -127,8 +137,10 @@ verify_questions/
 - **可決策**：有明確的 if-then（「PER 低於第 20 百分位就列入觀察」），不是單純「列出資料」。
 - **範圍可負擔**：補爬量要在 §8.3 預算內。通常 ≤ 5 檔、時間窗 ≤ 3 年。
 - **涵蓋邊界**：每批問題合計至少涵蓋上市與上櫃、金融股、近一年新上市、除權息月份、長假（春節）。
-- **至少一個跨來源或內部一致性斷言**：單一來源的資料自己跟自己比，只能抓到格式錯，抓不到值錯。
-- **斷言數 3–8 個**：每個品質維度（§7.1）最多一個，避免重複。
+- **至少一道錯值防線**：至少一個斷言要能抓到「有值但錯」（S1）：`accuracy`（對照管線以外的權威參考值），或兩邊**獨立**的 `cross-source`／`internal`／`temporal`。獨立的意思是兩邊的值不是同一段程式由對方算出來的，寫之前先查 §9.4 的程式（§7.2）。反例：`company_valuation` 的 `eps_ttm`、`bvps`、`dps` 是 adapter 由 PER、PBR、殖利率反推的，拿來互推 PER 必定成立，什麼錯都抓不到。資料庫裡真的沒有獨立來源時（例：Q006 的大盤 PER 全由同一份個股資料加總），題目仍可 `passing`，但要在已知限制寫「沒有錯值防線」與候選來源，run 的維度結論中準確性寫「未驗證」，投資面結論也要寫出這點。
+- **至少 3 個 DAMA 維度**：斷言標題以 §7.1 的標籤開頭；一題至少涵蓋 3 個維度，其中要有完整性。
+- **一批題目要填矩陣空格**：指令 2 一次出的題目，合計至少要填 LEDGER 維度矩陣的 2 個空格，準確性與唯一性優先。六個核心維度在 `passing` 的題目中都要至少出現一次。
+- **斷言數 3–8 個**：同一個標籤最多一個斷言，避免重複（比對範圍不同時例外，在標題寫明）。
 
 ### 5.3 代表性股票池
 
@@ -146,7 +158,7 @@ verify_questions/
 
 ### 6.1 問題卡 `questions/Q###-<slug>.md`
 
-以下範例的 SQL 已於 2026-11-24 在 live DB 驗證可執行。
+以下範例的 SQL 已於 2026-11-24 在 live DB 驗證可執行。C2、C4 於 2026-11-26 依 §7.2 的獨立性規則改寫，也已驗證（C4 可比對 34 列、0 違規）。
 
 ````markdown
 ---
@@ -156,7 +168,7 @@ strategy: valuation          # §5.1 的維度
 status: draft                # draft | passing | failing | blocked
 stocks: ["2330", "2317"]
 window: {since: 2023-11-01, until: 2026-11-24}
-pop_tables: [company_valuation, ohlcv_daily]
+pop_tables: [company_valuation, ohlcv_daily, mops_quarterly_financials]
 crawl:                       # 步驟 3 依序執行；budget = 本題此 seed 最多補幾列
   - seed: company_valuation_monthly_list
     filters: {stk_code: ["2330", "2317"]}
@@ -166,6 +178,10 @@ crawl:                       # 步驟 3 依序執行；budget = 本題此 seed �
     filters: {stk_code: ["2330", "2317"]}
     order_by: ["month_start_date"]
     budget: 24
+  - seed: mops_quarterly_financials_quarter_list
+    filters: {stk_code: ["2330", "2317"]}
+    order_by: ["quarter_end"]
+    budget: 32               # 3 年 × 4 季 × 2 檔，加上窗口前 4 季（C4 要近四季合計）
 issues: []
 last_run: null
 ---
@@ -209,15 +225,13 @@ LEFT JOIN pop.company_valuation v ON v.stk_code = e.stk_code AND v.as_of = e.as_
 WHERE v.stk_code IS NULL AND e.as_of <= CURRENT_DATE
 ```
 
-### C2 internal — PER／PBR 可由收盤價、EPS、BVPS 互推（誤差 5%），數值在合理範圍
+### C2 validity — PER、PBR、殖利率在合理範圍
 ```sql
-SELECT stk_code, as_of, per, pbr, dividend_yield_pct, close_price, eps_ttm, bvps
+SELECT stk_code, as_of, per, pbr, dividend_yield_pct
 FROM pop.company_valuation
 WHERE stk_code IN ('2330','2317') AND as_of >= DATE '2023-11-01'
   AND (per <= 0 OR per > 300 OR pbr <= 0 OR pbr > 50
-       OR dividend_yield_pct < 0 OR dividend_yield_pct > 25
-       OR abs(close_price / NULLIF(eps_ttm, 0) - per) > 0.05 * per
-       OR abs(close_price / NULLIF(bvps, 0) - pbr) > 0.05 * pbr)
+       OR dividend_yield_pct < 0 OR dividend_yield_pct > 25)
 ```
 
 ### C3 cross-source — 估值收盤價 = 日 K 收盤價（誤差 1%）
@@ -234,7 +248,46 @@ JOIN pop.ohlcv_daily o ON o.stk_code = v.stk_code AND o.trade_date = v.data_date
 WHERE v.stk_code IN ('2330','2317')
 ```
 
-### C4 timeliness — 實際資料日與取樣日差距 ≤ 12 天
+### C4 cross-source — 估值隱含 EPS（收盤價 ÷ PER，TWSE BWIBBU）= MOPS 近四季單季 EPS 合計（誤差 2% 或 0.05 元，排除 3 月取樣）
+```sql
+WITH q AS (
+  SELECT DISTINCT stk_code, fiscal_year, quarter, eps, available_date
+  FROM pop.mops_quarterly_financials WHERE stk_code IN ('2330','2317') AND eps IS NOT NULL
+), m AS (
+  SELECT v.stk_code, v.as_of, v.eps_ttm, s.n_q, s.span, s.mops_4q
+  FROM pop.company_valuation v
+  CROSS JOIN LATERAL (
+    SELECT count(*) AS n_q, sum(eps) AS mops_4q,
+           max(fiscal_year * 4 + quarter) - min(fiscal_year * 4 + quarter) AS span
+    FROM (SELECT fiscal_year, quarter, eps FROM q
+          WHERE q.stk_code = v.stk_code AND q.available_date <= v.as_of
+          ORDER BY fiscal_year DESC, quarter DESC LIMIT 4) last4) s
+  WHERE v.stk_code IN ('2330','2317') AND v.as_of >= DATE '2023-11-01'
+    AND v.eps_ttm IS NOT NULL AND extract(month FROM v.as_of) <> 3
+)
+SELECT stk_code, as_of, round(eps_ttm, 3) AS twse_implied_eps, mops_4q
+FROM m WHERE n_q = 4 AND span = 3 AND abs(eps_ttm - mops_4q) > greatest(0.05, 0.02 * abs(mops_4q))
+```
+可比對列數（必須 > 0，否則 INCONCLUSIVE）：
+```sql
+WITH q AS (
+  SELECT DISTINCT stk_code, fiscal_year, quarter, eps, available_date
+  FROM pop.mops_quarterly_financials WHERE stk_code IN ('2330','2317') AND eps IS NOT NULL
+), m AS (
+  SELECT v.stk_code, v.as_of, s.n_q, s.span
+  FROM pop.company_valuation v
+  CROSS JOIN LATERAL (
+    SELECT count(*) AS n_q, max(fiscal_year * 4 + quarter) - min(fiscal_year * 4 + quarter) AS span
+    FROM (SELECT fiscal_year, quarter FROM q
+          WHERE q.stk_code = v.stk_code AND q.available_date <= v.as_of
+          ORDER BY fiscal_year DESC, quarter DESC LIMIT 4) last4) s
+  WHERE v.stk_code IN ('2330','2317') AND v.as_of >= DATE '2023-11-01'
+    AND v.eps_ttm IS NOT NULL AND extract(month FROM v.as_of) <> 3
+)
+SELECT count(*) FROM m WHERE n_q = 4 AND span = 3
+```
+
+### C5 timeliness — 實際資料日與取樣日差距 ≤ 12 天
 ```sql
 SELECT stk_code, as_of, data_date, as_of - data_date AS lag_days
 FROM pop.company_valuation
@@ -243,7 +296,9 @@ WHERE stk_code IN ('2330','2317') AND data_date < as_of - 12
 
 ## 已知限制
 - 虧損期間 PER 為 NULL，這是定義上的空值，不是缺值；百分位只算非 NULL 月份。
-- C4 容忍 12 天：2022-02-05 取樣日的實際資料日是 2022-01-26（春節休市 10 天）。
+- `eps_ttm`、`bvps`、`dps` 是 adapter 由 PER、PBR、殖利率反推的（`app/valuation_source.py`），彼此互推必定成立，所以不拿來寫一致性斷言。C4 改和 MOPS 季報比：不同發布者、不同 adapter。
+- C4 排除 3 月取樣：公司常在 3/31 期限前就公告年報，TWSE 會先換 EPS 基準，本系統的 PIT 則以期限為準。2330 在 2020–2026 每年 3 月的取樣都對不上，其他月份 0 違規。
+- C5 容忍 12 天：2022-02-05 取樣日的實際資料日是 2022-01-26（春節休市 10 天）。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
@@ -263,12 +318,22 @@ WHERE stk_code IN ('2330','2317') AND data_date < as_of - 12
 （決策 SQL 的結果表）
 
 ## 斷言結果
-| 斷言 | 結果 | 違規列數 | 可比對列數 | 說明 |
-| --- | --- | ---: | ---: | --- |
-| C1 | PASS | 0 | — | |
+| 斷言 | 維度 | 結果 | 違規列數 | 可比對列數 | 說明 |
+| --- | --- | --- | ---: | ---: | --- |
+| C1 | 完整性 | PASS | 0 | — | |
+
+## 維度結論
+（九個維度各一行：PASS／FAIL／未驗證。未驗證要寫原因；只有推導欄位互推、沒有獨立比對的，寫「未驗證」）
+| 維度 | 狀態 | 依據 |
+| --- | --- | --- |
+| 準確性 | 未驗證 | 沒有 accuracy 斷言；C4 是獨立來源互證，屬一致性 |
+
+## 準確性抽查（決策結論會觸發動作時才做）
+| 值 | DB | 權威來源（URL、取得時間） | 權威值 | 結果 |
+| --- | --- | --- | --- | --- |
 
 ## 結論
-- 投資面：（依決策情境給出結論；資料有 FAIL 時明寫「結論不可信」）
+- 投資面：（依決策情境給出結論；資料有 FAIL 時明寫「結論不可信」；列出決策用到、但狀態是「未驗證」的維度）
 - 品質面：新開 issue／附加到既有 issue／修改斷言（附理由）
 ````
 
@@ -279,6 +344,7 @@ WHERE stk_code IN ('2330','2317') AND data_date < as_of - 12
 id: I001
 title: raw_sbl_history 在 2015-09 以前全部 404
 severity: S4                 # §7.4
+dimension: 可取得性           # 違反的 DAMA 維度（§7.1）
 layer: null                  # 診斷後填 L0–L7（§9.2）
 status: open                 # open | diagnosed | fixing | verifying | closed | wontfix
 pop_tables: [raw_sbl_history, sbl_history]
@@ -289,7 +355,9 @@ found_by: [Q005]
 ## 症狀（附可重現的 SQL）
 ## 證據（http_log、直接呼叫 API 的結果、上游官網對照）
 ## 根因
+## 同類掃描（同一個失效模式寫成 SQL 掃所有 pop 表的結果；不同根因另開 issue）
 ## 修復方案（改哪些檔、要不要新增 _v2 SQL、影響多少既有列、預估重打 API 次數）
+## db/poc 規則檢查（修復方案動到 SQL 時必填，逐條對照 db/poc/README.md，見 §10.1）
 ## 修復紀錄（diff 摘要、測試結果）
 ## 重爬與驗證（http_cache_evict／crawl_delete_rows／crawl_insert_filtered 的實際數字、重跑的斷言結果）
 ````
@@ -303,47 +371,105 @@ found_by: [Q005]
 | ID | 策略 | 標題 | 狀態 | 最後執行 | 未結 issue |
 
 ## Issues
-| ID | 嚴重度 | 層級 | 標題 | 狀態 | 發現於 | 修復 commit |
+| ID | 嚴重度 | 維度 | 層級 | 標題 | 狀態 | 發現於 | 修復 commit |
 
-## 覆蓋矩陣（pop 表 × 問題）
-| pop 表 | 覆蓋的問題 | 最近斷言結果 |
-（列出所有 pop 正規化表；沒有任何問題覆蓋的表就是下一輪出題的優先目標）
+## 維度矩陣（pop 表 × DAMA 維度）
+| pop 表 | 策略 | 完整 | 唯一 | 及時 | 有效 | 準確 | 一致 | 精確 | 可取得 | 合理 |
+（列出所有 pop 正規化表。格子寫最近一次的斷言結果與出處，例：`Q001-C1 ✓`、`Q005-C1 ✗`；
+只有 §7.5 剖析涵蓋、沒有斷言時寫 `剖析`；推導欄位互推不算；都沒有就寫 `—`。
+`—` 是下一輪出題的目標，準確與唯一優先）
+
+## 剖析基線（§7.5）
+| pop 表 | 欄位或實體鍵 | 現況 | 分類 | 依據 |
+（部分空值欄位、全空欄位、實體重複各一行。分類：結構性空值／合法無資料／缺陷（附 issue）。盤點只報告相對這張表的變化）
 
 ## 品質趨勢（每次盤點一行）
-| 日期 | raw 平均 usable% | 最低三個 raw（usable%） | 新開／關閉 issue |
+| 日期 | raw 平均 usable%（可取得） | 最低三個 raw（usable%） | 全空欄位數（完整） | 實體重複列數（唯一） | 新開／關閉 issue |
 ```
 
-`snapshots/<日期>.json` 的格式是 `{"taken_at": ..., "crawl_pop_tables": [...], "pop_raw_quality": [...], "crawl_status": [...], "http_stats": {...}}`，內容是各 tool 的原始輸出。
+`snapshots/<日期>.json` 的格式是 `{"taken_at": ..., "crawl_pop_tables": [...], "pop_raw_quality": [...], "crawl_status": [...], "http_stats": {...}, "profile": {...}}`。前五項是各 tool 的原始輸出；`profile` 是 §7.5 的剖析：`fields`（每表 `rows` 與每欄 `non_null` 列數）、`entity_dups`（每表的實體鍵、`keys` 重複組數、`extra_rows` 多出的列數）、`latest`（每表最新資料日）。
 
 ## 7. 品質斷言
 
-### 7.1 品質維度
+### 7.1 品質維度（DAMA）
 
-| 維度 | 問的是 | 範例（回傳違規列） |
-| --- | --- | --- |
-| 可得性 availability | 補爬的列，raw 是否可用 | `SELECT stk_code, as_of FROM pop.raw_company_valuation WHERE stk_code IN (...) AND (company_valuation IS NULL OR company_valuation->>'found' = 'false')` |
-| 完整性 completeness | 期望的每個格點都有列 | `generate_series` 產生期望格點 `LEFT JOIN` 實際表，取 NULL（見 Q001 C1） |
-| 唯一性 uniqueness | 主鍵無重複 | `SELECT stk_code, trade_date FROM pop.ohlcv_daily GROUP BY 1,2 HAVING count(*) > 1` |
-| 合理性 validity | 數值範圍、欄位間的物理關係 | `WHERE high < GREATEST(open, close) OR low > LEAST(open, close) OR close <= 0 OR volume < 0` |
-| 內部一致 internal | 同表欄位可互推 | `abs(close_price / eps_ttm - per) > 0.05 * per`（Q001 C2） |
-| 跨來源一致 cross-source | 不同來源描述同一事實 | FinMind vs yfinance 現金股利：`pop.dividend JOIN pop.dividend_yfinance USING (stk_code, reference_date)` 比 `cash_dividend` |
-| 時效 timeliness | 資料日與取樣日的落差 | `WHERE data_date < as_of - 12` |
-| 單位／日期 unit | 民國年、千元／百萬、張／股、% vs 小數 | 跨表量級比對（季營收 vs 三個月月營收合計），比值偏離 1 一個數量級以上就算違規 |
+維度採用 DAMA-DMBOK2 的六個核心維度加三個延伸維度，一般定義見 [`DATA_QUALITY_DIMENSIONS.md`](DATA_QUALITY_DIMENSIONS.md)。下表把每個維度落到本專案：「在本專案問的是」是它在這個資料庫裡的意思；「標籤」是斷言標題開頭要寫的字，一個標籤只屬於一個維度；「常見根因」是 §9 診斷的起點。
+
+| 維度 | 在本專案問的是 | 標籤 | 範例（回傳違規列） | 常見根因 |
+| --- | --- | --- | --- | --- |
+| 完整性 Completeness | 期望的每個格點都有列，而且有列的必要欄位有值。`found=true` 也可能整欄是空的（I010、I016），所以要看欄位，不能只看 found | `completeness`（格點）、`field`（欄位） | 格點：`generate_series` 產生期望格點 `LEFT JOIN` 實際表，取 NULL（§6.1 C1）。欄位：`SELECT stk_code, as_of FROM pop.financial_quarterly_yfinance WHERE stk_code IN (...) AND eps_ttm IS NULL` | L3 seed 漏格點；L1 把失敗當成功；L0 來源本來就沒有 |
+| 唯一性 Uniqueness | 同一個實體（交易日、事件、季度、新聞、借券交易）只算一次。有唯一索引的表主鍵不會重複，要查的是**實體鍵**：同一事實被兩個 as_of 取到、上游清單重複、相鄰取樣窗口重疊。重複會讓百分位、次數、加總多算 | `uniqueness` | `SELECT stk_code, fiscal_year, quarter, array_agg(as_of ORDER BY as_of) FROM pop.mops_quarterly_financials WHERE fiscal_year IS NOT NULL GROUP BY 1, 2, 3 HAVING count(*) > 1`。各表的實體鍵見 `snapshot.py` 的 `ENTITY_KEYS` | L3 兩個格點對到同一期；L5 攤平沒去重；L0 上游重複 |
+| 及時性 Timeliness | 決策時點拿得到，而且夠新：不早於公告（前視偏誤）、資料日不落後取樣日太多、最新一期已經進來 | `point-in-time`、`timeliness`、`freshness` | PIT：`available_date > as_of`（Q002 C3）。落後：`WHERE data_date < as_of - 12`。最新一期：見下方 freshness | L2／L3 as_of 設計；還沒爬；L0 上游晚公告 |
+| 有效性 Validity | 格式、型態、代碼、數值範圍符合規格 | `validity` | `WHERE per <= 0 OR per > 300 OR pbr <= 0 OR pbr > 50`（§6.1 C2）；`WHERE stk_code !~ '^[0-9]{4}[0-9A-Z]{0,2}$'` | L1 parser；L5 型別轉換 |
+| 準確性 Accuracy | 值和現實相符。只有對照**管線以外**的權威參考值才算：公司公告、年報、官網頁面上的 golden 值，或指令 3 的官網抽查。兩個來源一致屬於一致性，因為兩邊可能同錯 | `accuracy` | golden 值骨架見下方 | L1 單位、欄位對錯；L0 上游錯 |
+| 一致性 Consistency | 同一事實在同表欄位、不同來源、不同時間點之間一致，單位與定義相同。兩邊必須獨立（§7.2） | `internal`、`cross-source`、`temporal`、`unit` | internal：三大法人合計（上游提供）= 各法人加總（Q004 C2）。cross-source：估值隱含 EPS = MOPS 近四季 EPS（§6.1 C4）。temporal：TTM = 分次抓到的 12 個月加總（Q002 C6）。unit：季營收 vs 三個月月營收合計，比值偏離 1 一個數量級以上就算違規 | L1 單位、民國年；L5 日期對齊；raw 與正規化分歧（I011） |
+| 精確性 Precision | 細緻度足以支撐決策與門檻：價格落在升降單位上，金額單位的捨入不會吃掉比對門檻 | `precision` | 升降單位：見下方 | L5 型別（numeric 轉 int）；上游四捨五入；還原價混入 |
+| 可取得性 Accessibility | 需要時拿得到：補爬的列 raw 可用，上游沒有封鎖或限流 | `availability` | `SELECT stk_code, as_of FROM pop.raw_company_valuation WHERE stk_code IN (...) AND (company_valuation IS NULL OR company_valuation->>'found' = 'false')`。盤點另看 `pop_raw_quality` 與 `http_stats` 的 5xx | L6 限流（402 凍結）；L0 封鎖；L3 打了必定沒資料的格點（S4） |
+| 合理性 Reasonableness | 欄位間的邏輯與常理：日期先後、物理關係、時間序列跳動在交易制度的限制內 | `reasonableness` | OHLC：`WHERE high < GREATEST(open, close) OR low > LEAST(open, close)`。漲跌幅：見下方 | L1 欄位錯位、日期錯置；L0 減資、除權（寫進已知限制） |
+
+既有問題卡的標籤照舊有效（`availability` 歸可取得性）。只檢查「欄位有值」的斷言改用 `field`（例：Q007 C2）。
+
+以下範例於 2026-11-26 在 live DB 驗證。
+
+**freshness**：只拿「最新一筆」做決策的題目要寫（例：目前的 PER）。completeness 的格點畫到 `CURRENT_DATE` 時，已經涵蓋最新一期。下例檢查月營收最新的取樣日是不是最近一個已過的 10 日，0 違規：
+
+```sql
+SELECT s.stk_code, max(r.as_of) AS latest_as_of,
+       (date_trunc('month', CURRENT_DATE - 9) + INTERVAL '9 days')::date AS expected_as_of
+FROM unnest(ARRAY['2330','2454','6488']) AS s(stk_code)
+LEFT JOIN pop.monthly_revenue_twse r ON r.stk_code = s.stk_code AND r.latest_month_value IS NOT NULL
+GROUP BY s.stk_code
+HAVING max(r.as_of) IS DISTINCT FROM (date_trunc('month', CURRENT_DATE - 9) + INTERVAL '9 days')::date
+```
+
+**precision**：收盤價要落在升降單位上（只套 4 碼股票，ETF 規則不同）。2010–2026 約 2.3 萬列，0 違規；混入還原價或浮點誤差時會違規：
+
+```sql
+SELECT stk_code, trade_date, close
+FROM pop.ohlcv_daily
+WHERE close IS NOT NULL AND stk_code ~ '^[1-9][0-9]{3}$'
+  AND close % CASE WHEN close < 10 THEN 0.01 WHEN close < 50 THEN 0.05 WHEN close < 100 THEN 0.1
+                   WHEN close < 500 THEN 0.5 WHEN close < 1000 THEN 1 ELSE 5 END <> 0
+```
+
+**reasonableness**：單日漲跌不超過漲跌停（2015-06-01 起 10%，之前 7%）。用 `change` 推前一日參考價，不受資料缺口影響；除權息日 TWSE 標 `X`，`change` 解析成 NULL，自動排除。全表 0 違規。新上市前 5 日沒有漲跌幅限制，碰到要寫進已知限制：
+
+```sql
+SELECT stk_code, trade_date, close, change, round(100 * change / (close - change), 2) AS pct
+FROM pop.ohlcv_daily
+WHERE change IS NOT NULL AND close - change > 0
+  AND abs(change) > (CASE WHEN trade_date >= DATE '2015-06-01' THEN 0.10 ELSE 0.07 END) * (close - change) + 0.01
+```
+
+**accuracy**（骨架，不能直接執行）：golden 值由出題的 AI 從管線以外的權威來源取得，每列在註解寫出處與取得日期。不可從 `pop` 抄，否則只是拿自己比自己：
+
+```sql
+WITH golden(stk_code, year, eps) AS (VALUES
+  ('<代號>', <年度>, <每股盈餘>)   -- 出處：<年報或官網頁面>，取得於 <日期>
+)
+SELECT g.stk_code, g.year, g.eps AS golden_eps, f.eps AS db_eps
+FROM golden g LEFT JOIN pop.financial_analysis f USING (stk_code, year)
+WHERE f.eps IS NULL OR abs(f.eps - g.eps) > 0.005
+```
 
 ### 7.2 寫法規範
 
 - 單一 `SELECT` 或 `WITH`，不可含 `;`（MCP `select` 的限制）。可以讀 `pop`、`hidden`、`job_control`。
 - 送進 `select` 前去掉 `--` 註解：`select` 會把 SQL 包成子查詢，結尾的註解會吃掉外層的 `) LIMIT`。`checks/` 模板的說明寫在註解裡，代入參數後要先去掉。
 - 回傳的欄位要足以直接診斷：主鍵、日期，以及出問題的值本身，不要只回 `count(*)`。
-- 跨來源斷言要另附「可比對列數」查詢。可比對列數為 0 時，結果是 **INCONCLUSIVE**，不是 PASS。
+- 標題寫成 `### Cn <標籤> — <說明>`，標籤取自 §7.1。
+- 比對類斷言（`internal`、`cross-source`、`temporal`、`unit`、`accuracy`）都要另附「可比對列數」查詢。可比對列數為 0 時，結果是 **INCONCLUSIVE**，不是 PASS。
+- **兩邊要獨立**：比對類斷言的兩邊，不能有一邊是同一段程式由另一邊算出來的，否則必定成立。寫之前查 §9.4 的程式與 adapter 原始碼。已知的推導欄位：`company_valuation` 的 `eps_ttm`＝收盤價 ÷ PER、`bvps`＝收盤價 ÷ PBR、`dps`＝收盤價 × 殖利率；`market_valuation_summary` 的 `market_per`、`market_pbr`、`market_dividend_yield_pct` 由同表的加總欄位算出（都在 `app/valuation_source.py`）。這類比對只是算術檢查，不算任何維度的證據，也不填進維度矩陣。
 - 斷言只讀 `pop`，不讀 `poc`。`poc` view 每次查詢都會打 HTTP，結果不穩定，也會消耗額度。
-- 門檻要寫出理由（例如 C4 的 12 天＝春節最長休市），放在斷言標題或「已知限制」。
+- **日期用台北時間**：DB 時區是 UTC，台北時間 00:00–08:00 的 `CURRENT_DATE` 還是前一天。freshness、PIT 這類跟「今天」比的斷言，用 `(now() AT TIME ZONE 'Asia/Taipei')::date`（例：Q011 C6）。只是畫格點上限的 `CURRENT_DATE` 差一天沒有影響，可以不改。
+- 門檻要寫出理由（例如 C5 的 12 天＝春節最長休市），放在斷言標題或「已知限制」。兩邊的單位或小數位不同時，門檻至少是較粗那邊的半個單位（例：百萬元對千元，誤差下限是 0.5 百萬元），小公司用百分比門檻時要特別檢查。
+- **規則要先對全表跑一次**：新規則先不限股票對全表執行，確認違規列不是「現實就是如此」。例：「交易日不是週末」不成立，`ohlcv_daily` 有 83 個 2010–2018 年的週六補行交易日。
 
 ### 7.3 斷言失敗後的分流
 
 1. **排除暫時性**：同一斷言重跑一次。若是爬取當下上游 5xx 或逾時，重跑就會通過；記在 run 的說明欄，不開 issue。
 2. **判斷是否現實如此（L7）**：休市、虧損 PER 為 NULL、金融股沒有毛利率、新上市資料不足。這類情況修改斷言或縮小範圍，並寫進「已知限制」，不開 issue。
-3. **其餘開 issue**：先搜尋 `issues/`，看有沒有相同 `pop_tables` 與症狀的未結 issue。有就把本題加進該 issue 的 `found_by`，沒有才開新的。問題卡的 `status` 改為 `failing`，`issues` 欄加上 issue 編號。
+3. **其餘開 issue**：先搜尋 `issues/`，看有沒有相同 `pop_tables` 與症狀的未結 issue。有就把本題加進該 issue 的 `found_by`，沒有才開新的。issue 的 `dimension` 填違反的 DAMA 維度。問題卡的 `status` 改為 `failing`，`issues` 欄加上 issue 編號。
 4. **資料拿不到（L0 或額度）**：`status: blocked`，寫明阻擋原因與解除條件（例：「等 FinMind token」）。
 
 ### 7.4 嚴重度（修復順序 S1 → S4）
@@ -354,6 +480,28 @@ found_by: [Q005]
 | S2 缺值 | NULL、found=false、時間序列有洞 | 看得出來，但會讓結論偏誤（例：百分位少算月份） |
 | S3 過時 | 資料日落後太多、未更新 | 影響時效型決策 |
 | S4 浪費 | 必定作廢的 API 呼叫、重複請求 | 不影響正確性，但拖慢所有 seed 的填滿速度 |
+
+各維度的預設嚴重度（再依實際後果調整）：準確性、一致性、單位、PIT 錯誤，以及會重複計入決策的唯一性問題 → S1；完整性與可取得性的真缺值 → S2；及時性的落後 → S3；必定作廢的呼叫 → S4。有效性、合理性、精確性看後果：值錯歸 S1，值缺歸 S2。
+
+### 7.5 維度剖析（盤點時做，不需要問題）
+
+斷言只驗證問題碰到的列。`snapshot.py` 另對所有正規化 `pop` 表做下列剖析，存在 snapshot 的 `profile`，印出與上一份的差異：
+
+| 維度 | 剖析 | 看什麼 |
+| --- | --- | --- |
+| 完整性 | 每欄非 NULL 列數（`profile.fields`） | 新的全空欄位、非空率下降 ≥ 1 點。I016 的 4 個 TTM 欄位 0% 非空，`pop_raw_quality` 卻是 100%：只看 found 抓不到 |
+| 唯一性 | 依 `ENTITY_KEYS` 的實體鍵算重複（`profile.entity_dups`） | 新出現或變多的重複 |
+| 及時性 | 每張表最新的資料日（`profile.latest`） | 跟該表的取樣節奏比；落後是「還沒爬」還是「爬了但沒更新」 |
+| 可取得性 | `pop_raw_quality` 的 usable%、`http_stats` 的 5xx | usable% 下降、5xx 集中的 endpoint |
+
+部分空值很常見，多數是合理的（例：虧損期間 PER 為 NULL、2017-12-18 前沒有外資自營欄位）。第一次剖析時要逐欄分類，寫進 LEDGER「剖析基線」：
+
+- **結構性空值**：來源本來就沒有這個欄位，或只在特定情況才有值。寫出依據（adapter 程式或上游文件）。
+- **合法無資料**：現實就是如此（虧損、金融股沒有毛利率、新上市）。
+- **缺陷**：依 §7.3 開 issue。
+- **待查**：查了還分不出是合法還是缺陷時，寫出已知的證據與下一步，下一輪指令 1 優先查。不要為了填滿表格硬歸類。
+
+之後盤點只報告相對基線的變化。新的全空欄位與新的實體重複，預設當作缺陷，直到查明為止。
 
 ## 8. 補爬規則（`crawl_insert_filtered`）
 
@@ -427,8 +575,9 @@ seed 的 INSERT 要求**所有欄位 NOT NULL**（[`pipeline.py` `_build_seed_in
 2. **dry run 再寫入**：看 `pending_matching` 和產生的 SQL，確認在預算內才以 `dry_run=false` 執行。
 3. **分批**：`row_cnt` 不超過上表，`timeout_seconds=300`。逾時會整批 rollback，此時把 `row_cnt` 減半重試。
 4. **爬完立刻驗可得性**：只看本次 insert 的列的 raw 可用率，不必等整體的 `pop_raw_quality`。
-5. **FinMind 先查額度**：先看 `crawl_status(lookback_minutes=60)`。FinMind 系 seed 的 `rows_inserted` 合計超過 200 時，延後這題的 FinMind 補爬。
-6. **不動排程**：除非 issue 的修復步驟需要，不呼叫 `crawl_set_schedule`／`crawl_pause`。
+5. **當月的日 K 要重爬才會更新**：`ohlcv_monthly_list` 一列是一整個月，insert 當天就凍結（I021）。題目要用最近幾天的日 K 時，先用 `crawl_delete_rows` 刪掉當月那一列（先 dry run），再 `crawl_insert_filtered` 重爬，每檔 1 次 TWSE／TPEx 呼叫。
+6. **FinMind 先查額度**：先看 `crawl_status(lookback_minutes=60)`。FinMind 系 seed 的 `rows_inserted` 合計超過 200 時，延後這題的 FinMind 補爬。
+7. **不動排程**：除非 issue 的修復步驟需要，不呼叫 `crawl_set_schedule`／`crawl_pause`。
 
 ## 9. 診斷手冊
 
@@ -527,7 +676,21 @@ endpoint 測試都在 `tests/endpoint/test_main_endpoints.py`（新聞另有 `te
 
 注意事項：
 
-- **rule 18**（[`db/poc/README.md`](../db/poc/README.md)）：欄位規格會變動時（增刪欄位、換主鍵、換 endpoint），新增 `<name>_v2.sql`，不要就地改寫。只修 bug、規格相容時才就地改。
+- **改 SQL 要對照 [`db/poc/README.md`](../db/poc/README.md) 的規則**：只要動到 `db/poc/*.sql`（含 `_list`、`raw_*`、正規化 view）或 `db/setting.sql`，在 issue 的「db/poc 規則檢查」表逐條寫出檢查結果（範例見 I017）。至少檢查：
+
+  | 規則 | 檢查什麼 |
+  | --- | --- |
+  | 1、3 | 非 `_list` 不可有 mutable 操作（`::DATE`、`http_get`）；需要時封裝成 `db/setting.sql` 的 immutable function |
+  | 2、9、11 | `_list` 不可呼叫 `http_get_content`（DAG 根節點例外）；`raw_*` 要有 `_list` 上游、不重複發查 |
+  | 6、7 | 列唯一；主鍵取自 `_list` 的欄位（I004） |
+  | 13 | `_list` 的邊界寫進產生器，不要「多產生再 WHERE」；起點對齊資料源實際覆蓋 |
+  | 14、15、20、21 | 不同時間維度、事件 vs 連續、不同上游、多方消費的展開 view 各自分 `_list` |
+  | 16 | 只用 INNER／CROSS JOIN（pg_ivm 不支援 OUTER JOIN）；也避免 window function、`DISTINCT`、`GROUP BY`、WHERE 內的 subquery、CTE（I018 的 `DISTINCT ON` 去重因此不可行） |
+  | 17 | 事件 key 選全部非 NULL 的欄位 |
+  | 18 | 欄位規格會變動時（增刪欄位、換主鍵、換 endpoint）新增 `<name>_v2.sql`，不要就地改寫；只修 bug、規格相容時才就地改 |
+  | 22 | 包在函式裡的巢狀 JSON 路徑，第一步加括號 |
+
+  再跑 `pytest tests/sql/ -q`（含 view 建立與 LineageX 欄位血緣），上線前用 `pop_check_definitions` 看 drift。同一份 `db/poc/README.md` 中該 SQL 的段落（設計理念、邊界）若因此不成立，要一起改。
 - **IMMV 重建成本**：`pop_update_mat_views(dry_run=true)` 會列出 `seed_upstreams`。重打 API 次數約等於該 seed 的 `pop_rows`（扣掉 http_cache 命中）。FinMind 系超過 200 列時，先 `crawl_pause` 相關 FinMind 排程並分時段執行，否則 402 會把整批列凍結成 found=false。
 - 修改涉及 SQL 通用規則時，同步更新 `db/poc/README.md`。
 
@@ -625,19 +788,22 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 ### 指令 1：盤點
 
 ```text
-依 verify_questions/README.md §4 步驟 1 盤點資料庫：呼叫 crawl_pop_tables、pop_raw_quality、
-crawl_status(lookback_minutes=1440)、http_stats(minutes=1440)，存成 snapshots/<今天>.json。
-與上一份 snapshot 比較，更新 LEDGER.md 的品質趨勢與覆蓋矩陣，
-並列出：usable% 下降的 raw、沒有任何問題覆蓋的 pop 表、可疑的新現象（各附一句證據）。
+依 verify_questions/README.md §4 步驟 1 盤點資料庫：執行 .venv/bin/python verify_questions/snapshot.py
+（crawl_pop_tables、pop_raw_quality、crawl_status(lookback_minutes=1440)、http_stats(minutes=1440) 加上 §7.5 維度剖析），
+存成 snapshots/<今天>.json。與上一份 snapshot 及 LEDGER「剖析基線」比較，更新 LEDGER.md 的品質趨勢、維度矩陣與剖析基線；
+基線裡還沒分類的欄位與實體重複，依 §7.5 分類。列出：usable% 下降的 raw、新的全空欄位或非空率下降的欄位、
+新出現或變多的實體重複、最新資料日異常的表、維度矩陣的空格（準確、唯一優先）、可疑的新現象（各附一句證據）。
 ```
 
 ### 指令 2：出題
 
 ```text
 依 verify_questions/README.md §5 出 <N> 題新問題卡（status: draft），格式照 §6.1。
-優先覆蓋 LEDGER 覆蓋矩陣中沒被覆蓋的 pop 表，以及 §12 的候選 issue。
-每題至少一個跨來源或內部一致性斷言、至少一個邊界案例，補爬量要在 §8.3 預算內。
-每句 SQL 都先用 select 確認可執行。寫完列出清單（標題、策略、覆蓋的表、預估補爬列數）給我審，不要補爬。
+優先填 LEDGER 維度矩陣的空格（準確、唯一優先），再來是沒被覆蓋的 pop 表與 §12 的候選 issue。
+每題照 §5.2：斷言標題用 §7.1 的標籤、至少 3 個 DAMA 維度、至少一道錯值防線（先查 adapter，確認比對的兩邊獨立，§7.2）、
+至少一個邊界案例，補爬量要在 §8.3 預算內。accuracy 的 golden 值從管線以外的權威來源取得，註解寫出處與取得日期。
+門檻依 §7.2 寫出理由；新規則先對全表跑一次。每句 SQL 都先用 select 確認可執行。
+寫完列出清單（標題、策略、覆蓋的表 × 維度、預估補爬列數）給我審，不要補爬。
 ```
 
 ### 指令 3：執行問題
@@ -645,8 +811,10 @@ crawl_status(lookback_minutes=1440)、http_stats(minutes=1440)，存成 snapshot
 ```text
 依 verify_questions/README.md §4 步驟 3–5 執行 <Q###>：
 先 select 現有資料 → 依 §8 補爬（先 dry run，遵守 §8.1 依賴鏈與 §8.3 預算）→ 跑決策 SQL → 跑全部斷言。
-寫 runs/<今天>_<Q###>.md（格式 §6.2），更新問題卡的 status、last_run、歷次結果，以及 LEDGER。
-斷言失敗依 §7.3 分流，需要時開 issue（格式 §6.3）。不要修改程式。
+寫 runs/<今天>_<Q###>.md（格式 §6.2），含維度結論：九個維度各是 PASS、FAIL 或未驗證。
+決策結論會觸發動作時（例：列入觀察），對觸發結論的 1–2 個關鍵值做準確性抽查：查官網或公司公告，
+算進 §8.3 預算，上游封鎖時記 INCONCLUSIVE。更新問題卡的 status、last_run、歷次結果，以及 LEDGER（含維度矩陣）。
+斷言失敗依 §7.3 分流，需要時開 issue（格式 §6.3，填 dimension）。不要修改程式。
 ```
 
 ### 指令 4：診斷
@@ -654,33 +822,48 @@ crawl_status(lookback_minutes=1440)、http_stats(minutes=1440)，存成 snapshot
 ```text
 依 verify_questions/README.md §9 診斷 <I###>：
 用 §9.1 的證據順序收集證據（http_log、http_cache、hidden、直接呼叫 API、對照 raw JSON 與正規化 SQL、必要時對照上游官網），
-判定根因層級 L0–L7，把證據、根因、修復方案寫回 issue。修復方案要包含：改哪些檔、是否需要 _v2 SQL（rule 18）、
-影響多少既有列、預估重打 API 次數。status 改為 diagnosed。只讀，不改程式，也不寫 DB。
+判定根因層級 L0–L7 與違反的 DAMA 維度（§7.1），把證據、根因、修復方案寫回 issue。修復方案要包含：改哪些檔、
+是否需要 _v2 SQL（rule 18）、影響多少既有列、預估重打 API 次數；動到 db/poc SQL 時，依 §10.1 逐條對照 db/poc/README.md 的規則，
+寫進 issue 的「db/poc 規則檢查」。再做同類掃描：把同一個失效模式寫成 SQL 掃所有 pop 表，
+結果寫進 issue 的「同類掃描」；掃到不同根因的另開 issue。status 改為 diagnosed。只讀，不改程式，也不寫 DB。
 ```
 
 ### 指令 5：修復
 
 ```text
 依 verify_questions/README.md §10 修復 <I###>（照 issue 裡已寫好的方案）：
-開 feature branch 修改 → 補上能重現本 issue 的測試 → 跑該層的必跑測試 → 上線（重啟 API 或重建 view／IMMV，先 dry run）→
-依 §10.2 用 crawl_delete_rows 刪壞列（先 dry run）、必要時 http_cache_evict、crawl_insert_filtered 重爬 → 重跑 found_by 所列問題的斷言。
+開 feature branch 修改 → 動到 db/poc SQL 時，照 §10.1 對照 db/poc/README.md 的規則並更新 issue 的「db/poc 規則檢查」→
+補上能重現本 issue 的測試 → 跑該層的必跑測試 → 上線（重啟 API 或重建 view／IMMV，先 dry run）→
+依 §10.2 用 crawl_delete_rows 刪壞列（先 dry run）、必要時 http_cache_evict、crawl_insert_filtered 重爬 → 重跑 found_by 所列問題的斷言 →
+確認復發時有東西會報警：某個問題卡的斷言或 §7.5 剖析抓得到這個失效模式，沒有就在 found_by 的問題卡補一個斷言。
 每一步的實際數字寫回 issue；斷言全部通過才把 status 改為 closed。完成後執行指令 8（commit、push、確認 PR check 全過）。
 ```
 
 ### 指令 6：回歸
 
 ```text
-依 verify_questions/README.md §4 步驟 7 回歸：對所有 status 為 passing 的問題只跑斷言（不補爬）。
-變成 FAIL 的問題改為 failing，並依 §7.3 開 issue 或附加到既有 issue。在 LEDGER 品質趨勢記一行。
+依 verify_questions/README.md §4 步驟 7 回歸：對所有 status 為 passing 的問題只跑斷言（不補爬），
+再跑 .venv/bin/python verify_questions/snapshot.py --no-save，對照 LEDGER「剖析基線」。
+變成 FAIL 的問題改為 failing；剖析相對基線退化（新的全空欄位、非空率下降、新的實體重複）也算退化。
+兩者都依 §7.3 開 issue 或附加到既有 issue。在 LEDGER 品質趨勢記一行。
 ```
 
 ### 指令 7：一輪完整循環
 
 ```text
 依 verify_questions/README.md 跑一輪：
-指令 1 → 挑一題（優先順序：failing > 最久未跑的 draft > 最久未跑的 passing）執行指令 3 → 對新開的 issue 執行指令 4 →
-draft 少於 3 題時執行指令 2 補 3 題。補爬遵守 §8.3。不要執行指令 5，把建議修復的 issue 依 §7.4 嚴重度排好列給我。
+§2 前置條件 → 指令 1 → 挑一題（優先順序：failing > 最久未跑的 draft > 最久未跑的 passing；跳過的題見下方）執行指令 3 →
+對新開的 issue 執行指令 4 → draft 少於 3 題時執行指令 2 補 3 題（優先填維度矩陣的空格）。補爬遵守 §8.3。
+不要執行指令 5，把建議修復的 issue 依 §7.4 嚴重度排好（附維度）列給我。最後執行指令 8（commit、push、確認 PR check 全過）。
 ```
+
+挑題時跳過：
+
+- `failing` 但所有 FAIL 都是使用者決定保留的（寫在問題卡的已知限制，例：Q005 C1）。重跑只會得到同樣結果，視同 `passing`，由指令 6 回歸處理。
+- 決策或斷言依賴一個還沒修好的 issue 的 draft（`issues` 欄有未 closed 的 issue，而且該 issue 讓題目一定 FAIL，例：Q007 依賴 I016）。等 issue 修好再跑，那次執行就是 issue 的驗證。
+- 補爬會打到工作目錄有未 commit 改動的 endpoint 的題目（§2）。
+
+跳過的題與理由寫進 LEDGER「最新盤點發現」。
 
 ### 指令 8：提交並確認 PR check 全過（每次改 pipeline 邏輯或解完一個 issue 都要做）
 
@@ -688,7 +871,9 @@ draft 少於 3 題時執行指令 2 補 3 題。補爬遵守 §8.3。不要執�
 
 ```text
 依 verify_questions/README.md 指令 8 提交這次的改動：
-1. 跑該層的必跑測試（至少 `pytest -q` 全綠）。
+1. 跑該層的必跑測試（至少 `pytest -q` 全綠）。這次改到 db/poc/*.sql 或 db/setting.sql 時，確認 issue 的「db/poc 規則檢查」
+   已逐條填好（§10.1），而且 `pytest tests/sql/ -q` 全綠。
+   只 stage 這次指令產生的檔案；工作目錄裡不屬於這次的改動（例如使用者進行中的 app/ 修改）不要一起 commit。
 2. git commit（訊息以 `robot:` 開頭，寫明 issue 編號、根因、修法、實測數字），然後 git push 到目前的 feature branch。
 3. 找出這個 branch 對 main 的 PR（`gh pr list --head <branch> --base main`）。
    沒有 PR 就開一個（base main），不要 merge。
@@ -728,3 +913,19 @@ draft 少於 3 題時執行指令 2 補 3 題。補爬遵守 §8.3。不要執�
 | 2317 近 3 年估值只有 13／37 個月 | `pop.company_valuation` | 還沒爬到；Q001 第一次執行時補爬即可 |
 
 已驗證通過（可作為回歸基準）：`ohlcv_daily` 的 OHLC 合理性與主鍵唯一性；估值收盤價 vs 日 K 收盤價（543 列可比對、0 違規）；FinMind vs yfinance 現金股利（26 列可比對、0 違規）。
+
+### 12.1 DAMA 維度補盤（2026-11-26）
+
+導入 §7.1 時，依九個維度對 live DB 補盤一次。以下是候選問題，要經指令 3／4 確認。2026-11-27 的指令 7 已轉成 issue：借券重複 → I017、新聞重複 → I018、2882 季度重複 → I019、2882 EPS 落差 → I020；必定成立的斷言已改寫 Q006 C2，Q001 C3、Q005 C3 待改。
+
+| 維度 | 觀察 | 證據 | 初步判斷 |
+| --- | --- | --- | --- |
+| 準確性（斷言設計） | Q001–Q008 共 39 個斷言沒有一個 `accuracy`；6 個 `internal` 中有 3 個比的是 adapter 由對方算出來的欄位，必定成立：Q001 C3 的互推部分、Q005 C3、Q006 C2 | `app/valuation_source.py`：`eps`＝close ÷ PER 等（354–356 行）；`market_per`＝Σ市值 ÷ Σ純益（490–496 行） | L7：改寫成獨立比對。Q001 可改用 §6.1 範例的 C4；Q005 C3、Q006 C2 保留範圍與 NULL 檢查，刪掉互推部分 |
+| 準確性 | 2882 的估值隱含 EPS 比 MOPS 近四季 EPS 合計低 6–7%，6／6 列都偏低。同一個比對在 2330 只有 3 月對不上（早公告年報，見 §6.1 已知限制），6488 0 違規 | as_of 2026-06-05 ～ 08-05：6.59 vs 7.03；09-05 ～ 11-05：8.48 vs 9.12 | 待診斷：TWSE 對金控的 EPS 基準不同，或 I009 修正後金融股的 MOPS EPS 有誤 |
+| 唯一性 | `finmind_news` 同一 link 重複 321 組、多 431 列（全表 1,955 列的 22%），幾乎都在同一個 as_of 內 | 同一篇「不斷更新」文章收錄了多個標題版本；Yahoo股市與奇摩股市轉載同一 link | 新聞數類的事件決策會重複計算：L5 去重，或寫進已知限制 |
+| 唯一性 | `sbl_history` 同一筆借券交易出現在兩個 as_of：290 組、多 302 列 | 例：2317 2025-03-27 議借 432 張，同時出現在 as_of 2025-09-05 與 2025-10-05 | 相鄰取樣窗口重疊，跨月加總會重複算。另有 445 列是同一 as_of 內條件完全相同的列，可能是真實的多筆交易，待確認 |
+| 唯一性／及時性 | `mops_quarterly_financials` 的 2882 2026Q2 出現兩次（as_of 2026-08-31、2026-11-14） | as_of 11-14 那列應該是 Q3，卻回 Q2 | 金融業 Q3 還拿不到時回了上一季，並被凍結。待診斷是 L0（尚未公告）還是 L1（fallback） |
+| 唯一性 | `company_business_items` 有 11 家公司的同一營業項目代碼重複，多 263 列 | seed `company_list` 沒有重複代號（1,057／1,057），重複來自上游清單 | L0；L5 加 DISTINCT，或寫進已知限制 |
+| 完整性 | 13 個全空欄位：8 個是 I016 的 TTM 欄位，其餘 5 個待分類（`company_valuation.reason`、`financial_analysis.reason`、`dividend_yfinance` 的 3 個日期欄位） | `snapshot.py` 剖析 | 下一次指令 1 依 §7.5 分類 |
+
+已驗證通過（新增的回歸基準）：收盤價升降單位、漲跌幅限制、月營收最新一期（§7.1 範例），以及估值隱含 EPS vs MOPS 近四季 EPS（§6.1 C4，2330 34 列）。
