@@ -11,7 +11,7 @@ crawl:                       # 出題時（2026-11-27）三檔 2025-06 ～ 2026-
     filters: {stk_code: ["2330", "2317", "6488"]}
     order_by: ["month_start_date"]
     budget: 6                # 只補 2026-12 之後新到期的取樣月
-issues: [I017]
+issues: []
 last_run: null
 ---
 
@@ -20,13 +20,11 @@ last_run: null
 低於之前的 0.7 倍 → 放空壓力解除。
 
 ## 決策 SQL
-決策先套用 I017 的去重（只留 `completion_date` 落在 `(as_of − 1 個月, as_of]` 的紀錄），C1 驗的是未去重的原始資料。
 ```sql
 WITH s AS (
   SELECT stk_code, completion_date, quantity_lots, fee_rate_pct
   FROM pop.sbl_history
   WHERE stk_code IN ('2330','2317','6488') AND as_of >= DATE '2025-06-05'
-    AND completion_date > as_of - INTERVAL '1 month'
 )
 SELECT stk_code,
        round(sum(quantity_lots * fee_rate_pct) FILTER (WHERE completion_date >= CURRENT_DATE - 90)
@@ -104,7 +102,7 @@ WHERE stk_code IN ('2330','2317','6488') AND as_of >= DATE '2025-06-05'
 
 ## 已知限制
 - `sbl_history` 是「還券」紀錄（t13sa870），不是每日借券賣出餘額；費率反映的是到期還券的那批合約，對近期放空壓力有落後。
-- I017 修好之前 C1 會 FAIL；決策 SQL 已自行去重，結論不受影響。
+- I017（借券視窗重疊）已在 2026-11-27 修正：正規化 SQL 只保留還券日落在 `(as_of − 1 個月, as_of]` 的紀錄，C1 是它的回歸防線。
 - 2317、6488 的借券資料從 2025-06 起（seed 範圍），所以窗口從 2025-06-05 起。
 
 ## 歷次結果

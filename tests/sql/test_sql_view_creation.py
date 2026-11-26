@@ -62,6 +62,49 @@ def test_view_can_be_created(poc_schema, sql_path):
         )
 
 
+def test_sbl_history_drops_records_from_overlapping_window(pipeline):
+    """I017: the backend window is [as_of - 30, as_of] but samples are a month
+    apart, so a completion on the previous sample date shows up in both
+    responses. The normalized view keeps a record only under the as_of whose
+    (as_of - 1 month, as_of] range contains its completion date."""
+    schema = "test_sbl_history_overlap"
+    pipeline._db_tool.execute_query(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
+    pipeline._db_tool.execute_query(f"CREATE SCHEMA {schema};")
+
+    def resp(as_of: str, completions: list[str]) -> str:
+        records = ",".join(
+            '{"transaction_date": "2025-03-27", "transaction_type": "議借", "quantity_lots": 432, '
+            f'"fee_rate_pct": 0.35, "completion_close_price": 100, "completion_date": "{c}", "lending_days": 1}}'
+            for c in completions
+        )
+        return f'{{"stock_id": "2317", "as_of": "{as_of}", "data_date": "{completions[-1]}", "records": [{records}]}}'
+
+    try:
+        pipeline._db_tool.execute_query(
+            f"CREATE TABLE {schema}.raw_sbl_history (stk_code TEXT, as_of DATE, sbl_history JSONB);"
+        )
+        # 2025-10-05's window starts 2025-09-05, the previous sample date.
+        pipeline._db_tool.execute_query(
+            f"INSERT INTO {schema}.raw_sbl_history VALUES "
+            f"('2317', DATE '2025-09-05', '{resp('2025-09-05', ['2025-08-06', '2025-09-05'])}'), "
+            f"('2317', DATE '2025-10-05', '{resp('2025-10-05', ['2025-09-05', '2025-09-06', '2025-10-03'])}');"
+        )
+        pipeline._db_tool.execute_query(
+            pipeline._get_view_create_sql(schema, "sbl_history.sql", target_schema=schema)
+        )
+        rows = pipeline._db_tool.fetch_all(
+            f"SELECT as_of, completion_date FROM {schema}.sbl_history ORDER BY as_of, completion_date;"
+        )
+        assert [(a.isoformat(), c.isoformat()) for a, c in rows] == [
+            ("2025-09-05", "2025-08-06"),
+            ("2025-09-05", "2025-09-05"),
+            ("2025-10-05", "2025-09-06"),
+            ("2025-10-05", "2025-10-03"),
+        ]
+    finally:
+        pipeline._db_tool.execute_query(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
+
+
 def test_foreign_ownership_monthly_samples_respect_supported_date(pipeline):
     schema = "test_foreign_ownership_monthly_list"
     pipeline._db_tool.execute_query(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
