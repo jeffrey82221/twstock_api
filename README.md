@@ -663,3 +663,8 @@ twstock_api/
 3. Probe Limit Count `Pipeline().probe_all_throughput()`
 
 4. Setup 1 minute Schedules `Pipeline().setup_schedules()`
+
+
+# 持續精進：
+
+執行 verify_questions/README.md 這裡的 AI 指令，同步思考流程文件哪裡可以寫得更好。每一輪完整的循環就要 git commit push 做一次 CI check (如指令 8 所示) 
