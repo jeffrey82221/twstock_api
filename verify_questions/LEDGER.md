@@ -11,6 +11,9 @@
 | [Q003](questions/Q003-quality-roe-debt.md) | 體質 | 2330、2882、1101 連 3 年 ROE > 15% 且負債比 < 50% | passing | 2026-11-26 | — |
 | [Q004](questions/Q004-flow-foreign-institutional.md) | 籌碼 | 2330、2317、6488 外資持股、法人買賣超、借券趨勢 | passing | 2026-11-26 | — |
 | [Q005](questions/Q005-income-dividend-consistency.md) | 股利 | 2330、2317、2882、1101 連 5 年配息與殖利率 | failing（C1 刻意保留） | 2026-11-26 | I003（使用者決定保留 FAIL 作提醒） |
+| [Q006](questions/Q006-market-per-percentile.md) | 市場 | 上市大盤本益比在近 5 年第幾百分位 | draft | — | — |
+| [Q007](questions/Q007-quarterly-eps-yfinance-vs-mops.md) | 成長 | 2330、2454、6488、2882、7769 近四季 EPS 年增；yfinance vs MOPS 季 EPS | draft | — | I016 |
+| [Q008](questions/Q008-product-revenue-concentration.md) | 產業 | 1402、2308、3045、2882、1519 產品營收集中度；產品營收 vs 月營收 | draft | — | — |
 
 ## Issues
 
@@ -18,7 +21,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | [I001](issues/I001-mops-quarterly-financials-ytd.md) | S1 | L1 | mops_quarterly_financials 營收與 EPS 為年初至今累計 | closed | Q002, Q003 | 指令 5 |
 | [I002](issues/I002-point-in-time-look-ahead.md) | S1 | L2／L3 設計 | as_of 看得到尚未公布的月營收與季報 | closed（選項 B：as_of＝已公布＋`available_date`） | Q002 | 2026-11-26 |
-| [I003](issues/I003-yfinance-dividend-adjusted.md) | S1 | L1＋L0 | dividend_yfinance 現金股利為配股還原值 | closed（2882 L0 殘留，Q005 C1 保留 FAIL 作提醒） | Q005 | 指令 5 |
+| [I003](issues/I003-yfinance-dividend-adjusted.md) | S1 | L1＋L0 | dividend_yfinance 現金股利為配股還原值 | closed（2882 與 2330 2007／2008 同日配股為 L0 殘留，Q005 C1 保留 FAIL 作提醒） | Q005 | 指令 5 |
 | [I004](issues/I004-normalized-as-of-from-response.md) | S2 | L5 | 正規化 view 的 as_of 取自回應，失敗列主鍵為 NULL | closed（第二批 8 張以 pin 重建，0 次 HTTP） | Q001 | 指令 5、2026-11-26 |
 | [I005](issues/I005-otc-valuation-missing.md) | S2 | L1 新上游 | 上櫃股沒有估值資料 | closed（TPEx peQryDate，2007-01-02 起） | Q001 | 2026-11-26 |
 | [I006](issues/I006-otc-foreign-ownership-missing.md) | S2 | L1 新上游 | 上櫃股沒有外資持股資料 | closed（TPEx qfii，2007-05-02 起） | Q004 | 2026-11-26 |
@@ -31,6 +34,7 @@
 | [I013](issues/I013-mops-product-revenue-legit-pages-as-failure.md) | S3 | L1 | MOPS 產品營收把營收 0 與外國發行人免申報誤判成上游失敗 | closed | retry_failed 殘留 | 2026-11-26 |
 | [I014](issues/I014-empty-answers-treated-as-failures.md) | S3 | L1 | yfinance 空結果、上櫃零股日、FinMind 限流殘留的誤判 | closed（seed 範圍見 I015） | 盤點剩餘不可用列 | 2026-11-26 |
 | [I015](issues/I015-company-list-scope-unlisted-codes.md) | S3 | L4 | company_list 含興櫃／下市代號，兩條股利歷史路徑都對它們發查 | closed（yfinance、FinMind 都改只取上市櫃） | I014 後續 | 2026-11-26 |
+| [I016](issues/I016-yfinance-financials-ttm-always-null.md) | S2 | L0＋L3＋L1 | yfinance 季／年財報 TTM 全部 NULL（Yahoo 只留約 5 季，歷史 as_of 凍結成 found=true 空結果） | diagnosed（方案待決定） | Q007（指令 7 出題） | — |
 
 ## 覆蓋矩陣（pop 表 × 問題）
 
@@ -39,12 +43,12 @@
 | pop 表 | 策略維度 | 覆蓋的問題 | 最近斷言結果 |
 | --- | --- | --- | --- |
 | `company_valuation` | 估值 | Q001, Q005 | Q001 PASS（含上櫃）；Q005 PASS |
-| `market_valuation_summary` | 估值、市場 | — | — |
+| `market_valuation_summary` | 估值、市場 | Q006 | 出題時試跑 C1–C5 全 PASS（draft） |
 | `monthly_revenue_twse` | 成長 | Q002 | Q002 PASS（含 PIT 斷言 C3） |
 | `monthly_revenue` | 成長 | — | — |
 | `mops_quarterly_financials` | 成長 | Q002, Q003 | Q002 C4、C5、Q003 C4 PASS |
-| `financial_quarterly_yfinance` | 成長 | — | — |
-| `financial_yearly_yfinance` | 體質 | — | — |
+| `financial_quarterly_yfinance` | 成長 | Q007 | 出題時試跑 C2 FAIL（I016） |
+| `financial_yearly_yfinance` | 體質 | Q007 | 出題時試跑 C2 FAIL（I016） |
 | `financial_analysis` | 體質 | Q003 | Q003 PASS |
 | `raw_yearly_financials`（FinMind，無正規化表） | 體質 | — | — |
 | `dividend` | 股利 | Q005 | Q005 PASS（I012 修正後可比對 50 組） |
@@ -53,10 +57,10 @@
 | `foreign_ownership` | 籌碼 | Q004 | Q004 PASS（含上櫃） |
 | `sbl_history` | 籌碼 | Q004 | Q004 PASS |
 | `ohlcv_daily` | 技術 | Q001 | Q001 PASS（C4） |
-| `chain_info_list` | 產業 | — | — |
+| `chain_info_list` | 產業 | Q008 | 出題時試跑 C4：1402／1519 尚未進母體（draft） |
 | `company_basic_info_list` | 產業 | Q002, Q003（依賴鏈） | 依賴鏈補爬成功 |
-| `company_business_items` | 產業 | — | — |
-| `product_revenue` | 產業 | — | — |
+| `company_business_items` | 產業 | Q008 | 同上 |
+| `product_revenue` | 產業 | Q008 | 出題時試跑 C1／C2 各 5 組 FAIL（未爬前的既有資料，待執行後分流） |
 | `finmind_news` | 事件 | — | — |
 
 ## 品質趨勢（每次盤點一行）
@@ -68,8 +72,17 @@
 | 2026-11-26（重建＋重試） | 90.9 | `raw_monthly_revenue` 0.0（僅 1 列 FinMind seed）、`raw_finmind_news` 72.6（26 列為 404，無新聞）、`raw_sbl_history` 77.0（85 列為 404） | 開 I011、I012；關閉 I002、I003、I005、I006、I007、I010、I011、I012。Q001–Q004 全 PASS，Q005 只剩刻意保留的 C1 |
 | 2026-11-26（I004、I013、I014 後） | 95.4 | `raw_finmind_news` 72.6（404，無新聞）、`raw_sbl_history` 77.0（404，無借券）、`raw_company_info` 82.3（187 檔興櫃／下市代號） | 開並關閉 I013、I014；I004 關閉。剩下的不可用列都是合法無資料 |
 | 2026-11-26（I015 後） | 96.0 | `raw_finmind_news` 72.6（404，無新聞）、`raw_sbl_history` 77.0（404，無借券）、`raw_company_info` 82.3（187 檔興櫃／下市代號，判定上市櫃的那一步，保留） | 開並關閉 I015：`raw_dividend_history_yfinance` 85.4 → 100（seed 改 `company_basic_info_list`）。FinMind 那條路依使用者決定也只留上市櫃（514 → 423 列，移除 70 家非上市櫃公司的股利歷史） |
+| 2026-11-26（指令 7） | 96.0 | `raw_finmind_news` 72.6、`raw_sbl_history` 77.0、`raw_company_info` 82.3（皆為已知的合法無資料） | 執行 Q005（補爬 FinMind 9 個事件，C1 新增 1 筆 2882 L0 違規，非退化）；出 Q006–Q008；開 I016（S2，diagnosed）。注意：`raw_*_financials_yfinance` 的 100% 是假象（found=true 空結果，I016） |
 
-## 最新盤點發現（2026-11-26，`snapshots/2026-11-26.json`）
+## 最新盤點發現（2026-11-26 指令 7，`snapshots/2026-11-26.json` 已覆寫為本次）
+
+- **raw 平均 usable 96.0%**，與 I015 後相同；三個最低的 raw 都是已知的合法無資料。
+- **新現象 1（→ I016）**：`financial_quarterly_yfinance`／`financial_yearly_yfinance` 共 1,331 列的 `eps_ttm`、`revenue_ttm`、`net_income_ttm`、`operating_margin_pct` 全部 NULL，raw 卻是 `found=true`。usable% 只看 found，看不出這種「成功但全空」。
+- **新現象 2（→ Q008 待分流）**：`product_revenue` 166 組（stk_code, ym）中有 16 組產品金額或占比加總對不上（金融業最多，2891 占比合計 449%）。
+- **新現象 3**：`company_list` 1,057／2,250（47%），不少上市公司（例：1402 遠東新、1519 華城）還沒進母體；不是品質問題，是還沒爬。
+- **沒被任何問題覆蓋的 pop 表**：`monthly_revenue`（FinMind）、`raw_yearly_financials`、`finmind_news`。
+
+## 前次盤點發現（2026-11-26 重建後）
 
 依使用者要求，照 repo README 刪除並重建 `poc`、`pop`、`hidden` 三個 schema（README §10.6），再還原 seed、跑 `retry_failed.py`：
 

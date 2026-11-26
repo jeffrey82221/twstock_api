@@ -372,9 +372,10 @@ chain_list → chain_info_list → company_list ─┬─► company_basic_info_
                                              │                           ├─► financial_analysis_year_list
                                              │                           ├─► financial_year_list
                                              │                           ├─► finmind_news_monthly_list
-                                             │                           └─► financial_year_yfinance_list ─► financial_quarter_yfinance_list
-                                             ├─► company_finmind_list ─► (raw_dividend_history) ─► dividend_event_list
-                                             └─► (raw_dividend_history_yfinance) ─► dividend_event_yfinance_list
+                                             │                           ├─► financial_year_yfinance_list ─► financial_quarter_yfinance_list
+                                             │                           ├─► company_finmind_list ─► (raw_dividend_history) ─► dividend_event_list
+                                             │                           └─► (raw_dividend_history_yfinance) ─► dividend_event_yfinance_list
+                                             └─► (raw_company_info：判定是否上市櫃；I015 起兩條股利歷史都改從 company_basic_info_list 出發)
 product_revenue_filer_scope_list ─► (raw_product_revenue_filers) ─► product_revenue_filer_list
 market_valuation_date_list（市場層級，無個股上游）
 ```
@@ -387,8 +388,8 @@ seed 的 INSERT 要求**所有欄位 NOT NULL**（[`pipeline.py` `_build_seed_in
 
 | seed | 常用 filter 欄位 | 時間欄（`order_by`） | 下游 `pop` 表 | 上游資料源 |
 | --- | --- | --- | --- | --- |
-| `company_list` | `stk_code` | — | `raw_company_info`、`company_business_items`、`raw_dividend_history_yfinance` | TWSE/TPEx OpenAPI、經濟部、yfinance |
-| `company_basic_info_list` | `stk_code`、`market`、`industry_code` | `listing_date` | （主題 seed 的母體） | 純 SQL |
+| `company_list` | `stk_code` | — | `raw_company_info`、`company_business_items` | TWSE/TPEx OpenAPI、經濟部 |
+| `company_basic_info_list` | `stk_code`、`market`、`industry_code` | `listing_date` | （主題 seed 的母體）、`raw_dividend_history_yfinance` | 純 SQL；yfinance |
 | `company_finmind_list` | `stk_code` | — | `raw_dividend_history` | FinMind |
 | `ohlcv_monthly_list` | `stk_code` | `month_start_date` | `raw_ohlcv_monthly`、`ohlcv_daily` | TWSE STOCK_DAY／TPEx |
 | `company_valuation_monthly_list` | `stk_code` | `valuation_date` | `raw_company_valuation`、`company_valuation` | TWSE BWIBBU_d |
@@ -418,7 +419,7 @@ seed 的 INSERT 要求**所有欄位 NOT NULL**（[`pipeline.py` `_build_seed_in
 | TWSE www | 120 | ≤ 12 | 非官方限制約每 5 秒 3 次，過頻會暫時封 IP |
 | MOPS | 60 | ≤ 8 | 過頻回「查詢過於頻繁」 |
 | yfinance | 150 | ≤ 20 | 寬鬆 |
-| `company_list`／`company_basic_info_list` | 50 | ≤ 20 | `company_list` 每列會打經濟部與 yfinance |
+| `company_list`／`company_basic_info_list` | 50 | ≤ 20 | `company_list` 每列會打經濟部；`company_basic_info_list` 每列會打 yfinance 股利歷史 |
 
 規則：
 

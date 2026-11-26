@@ -26,7 +26,7 @@ crawl:
     order_by: ["valuation_date"]
     budget: 12               # TWSE；最近 6 個月
 issues: [I003]
-last_run: 2026-11-25
+last_run: 2026-11-26
 ---
 
 ## 決策情境
@@ -37,7 +37,7 @@ last_run: 2026-11-25
 ```sql
 WITH d AS (
   SELECT stk_code, extract(year FROM reference_date)::int AS y, sum(cash_dividend) AS cash
-  FROM pop.dividend_yfinance
+  FROM pop.dividend
   WHERE stk_code IN ('2330','2317','2882','1101') GROUP BY 1, 2
 ), v AS (
   SELECT DISTINCT ON (stk_code) stk_code, as_of, dividend_yield_pct
@@ -70,7 +70,7 @@ JOIN pop.dividend_yfinance y ON y.stk_code = f.stk_code AND y.reference_date = f
 WHERE f.stk_code IN ('2330','2317','2882','1101')
 ```
 
-### C2 completeness — 2021–2025 每年至少一筆 yfinance 現金股利事件
+### C2 completeness — 2021–2025 每年至少一筆 FinMind 現金股利事件（決策用的來源）
 ```sql
 WITH e AS (
   SELECT s.stk_code, y FROM unnest(ARRAY['2330','2317','2882','1101']) AS s(stk_code)
@@ -78,7 +78,7 @@ WITH e AS (
 )
 SELECT e.stk_code, e.y AS missing_year
 FROM e
-WHERE NOT EXISTS (SELECT 1 FROM pop.dividend_yfinance d
+WHERE NOT EXISTS (SELECT 1 FROM pop.dividend d
                   WHERE d.stk_code = e.stk_code AND extract(year FROM d.reference_date) = e.y
                     AND d.cash_dividend > 0)
 ```
@@ -108,7 +108,8 @@ WHERE stk_code IN ('2330','2317','2882','1101')
 ## 已知限制
 - 2330 自 2019 年起季配息，2317／2882／1101 為年配息；C2 只要求每年至少一筆。
 - yfinance 的 reference_date 是除息日，FinMind 的是基準日／除息日，C1 只比對兩者剛好同日的事件。
-- **C1 刻意維持 FAIL**（使用者 2026-11-25 決定，I003）：2882 的 yfinance 股利比實際多 1.0157 倍且 Yahoo 沒有 split 紀錄（L0），留著當作「yfinance 股利不可當實際配發金額」的提醒。回歸時只有 2882 以外的新違規才算退化；決策一律用 FinMind（`pop.dividend`）。
+- **C1 刻意維持 FAIL**（使用者 2026-11-25 決定，I003）：2882 的 yfinance 股利比實際多 1.0157 倍且 Yahoo 沒有 split 紀錄（L0），留著當作「yfinance 股利不可當實際配發金額」的提醒。回歸時只有 2882 與 2330 2007-06-08／2008-07-16（同日小額配股，L0，見 I003）以外的新違規才算退化；決策一律用 FinMind（`pop.dividend`）。
+- 2026-11-26 起決策 SQL 與 C2 改讀 `pop.dividend`（原本讀 `pop.dividend_yfinance`，與上一條矛盾）；yfinance 只出現在 C1 的跨來源比對。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
@@ -116,3 +117,4 @@ WHERE stk_code IN ('2330','2317','2882','1101')
 | 2026-11-25 | FAIL（C1） | [run](../runs/2026-11-25_Q005.md) | yfinance 股利為還原值 |
 | 2026-11-25 | FAIL（C1） | — | 指令 5 後重跑：C1 違規 3 → 2（1101 修正；2882 為 L0 殘留，見 I003） |
 | 2026-11-26 | FAIL（C1） | — | C1 依使用者決定保留 FAIL（I003）；I012 修正後可比對 32 → 50，違規 3；C2–C4 PASS |
+| 2026-11-26 | FAIL（C1，刻意保留） | [run](../runs/2026-11-26_Q005.md) | 指令 7：補爬 FinMind 9 個事件；決策 SQL 與 C2 改讀 FinMind；C1 可比對 59、違規 4（2882 ×2、2330 ×2，皆 L0）；C2–C4 PASS |
