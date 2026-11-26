@@ -283,25 +283,27 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 - 對應 [`/api/company/{stock_id}/quarterly-financials`](../../app/main.py) MOPS t163sb06 + t163sb04。
 - 設計理念（rule 14, 20）：季頻獨立 `_list`，不與既有 FinMind/yfinance 版季度母體混用（不同資料源分流）。
 - 設計理念（rule 13）：起點對齊到設立日所在季的季末月、步長 3 個月，不再逐月展開後用 WHERE 篩季末月（輸出相同，hidden 每 tick 少算 2/3 的列）。
+- **Point-in-time（2026-11-25，verify_questions I002）**：下游以 `as_of_date`（該季法定公告期限）呼叫 endpoint，endpoint 只回當天已公開的季度，所以每列恰好是 `quarter_end` 那一季且當時已公告。期限：Q1 5/15、Q2 8/31（金融業期限；一般公司 8/14 已公告）、Q3 11/14、Q4 隔年 3/31（`app/pit.py`）。未到期限的季度不產生（`WHERE as_of_date <= CURRENT_DATE`，rule 13 資料邊界）。舊版以季末日取樣，每列都拿到當天尚未公告的當季（Q002 C4 73/73 違規）。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
 | `quarter_end` | DATE | 該季最後一日（3/6/9/12 月月末） | `generate_series(..., INTERVAL '3 months')` |
+| `as_of_date` | DATE | 該季財報的法定公告期限（下游 endpoint 的 as_of） | 由 `quarter_end` 計算 |
 
 ---
 
 ## raw_mops_quarterly_financials
 
 - **上游 SQL**：[mops_quarterly_financials_quarter_list](#mops_quarterly_financials_quarter_list)
-- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/quarterly-financials?as_of={quarter_end}`
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/quarterly-financials?as_of={as_of_date}`
   - 上游：MOPS `ajax_t163sb06`（營益分析彙總）+ `ajax_t163sb04`（綜合損益表）
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `mops_quarterly_financials_quarter_list.stk_code` |
 | `quarterly_financials` | JSONB | endpoint 回傳整包 JSON | `custom.http_get_content(url)` |
-| `as_of` | DATE | 查詢基準日（= `quarter_end`） | `mops_quarterly_financials_quarter_list.quarter_end` |
+| `as_of` | DATE | 查詢基準日（= 該季公告期限 `as_of_date`） | `mops_quarterly_financials_quarter_list.as_of_date` |
 
 ---
 
@@ -312,16 +314,18 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 - 欄位 align `MopsQuarterlyFinancialsResponse` + `MopsQuarterlyFinancialsData`。
 - **數值為單季**（2026-11-25 修正，verify_questions I001）：MOPS t163sb06／t163sb04 是年初至今累計，endpoint 的 `data` 已換算成單季（Q2–Q4 = 本季累計 − 前一季累計，比率先還原成金額再相減）；原始累計值在 raw JSON 的 `data_ytd`。
 - 金融業不在 t163sb06，只有 `eps`，營收與比率為 NULL（I009）。
-- 主鍵 `as_of` 取 raw 的 seed 季末日，不取回應 JSON（rule 7，I004）。
+- 主鍵 `as_of` 取 raw 的 seed 日期（該季公告期限），不取回應 JSON（rule 7，I004）。
+- Point-in-time（I002）：`data_date` = 季末日、`available_date` = 法定公告期限，endpoint 保證 `available_date <= as_of`。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `raw_mops_quarterly_financials.stk_code` |
-| `as_of` | DATE | 查詢基準日（seed 季末日） | `raw_mops_quarterly_financials.as_of` |
+| `as_of` | DATE | 查詢基準日（seed 公告期限日） | `raw_mops_quarterly_financials.as_of` |
 | `stock_id` | TEXT | 股票代號 | `quarterly_financials.stock_id` |
 | `company_name` | TEXT | 公司名稱 | `quarterly_financials.company_name` |
 | `market` | TEXT | `sii` / `otc` | `quarterly_financials.market` |
 | `data_date` | DATE | 實際季度結束日 | `quarterly_financials.data_date` |
+| `available_date` | DATE | 該季財報的法定公告期限（≤ `as_of`） | `quarterly_financials.available_date` |
 | `fiscal_year` | NUMERIC | 財報西元年度 | `quarterly_financials.fiscal_year` |
 | `quarter` | NUMERIC | 財報季度 1~4 | `quarterly_financials.quarter` |
 | `revenue_millions` | NUMERIC | 單季營業收入（百萬元） | `quarterly_financials.data.revenue_millions` |
@@ -384,14 +388,15 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 
 - **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
 - **HTTP API endpoint**：無（純 SQL `generate_series`）
-- 對應 [`/api/company/{stock_id}/foreign-ownership`](../../app/main.py) TWSE MI_QFIIS。
+- 對應 [`/api/company/{stock_id}/foreign-ownership`](../../app/main.py) 上市 TWSE MI_QFIIS／上櫃 TPEx qfii（I006）。
 - 設計理念（rule 11, 15 退化特例）：交易日頻連續資料 + 有回溯 fallback，每月一次取樣即可。
+- 邊界（rule 13）：上櫃股起點下限 2007-05-05（TPEx qfii 實測最早有資料日 2007-05-02），上市股 2004-02-05。
 - 爬取效率：取樣錨點日固定在每月 5 日（而非 1 日），降低命中元旦等長假的機率。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `month_start_date` | DATE | 每月 5 日（從 `GREATEST(掛牌日之後第一個 5 日, 2004-02-05)` 起；2004-02 那列改用下限 2004-02-11） | `generate_series(...)` |
+| `month_start_date` | DATE | 每月 5 日（從 `GREATEST(掛牌日之後第一個 5 日, 2004-02-05；上櫃 2007-05-05)` 起；2004-02 那列改用下限 2004-02-11） | `generate_series(...)` |
 
 ---
 
@@ -399,7 +404,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 
 - **上游 SQL**：[foreign_ownership_monthly_list](#foreign_ownership_monthly_list)
 - **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/foreign-ownership?as_of={month_start_date}`
-  - 上游：TWSE 外資及陸資投資持股統計 `MI_QFIIS`
+  - 上游：上市 TWSE 外資及陸資投資持股統計 `MI_QFIIS`；上櫃 TPEx 僑外資及陸資持股比例 `qfii`（無陸資上限與異動日期，對應欄位為 NULL）
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
@@ -574,7 +579,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 
 - **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
 - **HTTP API endpoint**：無（純 SQL `generate_series`）
-- 對應 [`/api/company-valuation`](../../app/main.py) TWSE BWIBBU_d（單股展開）。
+- 對應 [`/api/company-valuation`](../../app/main.py) 上市 TWSE BWIBBU_d／上櫃 TPEx peQryDate + dailyQuotes（單股展開；上櫃 2026-11-25 起支援，I005）。
 - **爬取效率**：取樣日格點與 [market_valuation_date_list](#market_valuation_date_list) **完全相同**（起點 2017-05-05、每月 5 日），
   兩個 endpoint 共用同一份 TWSE `BWIBBU_d` 每日 payload（backend 依日期磁碟 cache），對齊取樣日期後
   同一天只會打上游 1 次。若調整 `market_valuation_date_list` 的起點，這裡要同步改。
@@ -593,7 +598,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 
 - **上游 SQL**：[company_valuation_monthly_list](#company_valuation_monthly_list)
 - **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company-valuation?stock_id={stk_code}&date={valuation_date}`
-  - 上游：TWSE `BWIBBU_d`
+  - 上游：上市 TWSE `BWIBBU_d`；上櫃 TPEx `peQryDate`（本益比 / 殖利率 / 股價淨值比）+ `dailyQuotes`（收盤價），2007-01-02 起
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
@@ -1019,19 +1024,20 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 - **HTTP API endpoint**：無（純 SQL `generate_series`）
 - **服務的下游**：[raw_monthly_revenue_twse](#raw_monthly_revenue_twse)
 - **設計理念（規則 20）**：結構同 [financial_month_list](#financial_month_list)（只差資料源下限），拆成兩張目的在於「分流爬取」：`raw_monthly_revenue`（FinMind, 免費層 300 req/hr）與 `raw_monthly_revenue_twse`（TWSE OpenAPI + MOPS t21sc03; TWSE OpenAPI 無明顯 quota、MOPS 內部有 24h server-side cache）對應到不同 `pop.<seed>` 空表，可各自以不同的 batch limit 進度填充。TWSE 端限流寬，可拉高 `batch_size.json` 的 `financial_month_twse_list` 快速拉齊（初版 4/tick，後續由 `probe_seed_insert_limit` 推升），FinMind 端保持 1/tick 不被拖累。
-- **邊界（rule 13）**：起點 `GREATEST(成立月 1 日, 2010-01-01)`。MOPS t21sc03 靜態頁最早為上市 民國 98/12、上櫃 民國 99/1，更早月份 404（2026-11 實測）。`incorporation_date IS NOT NULL` 為技術性 guard。
+- **邊界（rule 13）**：起點 `GREATEST(成立月 10 日, 2010-01-10)`。MOPS t21sc03 靜態頁最早為上市 民國 98/12、上櫃 民國 99/1，更早月份 404（2026-11 實測）。`incorporation_date IS NOT NULL` 為技術性 guard。
+- **Point-in-time（2026-11-25，verify_questions I002）**：取樣日 = 每月 10 日（上月營收的法定公告期限，`app/pit.py`）。endpoint 只回 as_of 當天已到期限的月份，所以每列恰好對應「上個月」，回測不會看到尚未公告的營收；舊版以每月 1 日取樣，會回傳 9 天後才公告的上月營收（Q002 C3 36/36 違規）。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `company_basic_info_list.stk_code` |
-| `month_start_date` | DATE | 從 `GREATEST(成立月, 2010-01)` 開始、每月 1 日 generate 一列,直到 CURRENT_DATE | `generate_series(...)` |
+| `as_of_date` | DATE | 從 `GREATEST(成立月, 2010-01)` 開始、每月 10 日 generate 一列，直到 CURRENT_DATE | `generate_series(...)` |
 
 ---
 
 ## raw_monthly_revenue_twse
 
 - **上游 SQL**：[financial_month_twse_list](#financial_month_twse_list)（TWSE 專屬 seed）
-- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/revenue/twse?as_of={month_start_date}`
+- **HTTP API endpoint**：`GET http://host.docker.internal:5002/api/company/{stock_id}/revenue/twse?as_of={as_of_date}`
   - 上游：證交所體系雙來源。「最新一個月」：[TWSE OpenAPI](https://openapi.twse.com.tw/v1/opendata/t187ap05_L) / [TPEx OpenAPI](https://mopsfin.twse.com.tw/opendata/t187ap05_O.csv) t187ap05;「歷史月營收」：[公開資訊觀測站 MOPS](https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_113_5_0.html) t21sc03 採用 IFRSs 後每月營業收入彙總表。
   - 與 FinMind 版同一輸出 spec,提供「官方」源頭供審計溯源,免 token、免限流。
 - 設計理念（規則 20）：與 [raw_monthly_revenue](#raw_monthly_revenue) 分流爬取，各自對應獨立 `pop.<seed>` 空表。本 raw 可以拉高 batch_size 快速拉齊，不受 FinMind 300 req/hr 拖累。
@@ -1040,7 +1046,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `financial_month_twse_list.stk_code` |
 | `revenue` | JSONB | `/revenue/twse` endpoint 整包 JSON（結構與 raw_monthly_revenue 一致） | `custom.http_get_content(url)` |
-| `as_of` | DATE | 本筆對應的查詢基準日（即 `month_start_date`） | `financial_month_twse_list.month_start_date` |
+| `as_of` | DATE | 本筆對應的查詢基準日（即 `as_of_date`，每月 10 日） | `financial_month_twse_list.as_of_date` |
 
 ---
 
@@ -1056,7 +1062,9 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 | `stk_code` | TEXT | 股票代號 | `raw_monthly_revenue_twse.stk_code` |
 | `as_of` | DATE | 本筆指標的查詢基準日 | `revenue.as_of` |
 | `stock_id` | TEXT | 股票代號（API 規範格式） | `revenue.stock_id` |
-| `latest_month_label` | TEXT | 最近一個月的年/月標籤（例 `2026/04`） | `revenue.latest_month_label` |
+| `latest_month_label` | TEXT | as_of 當天已公告的最近一個月的年/月標籤（例 `2026/04`） | `revenue.latest_month_label` |
+| `data_date` | DATE | 該營收月份的月底 | `revenue.data_date` |
+| `available_date` | DATE | 該月營收的法定公告期限（次月 10 日），一定 ≤ `as_of`（I002） | `revenue.available_date` |
 | `latest_month_value` | NUMERIC | 最近一個月營收（新台幣元） | `revenue.latest_month_value` |
 | `latest_month_yoy_pct` | NUMERIC | 該月年增率 (%) | `revenue.latest_month_yoy_pct` |
 | `ttm_value` | NUMERIC | 最近 12 個完整月份營收加總（TTM） | `revenue.ttm_value` |

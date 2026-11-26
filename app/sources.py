@@ -10,8 +10,9 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 import httpx
@@ -163,6 +164,52 @@ def _classify_http_exc(exc: Exception, url: str) -> tuple[Optional[int], str, bo
     if body_preview:
         msg = f"{msg}: {body_preview}"
     return status, msg, is_rate_limited
+
+
+# ---- TWSE / TPEx per-day payload: data, "no data", or failure (I010) ----
+# Per-day adapters cache an empty payload as "non-trading day". Only an explicit
+# no-data answer may be cached that way; anything else (throttle / block / error
+# JSON, or a TPEx table for a different date) is an upstream failure. Caching those
+# turned 329 trading days of T86 and 751 of BWIBBU_d into permanent holes.
+TWSE_NO_DATA_STAT = "很抱歉，沒有符合條件的資料"
+
+
+def twse_payload_state(data: Any) -> str:
+    """`ok` (stat OK), `no_data` (TWSE's explicit no-data stat) or `error`."""
+    if not isinstance(data, dict):
+        return "error"
+    stat = str(data.get("stat") or "").strip()
+    if stat.upper() == "OK":
+        return "ok"
+    if stat.startswith(TWSE_NO_DATA_STAT):
+        return "no_data"
+    return "error"
+
+
+def tpex_payload_state(data: Any, d: date) -> str:
+    """`ok` or `error` for a TPEx `www` JSON payload requested for date `d`.
+
+    TPEx answers a holiday with stat `ok` and empty tables, so `ok` covers both
+    trading and non-trading days. The payload must be for `d`: out-of-range dates
+    on some TPEx endpoints silently return today's table instead.
+    """
+    if not isinstance(data, dict) or str(data.get("stat") or "").strip().lower() != "ok":
+        return "error"
+    want = {d.strftime("%Y%m%d"), f"{d.year - 1911}{d:%m%d}"}
+    found = [data.get("date")] + [t.get("date") for t in data.get("tables") or [] if isinstance(t, dict)]
+    found = [re.sub(r"\D", "", str(v)) for v in found if v]
+    if found and not any(v in want for v in found):
+        return "error"
+    return "ok"
+
+
+def record_bad_payload(source: str, url: str, data: Any) -> None:
+    """Record an upstream answer that is neither data nor an explicit "no data"."""
+    stat = data.get("stat") if isinstance(data, dict) else type(data).__name__
+    _record_source_error(SourceError(
+        source=source, url=url, status_code=None,
+        message=f"unexpected payload (stat={str(stat)[:80]!r})", is_rate_limited=True,
+    ))
 
 # ---- 端點 ----
 TWSE_BASIC_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
@@ -479,7 +526,9 @@ def _market_code_to_kind(market_code: str) -> str:
 def _parse_mops_revenue_html(html_text: str) -> dict[str, dict]:
     """解析 MOPS t21sc03 整張頁面 → {公司代號: {欄位...}}。
 
-    頁面每個產業/類別重複包了多個 <table>，data row 共 11 欄、首欄為 4 位數字公司代號。
+    頁面每個產業/類別重複包了多個 <table>，data row 首欄為 4 位數字公司代號。
+    欄數：2013 年起 11 欄（含「備註」）；2012 年以前（IFRS 前）10 欄、沒有「備註」
+    （2026-11-25 實測；舊版只收 11 欄，2010-01～2012-12 的頁面全部解析成空）。
     """
     from bs4 import BeautifulSoup
 
@@ -488,7 +537,7 @@ def _parse_mops_revenue_html(html_text: str) -> dict[str, dict]:
     for tbl in soup.find_all("table"):
         for tr in tbl.find_all("tr"):
             cells = tr.find_all(["td", "th"])
-            if len(cells) != 11:
+            if len(cells) not in (10, 11):
                 continue
             vals = [c.get_text(strip=True) for c in cells]
             code = vals[0]
@@ -509,7 +558,7 @@ def _parse_mops_revenue_html(html_text: str) -> dict[str, dict]:
                 "當月累計營收": vals[7],
                 "去年累計營收": vals[8],
                 "前期比較增減(%)": vals[9],
-                "備註": vals[10],
+                "備註": vals[10] if len(vals) > 10 else "",
             }
     return out
 
@@ -1234,6 +1283,9 @@ async def _get_last_filed_ym(stock_id: str) -> Optional[tuple[int, int]]:
         return _last_filed_cache[stock_id]
 
     raw = await get_product_revenue(stock_id)
+    if raw.get("error"):
+        # 上游失敗（已記 source error）≠「從未申報」：不快取，讓呼叫端回報失敗（I010 同類）
+        raise UpstreamFetchError(raw["error"])
     last: Optional[tuple[int, int]] = None
     if raw.get("found") and raw.get("year") and raw.get("month"):
         try:
@@ -1285,7 +1337,11 @@ async def get_product_revenue_at(stock_id: str, as_of_year: int, as_of_month: in
     }
 
     # 步驟 1：取 last_filed_ym（快取加速）
-    last_filed = await _get_last_filed_ym(stock_id)
+    try:
+        last_filed = await _get_last_filed_ym(stock_id)
+    except UpstreamFetchError as e:
+        out["error"] = str(e)
+        return out          # 不快取：上游恢復後重查
 
     # 步驟 2：決定回溯起點與上限步數
     as_of_t = (as_of_year, as_of_month)
@@ -1361,7 +1417,9 @@ async def get_product_revenue_at(stock_id: str, as_of_year: int, as_of_month: in
                 out["notes"] = parsed.get("notes") or (
                     f"找到該公司於民國 {form_fields.get('year')}/{month_v} 申報，但解析明細表失敗。"
                 )
-                _product_revenue_at_cache[cache_key] = out
+                # 申報名單有該公司、明細卻解析不到 = MOPS 回了錯誤頁 / WAF 頁：記 source error、不快取
+                # （2026-11-26 重建時 7 列；重打即成功）
+                record_bad_payload("MOPS", MOPS_T05ST08_URL, {"stat": f"t05st08 detail unparsed {stock_id} {ym}"})
                 return out
 
             out.update(parsed)

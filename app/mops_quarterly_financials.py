@@ -11,6 +11,7 @@ from typing import Any, Optional
 import httpx
 from bs4 import BeautifulSoup
 
+from . import pit
 from .sources import (
     SourceError,
     UpstreamBudgetExceeded,
@@ -22,7 +23,10 @@ from .sources import (
 
 MOPS_OPERATING_URL = "https://mopsov.twse.com.tw/mops/web/ajax_t163sb06"
 MOPS_INCOME_URL = "https://mopsov.twse.com.tw/mops/web/ajax_t163sb04"
-QUARTERLY_MIN_DATE = date(2013, 3, 31)
+# Earliest quarter MOPS t163sb06 serves (IFRS 2013 Q1), and the earliest as_of on which any
+# quarter was public: that quarter's filing deadline (point-in-time rule, app/pit.py).
+QUARTERLY_MIN_PERIOD = date(2013, 3, 31)
+QUARTERLY_MIN_DATE = pit.quarterly_available_date(2013, 1)
 CACHE_ROOT = Path("/tmp/valuation_cache/mops_quarterly")
 # Quarters examined per request (the requested one + 3 earlier). Each step
 # costs two full-market MOPS downloads; a year covers the filing lag of any
@@ -105,33 +109,23 @@ def parse_income_statement_html(html: str) -> dict[str, dict[str, Any]]:
 
 
 def _quarter_end(year: int, quarter: int) -> date:
-    month = quarter * 3
-    next_month = date(year + (month == 12), 1 if month == 12 else month + 1, 1)
-    return next_month.fromordinal(next_month.toordinal() - 1)
+    return pit.quarter_end(year, quarter)
 
 
 def _period_for(as_of: date) -> tuple[int, int, date]:
+    """(民國年, 季, 季末日) of the latest quarter already public on `as_of`.
+
+    Uses the general-company deadlines; `_scan_quarters` steps back one more quarter
+    for a financial company whose longer Q2 deadline has not passed yet.
+    """
     if as_of < QUARTERLY_MIN_DATE:
         raise ValueError(f"as_of must be >= {QUARTERLY_MIN_DATE.isoformat()}")
-    quarter = (as_of.month - 1) // 3 + 1
-    year = as_of.year
-    period_end = _quarter_end(year, quarter)
-    if period_end > as_of:
-        quarter -= 1
-        if quarter == 0:
-            year -= 1
-            quarter = 4
-        period_end = _quarter_end(year, quarter)
-    return year - 1911, quarter, period_end
+    year, quarter = pit.latest_available_quarter(as_of, financial=False)
+    return year - 1911, quarter, _quarter_end(year, quarter)
 
 
 def _previous_period(year_tw: int, quarter: int) -> tuple[int, int, date]:
-    year = year_tw + 1911
-    if quarter == 1:
-        year -= 1
-        quarter = 4
-    else:
-        quarter -= 1
+    year, quarter = pit.previous_quarter(year_tw + 1911, quarter)
     return year - 1911, quarter, _quarter_end(year, quarter)
 
 
@@ -251,7 +245,7 @@ async def _scan_quarters(stock: str, as_of: date) -> dict[str, Any]:
     basic_market = (basic.get(stock) or {}).get("market")
     markets = ["sii" if basic_market == "上市" else "otc"] if basic_market in {"上市", "上櫃"} else ["sii", "otc"]
     for _ in range(MAX_LOOKBACK_QUARTERS):
-        if period_end < QUARTERLY_MIN_DATE:
+        if period_end < QUARTERLY_MIN_PERIOD:
             break
         for market in markets:
             operating, income = await asyncio.gather(_fetch("operating", market, year_tw, quarter), _fetch("income", market, year_tw, quarter))
@@ -260,6 +254,11 @@ async def _scan_quarters(stock: str, as_of: date) -> dict[str, Any]:
             ytd = _ytd_row(stock, operating, income)
             if ytd is None:
                 continue
+            # Financial companies are absent from t163sb06 (I009) and have a later Q2 deadline.
+            financial = stock not in operating
+            available = pit.quarterly_available_date(period_end.year, quarter, financial)
+            if available > as_of:
+                break  # filed in MOPS now, but not yet public on as_of: try the previous quarter
             if quarter == 1:
                 data = dict(ytd)
             else:
@@ -271,6 +270,7 @@ async def _scan_quarters(stock: str, as_of: date) -> dict[str, Any]:
             return {
                 "found": True, "stock_id": stock, "company_name": ytd.get("company_name"),
                 "market": market, "as_of": as_of.isoformat(), "data_date": period_end.isoformat(),
+                "available_date": available.isoformat(),
                 "fiscal_year": period_end.year, "quarter": quarter, "data": data, "data_ytd": ytd,
                 "source": "MOPS t163sb06 + t163sb04",
             }
@@ -279,7 +279,8 @@ async def _scan_quarters(stock: str, as_of: date) -> dict[str, Any]:
 
 
 async def get_quarterly_financials(stock_id: str, as_of: date) -> dict[str, Any]:
-    """Most recent filed quarter at or before `as_of`, looking back at most
+    """Most recent quarter already public on `as_of` (filing deadline <= as_of, see
+    app/pit.py), looking back at most
     `MAX_LOOKBACK_QUARTERS` quarters, within `UPSTREAM_TOTAL_BUDGET_S`.
 
     `reason` on a miss: `not_found` (no filing in the lookback window),

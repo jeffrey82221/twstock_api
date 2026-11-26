@@ -3,7 +3,7 @@ id: I007
 title: 法人買賣超的取樣日遇假日沒有回溯到前一個交易日
 severity: S2
 layer: L1
-status: fixing
+status: closed
 pop_tables: [raw_institutional_net_buy_sell, institutional_net_buy_sell]
 seeds: [institutional_monthly_list]
 found_by: [Q004]
@@ -51,3 +51,7 @@ WHERE stk_code = '2330' AND as_of >= DATE '2025-12-05' ORDER BY as_of
   2. 回溯為這些日期增加 TWSE 請求，TWSE 開始回封鎖頁（`contactPhone` HTML、T86 直接請求 307），已停止重爬。
 - 現況：288 列已重新 insert（多數仍空，等 I010）、160 列在 hidden 中待爬（原本就是空資料，沒有遺失有效資料）。Q004 C1 違規 9 → 8。
 - 下一步：等 TWSE 解封 → 先修 I010 → 清掉錯誤的空快取 → 再依 §10.2 重爬這 448 列。
+
+（2026-11-26，重建後）
+- 指令 5 中斷時尚未重爬的列（不在備份中）以 `crawl_insert_filtered` 補 8 列（2330／2317／6488 的 2026-04-05、07-05、09-05，全為週末取樣日）→ 全部回溯到前一個交易日。
+- Q004 C1 PASS。

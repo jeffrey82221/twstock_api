@@ -113,7 +113,13 @@ async def _fetch_window(stock_id: str, start: date, end: date) -> list[dict[str,
             response = await client.get(SBL_URL, params=params)
             response.raise_for_status()
             payload = response.json()
-        rows = parse_sbl_payload(payload) if payload.get("stat") == "OK" else []
+        if payload.get("stat") != "OK":
+            # 無事件的視窗也回 stat OK（空 data）；其他 stat 是限流 / 錯誤，不可快取成「無還券」（I010）
+            raise UpstreamFetchError(f"unexpected SBL stat {str(payload.get('stat'))[:80]!r}")
+        rows = parse_sbl_payload(payload)
+        if payload.get("data") and not rows:
+            # 有資料卻解析不出來 = 欄位名稱變了，不可快取成「無還券」（I010）
+            raise UpstreamFetchError(f"unparsed SBL layout fields={payload.get('fields')}")
     except Exception as exc:
         url = str(response.url) if "response" in locals() else SBL_URL
         status, message, rate_limited = _classify_http_exc(exc, url)

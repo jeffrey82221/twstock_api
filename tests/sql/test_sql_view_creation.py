@@ -70,11 +70,11 @@ def test_foreign_ownership_monthly_samples_respect_supported_date(pipeline):
     try:
         pipeline._db_tool.execute_query(
             f"CREATE TABLE {schema}.company_basic_info_list "
-            "(stk_code TEXT, listing_date DATE);"
+            "(stk_code TEXT, listing_date DATE, market TEXT);"
         )
         pipeline._db_tool.execute_query(
             f"INSERT INTO {schema}.company_basic_info_list "
-            "VALUES ('TEST', DATE '2000-01-01');"
+            "VALUES ('TEST', DATE '2000-01-01', '上市'), ('OTC', DATE '2000-01-01', '上櫃');"
         )
         pipeline._db_tool.execute_query(
             pipeline._get_view_create_sql(
@@ -93,5 +93,10 @@ def test_foreign_ownership_monthly_samples_respect_supported_date(pipeline):
             "2004-02-11",
             "2004-03-05",
         ]
+        # I006: OTC stocks use TPEx qfii, which starts 2007-05-02
+        otc = pipeline._db_tool.fetch_all(
+            f"SELECT min(month_start_date) FROM {schema}.foreign_ownership_monthly_list WHERE stk_code = 'OTC';"
+        )
+        assert otc[0][0].isoformat() == "2007-05-05"
     finally:
         pipeline._db_tool.execute_query(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")

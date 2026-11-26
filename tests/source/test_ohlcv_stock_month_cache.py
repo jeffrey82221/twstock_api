@@ -96,3 +96,29 @@ def test_cache_is_per_stock(fake_http):
     _run(ohlcv._fetch_twse_stock_day("2330", date(2024, 1, 1)))
     _run(ohlcv._fetch_twse_stock_day("2317", date(2024, 1, 1)))
     assert len(calls) == 2
+
+
+def test_throttle_answer_raises_instead_of_empty_month(fake_http):
+    """2026-11-26 rebuild: TWSE failures returned [] -> /api/ohlcv 200 with rows=[] -> 454 months
+    frozen empty in pop. A failure must surface (route answers 502)."""
+    from app.sources import UpstreamFetchError
+
+    calls, responses = fake_http
+    responses["STOCK_DAY"] = {"stat": "查詢過於頻繁"}
+    with pytest.raises(UpstreamFetchError):
+        _run(ohlcv._fetch_twse_stock_day("2330", date(2020, 3, 1)))
+    responses["tradingStock"] = {"stat": "error"}
+    with pytest.raises(UpstreamFetchError):
+        _run(ohlcv._fetch_tpex_trading_stock("5483", date(2020, 3, 1)))
+
+
+def test_get_ohlcv_reports_upstream_error(fake_http, monkeypatch):
+    calls, responses = fake_http
+    responses["STOCK_DAY"] = {"stat": "查詢過於頻繁"}
+
+    async def fake_market(code):
+        return "上市"
+
+    monkeypatch.setattr(ohlcv, "_resolve_market", fake_market)
+    out = _run(ohlcv.get_ohlcv("2330", date(2020, 3, 1), date(2020, 3, 31)))
+    assert out["found"] is False and out["reason"] == "upstream_error" and out["rows"] == []

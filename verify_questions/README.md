@@ -81,6 +81,7 @@ verify_questions/
 ├── issues/                 # 資料品質問題，一個根因一檔
 │   └── I001-sbl-history-pre2015-404.md
 ├── checks/                 # 可重用的斷言模板（Jinja 參數，同 db/poc 的 {{ schema }} 慣例）
+├── retry_failed.py         # 重爬被凍結的上游失敗列（§10.5）
 │   └── ohlcv_daily/ohlc_consistency.sql
 └── snapshots/              # 每次盤點的 MCP 原始輸出
     └── 2026-11-24.json
@@ -571,11 +572,40 @@ seed 列一旦 insert，下游 IMMV 的那一列就固定了，修好 API 後舊
 
 ### 10.4 護欄
 
-- 不 `DROP SCHEMA pop`、不 truncate seed 表；只刪 issue 中列舉的列。
+- 不 `DROP SCHEMA pop`、不 truncate seed 表；只刪 issue 中列舉的列。例外：使用者明確要求整個資料庫重建時，照 §10.6 先備份再重建。
 - 所有寫入 tool 先 dry run，並把 dry run 的數字寫進 issue。
 - 程式修改在 feature branch 上進行。跑完測試後回報 diff 與測試輸出，**等使用者確認再 commit**。
 - 一個 issue 對應一個根因與一個修復範圍。修復時順手發現的其他問題另開 issue。
 - 不為了讓斷言通過而放寬斷言（見 §1）。
+
+### 10.5 上游失敗被凍結：`retry_failed.py`
+
+大量爬取時上游常會中途失敗（TWSE 封鎖頁、FinMind 配額／封 IP、MOPS 逾時）。API 回 5xx 時 raw 存成 NULL；回 200 但上游某次呼叫失敗時，回應帶 `source_errors`。兩種都會被凍結在 pop，**不會自己重試**。
+
+```bash
+python verify_questions/retry_failed.py                       # dry run：每個 raw view 的失敗列數
+python verify_questions/retry_failed.py raw_sbl_history --apply --batch 5 --pause 2
+python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --include-not-found   # 修好「誤判無資料」的 adapter 之後
+```
+
+- 刪除走 `pop_maintenance.delete_seed_rows`（同 `crawl_delete_rows` 的 pin + 1:1 驗證），再從 `hidden.<seed>` 把同一批 key insert 回去。
+- NULL 也可能是正當的 404（例：該年度沒有年報）。重試後仍是 NULL 的列，查 `job_control.http_log` 的 `status_code`：404 就是真的沒資料，不用再重試。
+- 上游還在封鎖時重試只會再凍結一次：先 `curl` 確認上游恢復；FinMind 回 `ip banned` 時要等 `retry_after` 秒數過去。
+- 每次大量爬取（指令 3、§10.6 重建）之後都跑一次 dry run，數字記進當次 run 紀錄。
+- 刪除被 rollback（`pg_ivm recomputed a response that differs`）代表 raw 與正規化 IMMV 當初拿到不同回應（I011）。改成依序重建該 seed 的兩張 IMMV：先 `SELECT pgivm.refresh_immv('pop.raw_<x>', true)`，再 `pop.<x>`。會對該 seed 每列重打一次 API，但第二次全部命中 `job_control.http_cache`（TTL 1 小時），兩表必定一致。先 `curl` 確認上游正常；若 adapter 剛改過，先刪掉該 endpoint 在 `http_cache` 的舊快取。
+
+### 10.6 整個資料庫重建（使用者要求時）
+
+依 repo README 的步驟 (4)(8)：`Pipeline().create_views()` 重建 poc，`Pipeline().create_mat_views(recreate=True)` 重建 pop 與 hidden。重建會清掉所有 seed 列，先備份、重建後還原涵蓋範圍：
+
+1. 備份：`pg_dump -n pop -n hidden -Fc` 與 seed 表 data-only dump 放 `data/backup/`（已 gitignore），並把每張 `pop.*_list` 複製到 DB 內的 `seed_backup_<日期>` schema（重建不會動到）。
+2. 確認 API 是新版、上游可用（TWSE／FinMind 沒有封鎖）。快取中毒的磁碟快取先清掉（I010）。
+3. 重建後 `pop_check_definitions` 應該沒有任何 drift。
+4. 還原：依 seed 依賴順序，把 `hidden.<seed>` 中 key 與備份相同的列分批 insert（下游 IMMV 會用新版 API 重爬）；seed 的 key 規格有改時要對應（2026-11-25 例：月營收 1 日 → 10 日、季報季末 → 公告期限）。FinMind seed 放最後。
+5. 跑 §10.5 的 `retry_failed.py`，把還原過程中的上游失敗重爬。
+6. 重跑所有問題（指令 3 的斷言部分）與盤點（指令 1），記進 LEDGER。
+
+2026-11-25 的實際重建紀錄見 LEDGER「重爬紀錄」與 I002／I010。
 
 ## 11. AI 指令
 

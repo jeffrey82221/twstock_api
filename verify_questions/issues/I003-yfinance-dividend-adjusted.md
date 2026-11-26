@@ -3,7 +3,7 @@ id: I003
 title: dividend_yfinance 的現金股利是配股還原後的值，與實際配發金額不一致
 severity: S1
 layer: L1（部分 L0）
-status: verifying
+status: closed
 pop_tables: [dividend_yfinance, raw_dividend_yfinance, raw_dividend_history_yfinance]
 seeds: [dividend_event_yfinance_list]
 found_by: [Q005]
@@ -54,3 +54,9 @@ Yahoo 的 `Ticker.dividends` 是依之後的配股（記為 split）與其他資
 - 受影響範圍：`dividend_event_yfinance_list` 296 檔中 126 檔在某些事件之後有 split；刪除並重爬這些檔「最後一次 split 之前」的事件 163 列（51 秒、0 錯誤、每次刪除都通過 1:1 驗證）。
 - 斷言：Q005 C1 違規 3 → 2。剩下的 2 列都是 2882（比值 1.0157、Yahoo 沒有 split 紀錄）＝ **L0**，無法在本系統修正。
 - **待使用者決定**：接受 L0 殘留（把 2882 寫進 Q005「已知限制」並讓 C1 排除沒有 split 紀錄的調整），或維持 FAIL 作為「yfinance 股利不可當實際配發金額」的提醒。
+
+## 使用者決定（2026-11-25）
+
+**維持 FAIL** 作為「yfinance 股利不可當實際配發金額」的提醒。L1 部分（配股還原）已修好；2882 的 1.0157 倍差異是 Yahoo 本身的資料（L0），本系統不再處理。
+- 本 issue 關閉；Q005 C1 維持 FAIL 是**刻意的**，回歸時 C1 的 2882 違規不算退化，其他股票出現新的違規才算。
+- 決策用途的實際配發金額一律以 FinMind（`pop.dividend`）為準。

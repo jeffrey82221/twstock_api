@@ -42,8 +42,12 @@ from .sources import (
     SourceError,
     _classify_http_exc,
     _http_get,
+    UpstreamFetchError,
     _record_source_error,
     load_basic_table,
+    record_bad_payload,
+    tpex_payload_state,
+    twse_payload_state,
 )
 
 logger = logging.getLogger("twstock_api.ohlcv")
@@ -166,9 +170,16 @@ async def _fetch_twse_stock_day(stk_code: str, month_start: date) -> list[dict]:
     url = f"{TWSE_STOCK_DAY_URL}?response=json&date={month_start.strftime('%Y%m%d')}&stockNo={stk_code}"
     try:
         data = await _http_get(url, timeout=20.0, retries=2, source_name="TWSE")
-    except Exception:
-        return []
-    if not isinstance(data, dict) or data.get("stat") != "OK":
+    except Exception as exc:
+        # 不回 []：空月會被 route 以 200 回傳並凍結在 pop（2026-11-26 重建時 454 個空月，I010 同類）
+        raise UpstreamFetchError(f"TWSE STOCK_DAY request failed: {exc}") from exc
+    state = twse_payload_state(data)
+    if state == "error" and str((data or {}).get("stat") or "").startswith("查詢日期小於"):
+        state = "no_data"           # STOCK_DAY 下限（2010-01-04）以前的月份：明確的無資料回應
+    if state == "error":
+        record_bad_payload("TWSE", url, data)
+        raise UpstreamFetchError(f"TWSE STOCK_DAY unexpected payload for {stk_code} {month_start:%Y-%m}")
+    if state == "no_data":          # 該月無交易（尚未上市 / 已下市 / 停止交易）
         return []
     rows = _normalize_twse_stock_day_rows(data.get("data") or [], stk_code)
     if cacheable:
@@ -242,9 +253,15 @@ async def _fetch_twse_mi_index_day(d: date) -> dict[str, dict]:
         ))
         return {}
 
-    parsed = _parse_twse_mi_index_csv(text, d)
-    # 非交易日或 payload 缺失 → parsed=={} 也 cache（避免每次重打），只是不會有內容
-    _cache_write("twse", d, parsed)
+    if not text.strip():
+        parsed: dict[str, dict] = {}       # 非交易日：TWSE 回空 body
+    else:
+        parsed = _parse_twse_mi_index_csv(text, d)
+        if not parsed:                     # 有內容卻解析不出個股區塊 = 封鎖頁 / 錯誤頁（I010）
+            record_bad_payload("TWSE", url, {"stat": text[:80]})
+            return {}
+    if parsed or d < date.today():
+        _cache_write("twse", d, parsed)
     return parsed
 
 
@@ -320,10 +337,11 @@ async def _fetch_tpex_trading_stock(stk_code: str, month_start: date) -> list[di
     )
     try:
         data = await _http_get(url, timeout=20.0, retries=2, source_name="TPEx")
-    except Exception:
-        return []
-    if not isinstance(data, dict) or data.get("stat", "").lower() != "ok":
-        return []
+    except Exception as exc:
+        raise UpstreamFetchError(f"TPEx tradingStock request failed: {exc}") from exc
+    if not isinstance(data, dict) or str(data.get("stat") or "").lower() != "ok":
+        record_bad_payload("TPEx", url, data)
+        raise UpstreamFetchError(f"TPEx tradingStock unexpected payload for {stk_code} {month_start:%Y-%m}")
     tables = data.get("tables") or []
     rows = tables[0].get("data") if tables else []
     out = _normalize_tpex_trading_stock_rows(rows or [], stk_code)
@@ -369,7 +387,12 @@ TPEX_DAILY_QUOTES_URL = "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuo
 
 
 async def _fetch_tpex_daily_quotes(d: date) -> dict[str, dict]:
-    """回傳 stk_code -> row dict（該日全上櫃股票）。"""
+    """回傳 stk_code -> row dict（該日全上櫃股票）；上游失敗回 {}。"""
+    return await fetch_tpex_daily_quotes_checked(d) or {}
+
+
+async def fetch_tpex_daily_quotes_checked(d: date) -> Optional[dict[str, dict]]:
+    """同 `_fetch_tpex_daily_quotes`，但上游失敗回 `None`（不 cache），與非交易日的 `{}` 區分。"""
     cached = _cache_read("tpex", d)
     if cached is not None:
         return cached
@@ -381,14 +404,14 @@ async def _fetch_tpex_daily_quotes(d: date) -> dict[str, dict]:
     try:
         data = await _http_get(url, timeout=30.0, retries=2, source_name="TPEx")
     except Exception:
-        return {}
-    if not isinstance(data, dict) or data.get("stat", "").lower() != "ok":
-        # 非交易日仍 cache 空 dict 避免重打
-        _cache_write("tpex", d, {})
-        return {}
+        return None
+    if tpex_payload_state(data, d) == "error":
+        record_bad_payload("TPEx", url, data)   # 不 cache：限流 / 錯誤不是非交易日（I010）
+        return None
 
-    parsed = _parse_tpex_daily_quotes(data, d)
-    _cache_write("tpex", d, parsed)
+    parsed = _parse_tpex_daily_quotes(data, d)  # 非交易日：stat ok + 空表 → {}
+    if parsed or d < date.today():
+        _cache_write("tpex", d, parsed)
     return parsed
 
 
@@ -485,10 +508,18 @@ async def get_ohlcv(
     if market == "上市" and from_date < TWSE_STOCK_DAY_MIN_DATE:
         strategy = "per_day_market"
 
-    if strategy == "per_day_market":
-        rows = await _collect_per_day_market(stk_code, market, from_date, to_date)
-    else:
-        rows = await _collect_per_stock_month(stk_code, market, from_date, to_date)
+    try:
+        if strategy == "per_day_market":
+            rows = await _collect_per_day_market(stk_code, market, from_date, to_date)
+        else:
+            rows = await _collect_per_stock_month(stk_code, market, from_date, to_date)
+    except UpstreamFetchError:
+        # route 回 502：不被 DB http_cache 快取，也不會以「該月無交易」凍結進 pop
+        return {
+            "found": False, "stk_code": stk_code, "market": market,
+            "from_date": from_date.isoformat(), "to_date": to_date.isoformat(),
+            "strategy": strategy, "rows": [], "source": None, "reason": "upstream_error",
+        }
 
     rows.sort(key=lambda x: x["trade_date"])
     return {

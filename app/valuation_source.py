@@ -61,8 +61,12 @@ import httpx
 from .sources import (
     SourceError,
     _classify_http_exc,
+    _http_get,
     _record_source_error,
     load_basic_table,
+    record_bad_payload,
+    tpex_payload_state,
+    twse_payload_state,
 )
 
 logger = logging.getLogger("twstock_api.valuation")
@@ -75,6 +79,13 @@ VALUATION_MIN_DATE = date(2005, 9, 2)
 
 TWSE_BWIBBU_URL = "https://www.twse.com.tw/exchangeReport/BWIBBU_d"
 
+# 上櫃（I005）：TPEx 上櫃股票個股本益比、殖利率及股價淨值比（每日全上櫃 payload）。
+# 欄位：[代號, 名稱, 本益比, 每股股利, 股利年度, 殖利率(%), 股價淨值比]，沒有收盤價；
+# 收盤價取同日 TPEx dailyQuotes（與 /api/ohlcv 共用磁碟 cache）。
+# 實測最早有資料日 2007-01-02（更早的日期回 stat ok + 空表）。
+TPEX_PE_URL = "https://www.tpex.org.tw/www/zh-tw/afterTrading/peQryDate"
+TPEX_VALUATION_MIN_DATE = date(2007, 1, 2)
+
 # 回溯上限：台股最長連續休市為春節（約 9 天含週末），14 天留足餘裕
 MAX_LOOKBACK_DAYS = 14
 
@@ -83,6 +94,7 @@ _CALCULATION_METHOD = (
     "(shares = paid_in_capital / 10; par-value convention)"
 )
 _SOURCE = "TWSE BWIBBU_d (per-day)"
+_SOURCE_TPEX = "TPEx peQryDate + dailyQuotes (per-day)"
 
 # 台股面額慣例：10 元 / 股（絕大多數上市普通股）
 PAR_VALUE = 10.0
@@ -92,12 +104,12 @@ PAR_VALUE = 10.0
 # 磁碟 cache
 # =============================================================================
 
-def _cache_path(d: date) -> Path:
-    return CACHE_ROOT / "twse" / f"{d.strftime('%Y%m%d')}.json.gz"
+def _cache_path(d: date, market: str = "twse") -> Path:
+    return CACHE_ROOT / market / f"{d.strftime('%Y%m%d')}.json.gz"
 
 
-def _cache_read(d: date) -> Optional[dict]:
-    p = _cache_path(d)
+def _cache_read(d: date, market: str = "twse") -> Optional[dict]:
+    p = _cache_path(d, market)
     if not p.exists():
         return None
     try:
@@ -112,8 +124,8 @@ def _cache_read(d: date) -> Optional[dict]:
         return None
 
 
-def _cache_write(d: date, payload: dict) -> None:
-    p = _cache_path(d)
+def _cache_write(d: date, payload: dict, market: str = "twse") -> None:
+    p = _cache_path(d, market)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(p.suffix + ".tmp")
@@ -148,8 +160,8 @@ def _parse_float(s: Any) -> Optional[float]:
 async def _fetch_twse_bwibbu_day(d: date) -> Optional[dict[str, dict]]:
     """回傳 stk_code -> row dict（該日全上市股票 PER / PBR / 殖利率 / 收盤價）。
 
-    * 非交易日 / 空 payload → `{}`（cache；今天除外，可能只是尚未收盤）
-    * 上游失敗（重試 3 次仍失敗）→ `None`（不 cache），讓呼叫端與「沒資料」區分
+    * 非交易日（TWSE 明確回「沒有符合條件的資料」）→ `{}`（cache；今天除外，可能只是尚未收盤）
+    * 上游失敗（重試 3 次仍失敗、或限流 / 封鎖等其他 stat）→ `None`（不 cache），讓呼叫端與「沒資料」區分（I010）
     """
     cached = _cache_read(d)
     if cached is not None:
@@ -184,14 +196,76 @@ async def _fetch_twse_bwibbu_day(d: date) -> Optional[dict[str, dict]]:
         ))
         return None
 
-    parsed = _parse_bwibbu_payload(data)
+    state = twse_payload_state(data)
+    if state == "error":
+        record_bad_payload("TWSE", url, data)
+        return None
+    parsed = _parse_bwibbu_payload(data) if state == "ok" else {}
+    if state == "ok" and data.get("data") and not parsed:
+        record_bad_payload("TWSE", url, {"stat": f"unparsed layout fields={data.get('fields')}"})
+        return None   # 有資料卻解析不出來 = 版面變了，不可快取成非交易日（I010）
     if parsed or d < date.today():
         _cache_write(d, parsed)
     return parsed
 
 
+async def _fetch_tpex_pe_day(d: date) -> Optional[dict[str, dict]]:
+    """上櫃版 `_fetch_twse_bwibbu_day`：回傳與 `_parse_bwibbu_payload` 相同 row 形狀。
+
+    PE payload 與同日 dailyQuotes（收盤價）合併後才寫 cache；任一上游失敗回 `None`（不 cache）。
+    """
+    if d < TPEX_VALUATION_MIN_DATE:
+        return {}
+    cached = _cache_read(d, "tpex")
+    if cached is not None:
+        return cached
+
+    url = f"{TPEX_PE_URL}?date={d.strftime('%Y/%m/%d')}&response=json"
+    try:
+        data = await _http_get(url, timeout=30.0, retries=2, source_name="TPEx")
+    except Exception:
+        return None
+    if tpex_payload_state(data, d) == "error":
+        record_bad_payload("TPEx", url, data)
+        return None
+    pe_rows = _parse_tpex_pe_payload(data)
+    if pe_rows:
+        from .ohlcv_source import fetch_tpex_daily_quotes_checked
+        quotes = await fetch_tpex_daily_quotes_checked(d)
+        if not quotes:          # None = 失敗；{} = PE 有資料但行情沒有 → 也視為失敗，不凍結
+            return None
+        for code, row in pe_rows.items():
+            row["close_price"] = (quotes.get(code) or {}).get("close")
+    if pe_rows or d < date.today():
+        _cache_write(d, pe_rows, "tpex")
+    return pe_rows
+
+
+def _parse_tpex_pe_payload(data: dict) -> dict[str, dict]:
+    """TPEx peQryDate tables[0] 欄位：[代號, 名稱, 本益比, 每股股利, 股利年度, 殖利率(%), 股價淨值比]。"""
+    tables = data.get("tables") or []
+    rows = (tables[0].get("data") or []) if tables else []
+    out: dict[str, dict] = {}
+    for row in rows:
+        if not row or len(row) < 7:
+            continue
+        code = str(row[0]).strip()
+        if not code:
+            continue
+        out[code] = {
+            "stock_name": str(row[1]).strip(),
+            "close_price": None,
+            "dividend_yield": _parse_float(row[5]),
+            "dividend_year": str(row[4]).strip() or None,
+            "per": _parse_float(row[2]),
+            "pbr": _parse_float(row[6]),
+            "financial_report_period": None,
+        }
+    return out
+
+
 async def _fetch_latest_trading_day(
-    d: date, max_lookback_days: int = MAX_LOOKBACK_DAYS,
+    d: date, max_lookback_days: int = MAX_LOOKBACK_DAYS, market: str = "上市",
 ) -> tuple[Optional[date], Optional[dict[str, dict]]]:
     """從 d 往前找最近一個有資料的交易日。
 
@@ -200,10 +274,13 @@ async def _fetch_latest_trading_day(
       * `(None, {})`：回溯範圍內全部無資料
       * `(None, None)`：途中上游失敗（立即停止，不再往前打）
     """
-    floor = max(VALUATION_MIN_DATE, d - timedelta(days=max(max_lookback_days, 0)))
+    otc = market == "上櫃"
+    min_date = TPEX_VALUATION_MIN_DATE if otc else VALUATION_MIN_DATE
+    fetch = _fetch_tpex_pe_day if otc else _fetch_twse_bwibbu_day
+    floor = max(min_date, d - timedelta(days=max(max_lookback_days, 0)))
     current = d
     while current >= floor:
-        payload = await _fetch_twse_bwibbu_day(current)
+        payload = await fetch(current)
         if payload is None:
             return None, None
         if payload:
@@ -212,32 +289,45 @@ async def _fetch_latest_trading_day(
     return None, {}
 
 
-def _parse_bwibbu_payload(data: dict) -> dict[str, dict]:
-    """解析 BWIBBU_d JSON payload，回 stk_code -> row。
+_BWIBBU_FIELD_NAMES = {
+    "close_price": "收盤價", "dividend_yield": "殖利率(%)", "dividend_year": "股利年度",
+    "per": "本益比", "pbr": "股價淨值比", "financial_report_period": "財報年/季",
+}
+# 沒有 `fields` 時沿用近年 8 欄位置
+_BWIBBU_DEFAULT_FIELDS = ["證券代號", "證券名稱", "收盤價", "殖利率(%)", "股利年度", "本益比", "股價淨值比", "財報年/季"]
 
-    payload row 8 欄（TWSE fields 定義順序）：
-      [0]證券代號 [1]證券名稱 [2]收盤價 [3]殖利率(%)
-      [4]股利年度 [5]本益比 [6]股價淨值比 [7]財報年/季
+
+def _parse_bwibbu_payload(data: dict) -> dict[str, dict]:
+    """解析 BWIBBU_d JSON payload，回 stk_code -> row（依 `fields` 名稱對應欄位）。
+
+    版面（2026-11-25 實測）：
+      * 2017-04 中以前：5 欄 [證券代號, 證券名稱, 本益比, 殖利率(%), 股價淨值比]，沒有收盤價
+        → close_price / dividend_year / financial_report_period 為 None
+      * 之後：8 欄 [證券代號, 證券名稱, 收盤價, 殖利率(%), 股利年度, 本益比, 股價淨值比, 財報年/季]
+    舊版固定要求 8 欄，2017-04 以前的交易日全部解析成空 dict 並被快取成「非交易日」（I010）。
     """
     if not isinstance(data, dict) or (data.get("stat") or "").upper() != "OK":
         return {}
-    rows = data.get("data") or []
+    fields = [str(f).strip() for f in (data.get("fields") or _BWIBBU_DEFAULT_FIELDS)]
+    index = {name: i for i, name in enumerate(fields)}
+    if "本益比" not in index:
+        return {}
     out: dict[str, dict] = {}
-    for row in rows:
-        if not row or len(row) < 8:
+    for row in data.get("data") or []:
+        if not row or len(row) < len(fields):
             continue
         code = str(row[0]).strip()
         if not code:
             continue
-        out[code] = {
-            "stock_name": str(row[1]).strip(),
-            "close_price": _parse_float(row[2]),
-            "dividend_yield": _parse_float(row[3]),
-            "dividend_year": str(row[4]).strip() or None,
-            "per": _parse_float(row[5]),
-            "pbr": _parse_float(row[6]),
-            "financial_report_period": str(row[7]).strip() or None,
-        }
+        item: dict[str, Any] = {"stock_name": str(row[1]).strip()}
+        for key, name in _BWIBBU_FIELD_NAMES.items():
+            i = index.get(name)
+            raw = row[i] if i is not None else None
+            if key in ("dividend_year", "financial_report_period"):
+                item[key] = (str(raw).strip() or None) if raw is not None else None
+            else:
+                item[key] = _parse_float(raw)
+        out[code] = item
     return out
 
 
@@ -472,7 +562,10 @@ async def get_market_valuation_summary(d: date, sample_size: int = 5) -> dict:
 # =============================================================================
 
 async def get_company_valuation(stock_id: str, d: date) -> dict:
-    """取得單一上市公司於 d 當日（或之前最近交易日）的估值單股明細。
+    """取得單一上市 / 上櫃公司於 d 當日（或之前最近交易日）的估值單股明細。
+
+    市場別取自 `company_basic_info`：上櫃走 TPEx peQryDate + dailyQuotes（2007-01-02 起，I005），
+    其餘走 TWSE BWIBBU_d。回應格式相同，`source` 標示實際來源。
 
     * d 為非交易日 / 尚未收盤 → 回溯最近交易日，`data_date` 標示實際日期
     * 回溯範圍內都沒資料 → `found=False`，`reason="no_market_data"`（endpoint 回 404）
@@ -483,6 +576,8 @@ async def get_company_valuation(stock_id: str, d: date) -> dict:
     * 有完整資料 → `found=True`，`constituent` 含反推後的每股資料 + 估算股數 / 市值
     """
     code = (stock_id or "").strip()
+    basic = await load_basic_table()
+    market = (basic.get(code) or {}).get("market") or "上市"
 
     def _result(found: bool, reason: Optional[str], data_date: Optional[date] = None,
                 constituent: Optional[dict] = None) -> dict:
@@ -493,14 +588,14 @@ async def get_company_valuation(stock_id: str, d: date) -> dict:
             "stock_id": code,
             "reason": reason,
             "calculation_method": _CALCULATION_METHOD,
-            "source": _SOURCE,
+            "source": _SOURCE_TPEX if market == "上櫃" else _SOURCE,
             "constituent": constituent,
         }
 
     if not code:
         return _result(False, "stock_id_not_listed")
 
-    data_date, payload = await _fetch_latest_trading_day(d)
+    data_date, payload = await _fetch_latest_trading_day(d, market=market)
     if payload is None:
         return _result(False, "upstream_error")
     if not payload:
@@ -510,7 +605,6 @@ async def get_company_valuation(stock_id: str, d: date) -> dict:
     if row is None:
         return _result(False, "stock_id_not_listed", data_date)
 
-    basic = await load_basic_table()
     c, reason = build_constituent_row(code, row, basic.get(code))
     if c is None:
         return _result(False, reason, data_date)

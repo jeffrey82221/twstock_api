@@ -72,15 +72,15 @@ FROM e LEFT JOIN pop.institutional_net_buy_sell i ON i.stk_code = e.stk_code AND
 WHERE i.trade_date IS NULL
 ```
 
-### C2 internal — 三大法人合計 = 外資 + 外資自營 + 投信 + 自營商
+### C2 internal — 三大法人合計 = 外資 + 外資自營 + 投信 + 自營商（2017-12-18 前與 TPEx 舊版沒有外資自營欄、外資已含自營 → 以 0 計）
 ```sql
 SELECT stk_code, as_of, total_institutional_net_buy_sell,
-       foreign_investors_net_buy_sell + foreign_dealers_net_buy_sell
+       foreign_investors_net_buy_sell + coalesce(foreign_dealers_net_buy_sell, 0)
          + investment_trust_net_buy_sell + dealers_net_buy_sell AS parts
 FROM pop.institutional_net_buy_sell
 WHERE stk_code IN ('2330','2317','6488')
   AND total_institutional_net_buy_sell IS DISTINCT FROM
-      foreign_investors_net_buy_sell + foreign_dealers_net_buy_sell
+      foreign_investors_net_buy_sell + coalesce(foreign_dealers_net_buy_sell, 0)
         + investment_trust_net_buy_sell + dealers_net_buy_sell
   AND trade_date IS NOT NULL
 ```
@@ -123,3 +123,4 @@ WHERE stk_code IN ('2330','2317','6488') AND as_of >= DATE '2025-12-05'
 | --- | --- | --- | --- |
 | 2026-11-25 | FAIL（C1、C3） | [run](../runs/2026-11-25_Q004.md) | 假日取樣缺；6488 無外資持股 |
 | 2026-11-25 | FAIL（C1、C3） | — | 指令 5 後重跑：C1 違規 9 → 8（I007 重爬中斷，等 I010）；C3 為 I006 |
+| 2026-11-26 | PASS | — | I006 上櫃外資持股、I007／I010 法人重爬完成；C2 舊版欄位以 0 計：5／5 PASS |
