@@ -689,8 +689,8 @@ draft 少於 3 題時執行指令 2 補 3 題。補爬遵守 §8.3。不要執�
 依 verify_questions/README.md 指令 8 提交這次的改動：
 1. 跑該層的必跑測試（至少 `pytest -q` 全綠）。
 2. git commit（訊息以 `robot:` 開頭，寫明 issue 編號、根因、修法、實測數字），然後 git push 到目前的 feature branch。
-3. 找出這個 branch 對 develop 的 PR（`gh pr list --head <branch> --base develop`）；
-   develop 不存在時用這個 branch 現有 PR 的 base。沒有 PR 就開一個（base develop），不要 merge。
+3. 找出這個 branch 對 main 的 PR（`gh pr list --head <branch> --base main`）。
+   沒有 PR 就開一個（base main），不要 merge。
 4. 等這次 push 觸發的 CI 跑完（`gh pr checks <PR> --watch`），確認所有 check 都通過。
 5. 有 check 失敗就補救：用 `gh run view <run-id> --log-failed` 找出原因。
    - 程式或測試造成的（包括測試裡寫死、已和新邏輯不一致的值）：修好 → 回到第 1 步，再 commit、push、等 CI。
