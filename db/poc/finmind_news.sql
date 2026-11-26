@@ -7,7 +7,7 @@
 --   （因 404 時 custom.http_get_content 回 NULL，COALESCE 確保仍安全攤平 0 列）。
 SELECT
     stk_code,
-    custom.parse_iso_date(finmind_news->>'as_of') AS as_of,
+    as_of,  -- seed 日期（rule 7，I004）
     finmind_news->>'stock_id' AS stock_id,
     custom.parse_iso_date(finmind_news->>'data_date') AS data_date,
     custom.parse_iso_date(item->>'date') AS news_date,

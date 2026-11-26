@@ -592,6 +592,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 - NULL 也可能是正當的 404（例：該年度沒有年報）。重試後仍是 NULL 的列，查 `job_control.http_log` 的 `status_code`：404 就是真的沒資料，不用再重試。
 - 上游還在封鎖時重試只會再凍結一次：先 `curl` 確認上游恢復；FinMind 回 `ip banned` 時要等 `retry_after` 秒數過去。
 - 每次大量爬取（指令 3、§10.6 重建）之後都跑一次 dry run，數字記進當次 run 紀錄。
+- **只改了正規化 SQL**（raw 不變）時，不要讓 `update_mat_views` 重打上游：先 `urls = pop_maintenance.pin_seed_responses(conn, '<seed>')`，再 `Pipeline().update_mat_views(['<正規化表>'])`，最後 `pop_maintenance.unpin_responses(conn, urls)`。重建會逐字使用 raw 存的回應，零上游呼叫、兩表一致（I004 第二批實測 8 張、0 次 HTTP）。
 - 刪除被 rollback（`pg_ivm recomputed a response that differs`）代表 raw 與正規化 IMMV 當初拿到不同回應（I011）。改成依序重建該 seed 的兩張 IMMV：先 `SELECT pgivm.refresh_immv('pop.raw_<x>', true)`，再 `pop.<x>`。會對該 seed 每列重打一次 API，但第二次全部命中 `job_control.http_cache`（TTL 1 小時），兩表必定一致。先 `curl` 確認上游正常；若 adapter 剛改過，先刪掉該 endpoint 在 `http_cache` 的舊快取。
 
 ### 10.6 整個資料庫重建（使用者要求時）

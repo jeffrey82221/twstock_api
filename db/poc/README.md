@@ -523,7 +523,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `raw_institutional_net_buy_sell.stk_code` |
-| `as_of` | DATE | 查詢交易日 | `institutional_net_buy_sell.trade_date` |
+| `as_of` | DATE | 查詢基準日（seed 取樣日；回應失敗時仍有值，I004）。實際交易日見 `trade_date` | `raw_institutional_net_buy_sell.as_of` |
 | `market` | TEXT | `上市` / `上櫃` | `institutional_net_buy_sell.market` |
 | `trade_date` | DATE | 明細所屬交易日 | `institutional_net_buy_sell.row.trade_date` |
 | `stock_name` | TEXT | 股票簡稱 | `institutional_net_buy_sell.row.stock_name` |
@@ -568,7 +568,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
 | `valuation_date` | DATE | 查詢日 | `raw_market_valuation_summary.valuation_date` |
-| `as_of` | DATE | endpoint 回傳的查詢日 | `market_valuation_summary.date` |
+| `as_of` | DATE | 查詢日（= seed `valuation_date`，I004） | `raw_market_valuation_summary.valuation_date` |
 | `market_scope` | TEXT | 市場範圍描述 | `market_valuation_summary.market_scope` |
 | `calculation_method` | TEXT | 計算方法標記 | `market_valuation_summary.calculation_method` |
 | `total_market_cap` … `excluded_no_shares` | NUMERIC | `MarketValuationSummary` 其餘 16 個彙總欄位 | `market_valuation_summary.summary.*` |
@@ -665,7 +665,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `raw_finmind_news.stk_code` |
-| `as_of` | DATE | 查詢基準日 | `finmind_news.as_of` |
+| `as_of` | DATE | 查詢基準日（seed 日期，I004） | `raw_finmind_news.as_of` |
 | `stock_id` | TEXT | 股票代號 | `finmind_news.stock_id` |
 | `data_date` | DATE | 實際回傳新聞日期 | `finmind_news.data_date` |
 | `news_date` | DATE | 該則新聞發布日期 | `finmind_news.items[].date` |
@@ -954,7 +954,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `raw_yearly_financials_yfinance.stk_code` |
-| `as_of` | DATE | 本筆指標的查詢基準日 | `financials.as_of` |
+| `as_of` | DATE | 本筆指標的查詢基準日（seed 日期，I004） | `raw_yearly_financials_yfinance.as_of` |
 | `stock_id` | TEXT | 股票代號（API 規範格式） | `financials.stock_id` |
 | `eps_ttm` | NUMERIC | EPS TTM | `financials.eps.ttm` |
 | `latest_quarter_date` | DATE | 最新可得的單季財報日 | `financials.eps.latest_quarter_date` |
@@ -1008,7 +1008,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `raw_monthly_revenue.stk_code` |
-| `as_of` | DATE | 本筆指標的查詢基準日 | `revenue.as_of` |
+| `as_of` | DATE | 本筆指標的查詢基準日（seed 日期，I004） | `raw_monthly_revenue.as_of` |
 | `stock_id` | TEXT | 股票代號（API 規範格式） | `revenue.stock_id` |
 | `latest_month_label` | TEXT | 最近一個月的年/月標籤（例 `2026/04`） | `revenue.latest_month_label` |
 | `latest_month_value` | NUMERIC | 最近一個月營收（新台幣元） | `revenue.latest_month_value` |
@@ -1060,7 +1060,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `raw_monthly_revenue_twse.stk_code` |
-| `as_of` | DATE | 本筆指標的查詢基準日 | `revenue.as_of` |
+| `as_of` | DATE | 本筆指標的查詢基準日（seed 日期，每月 10 日） | `raw_monthly_revenue_twse.as_of` |
 | `stock_id` | TEXT | 股票代號（API 規範格式） | `revenue.stock_id` |
 | `latest_month_label` | TEXT | as_of 當天已公告的最近一個月的年/月標籤（例 `2026/04`） | `revenue.latest_month_label` |
 | `data_date` | DATE | 該營收月份的月底 | `revenue.data_date` |
@@ -1168,7 +1168,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `raw_dividend.stk_code` |
-| `as_of` | DATE | 本筆股利事件的除息日（= raw 表 as_of） | `dividend.as_of` |
+| `as_of` | DATE | 本筆股利事件的除息日（seed 日期，I004） | `raw_dividend.as_of` |
 | `stock_id` | TEXT | 股票代號（API 規範格式） | `dividend.stock_id` |
 | `dividend_year` | TEXT | 股利所屬年度 (FinMind 原始 `year`) | `dividend.dividend.year` |
 | `reference_date` | DATE | 本服務挑選使用的「除息日 ≤ as_of」基準日 | `dividend.dividend.reference_date` |
@@ -1208,7 +1208,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `raw_dividend_yfinance.stk_code` |
-| `as_of` | DATE | 本筆股利事件的除息日 | `dividend.as_of` |
+| `as_of` | DATE | 本筆股利事件的除息日（seed 日期，I004） | `raw_dividend_yfinance.as_of` |
 | `stock_id` | TEXT | 股票代號（API 規範格式） | `dividend.stock_id` |
 | `dividend_year` | TEXT | 股利所屬年度 | `dividend.dividend.year` |
 | `reference_date` | DATE | 「除息日 ≤ as_of」基準日 | `dividend.dividend.reference_date` |
@@ -1302,7 +1302,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
 | `stk_code` | TEXT | 股票代號 | `raw_quarterly_financials_yfinance.stk_code` |
-| `as_of` | DATE | 本筆指標的查詢基準日 | `financials.as_of` |
+| `as_of` | DATE | 本筆指標的查詢基準日（seed 日期，I004） | `raw_quarterly_financials_yfinance.as_of` |
 | `stock_id` | TEXT | 股票代號（API 規範格式） | `financials.stock_id` |
 | `eps_ttm` | NUMERIC | EPS TTM | `financials.eps.ttm` |
 | `latest_quarter_date` | DATE | 最新可得的單季財報日 | `financials.eps.latest_quarter_date` |
