@@ -28,6 +28,24 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 _SQL_BLOCK = re.compile(r"```sql\n(.*?)```", re.DOTALL)
 
+# 斷言標籤 → DAMA 維度（README §7.1）。標題的第一個字是標籤；不在表內的印成「?」，代表要改標籤。
+TAG_DIMENSION = {
+    "completeness": "完整性", "field": "完整性",
+    "uniqueness": "唯一性",
+    "point-in-time": "及時性", "timeliness": "及時性", "freshness": "及時性",
+    "validity": "有效性",
+    "accuracy": "準確性",
+    "internal": "一致性", "cross-source": "一致性", "temporal": "一致性", "unit": "一致性",
+    "precision": "精確性",
+    "availability": "可取得性",
+    "reasonableness": "合理性",
+}
+
+
+def dimension_of(title: str) -> str:
+    tag = title.split()[0] if title.split() else ""
+    return TAG_DIMENSION.get(tag, "?")
+
 
 def _server():
     with contextlib.redirect_stdout(sys.stderr):
@@ -76,7 +94,7 @@ def run_card(card: dict, with_decision: bool = False) -> dict:
         except Exception as e:  # report, keep going
             out["decision_error"] = f"{type(e).__name__}: {e}"
     for c in card["checks"]:
-        r = {"id": c["id"], "title": c["title"]}
+        r = {"id": c["id"], "title": c["title"], "dimension": dimension_of(c["title"])}
         try:
             rows = srv.select(_clean(c["sql"]), limit=200)
             r["violations"] = len(rows)
@@ -124,7 +142,7 @@ def main() -> None:
         for c in res["checks"]:
             extra = f" comparable={c['comparable']}" if "comparable" in c else ""
             detail = c.get("error") or (f"violations={c['violations']}{extra}")
-            print(f"   {c['id']} {c['result']:12s} {detail}  — {c['title']}")
+            print(f"   {c['id']} {c['result']:12s} [{c['dimension']}] {detail}  — {c['title']}")
             if c["result"] == "FAIL":
                 for s in c["sample"][:3]:
                     print("        e.g.", json.dumps(s, ensure_ascii=False, default=str))

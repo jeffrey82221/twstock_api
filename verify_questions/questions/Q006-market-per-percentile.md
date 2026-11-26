@@ -2,13 +2,13 @@
 id: Q006
 title: 上市大盤本益比目前在近 5 年第幾百分位？該不該降低持股？
 strategy: market
-status: draft
+status: passing
 stocks: []
 window: {since: 2021-11-05, until: 2026-11-26}
 pop_tables: [market_valuation_summary, company_valuation, company_basic_info_list]
 crawl: []                    # 出題時（2026-11-26）資料已齊：market_valuation_date_list 2017-05 起 115 個月 pending 0；C4 用的 2330 估值 2021-12 起已在 pop
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -43,16 +43,12 @@ FROM generate_series(DATE '2017-05-05', CURRENT_DATE, INTERVAL '1 month') AS g
 WHERE NOT EXISTS (SELECT 1 FROM pop.market_valuation_summary m WHERE m.valuation_date = g::date)
 ```
 
-### C2 internal — 大盤 PER／PBR／殖利率可由加總欄位互推（誤差 0.5%）
+### C2 field — 每個取樣日的大盤 PER、PBR、殖利率都有值
+原本的 C2 比對 `market_per` 與 `Σ市值 ÷ Σ純益`，但 `market_per` 就是 adapter 用同一組加總算出來的（`app/valuation_source.py`），必定成立（README §7.2）。2026-11-27 改成只檢查欄位有值。
 ```sql
-SELECT valuation_date, market_per, total_market_cap_per_basis / NULLIF(total_net_income, 0) AS per_implied,
-       market_pbr, total_market_cap_pbr_basis / NULLIF(total_book_value, 0) AS pbr_implied,
-       market_dividend_yield_pct, 100 * total_cash_dividend / NULLIF(total_market_cap_yield_basis, 0) AS yield_implied
+SELECT valuation_date, market_per, market_pbr, market_dividend_yield_pct
 FROM pop.market_valuation_summary
-WHERE abs(total_market_cap_per_basis / NULLIF(total_net_income, 0) - market_per) > 0.005 * market_per
-   OR abs(total_market_cap_pbr_basis / NULLIF(total_book_value, 0) - market_pbr) > 0.005 * market_pbr
-   OR abs(100 * total_cash_dividend / NULLIF(total_market_cap_yield_basis, 0) - market_dividend_yield_pct) > 0.005 * market_dividend_yield_pct
-   OR market_per IS NULL OR market_pbr IS NULL OR market_dividend_yield_pct IS NULL
+WHERE market_per IS NULL OR market_pbr IS NULL OR market_dividend_yield_pct IS NULL
 ```
 
 ### C3 validity — 成分股計數自洽、指標在合理範圍
@@ -95,7 +91,9 @@ WHERE data_date > as_of OR data_date < as_of - 12 OR data_date IS NULL
 - 估流通股數 = `paid_in_capital / 10`，`paid_in_capital` 取自**今天**的公司基本資料（`app/main.py` 市場估值說明）。歷史月份的市值因此用今天的股本估算：股本有變動的公司（增資、減資、面額非 10 元的 KY 股）在早年月份的權重會失真。百分位只看大盤 PER 的相對位置，影響有限；C4 只用股本多年未變的 2330。
 - 範圍只有上市（TWSE BWIBBU_d），不含上櫃。
 - C5 容忍 12 天：春節最長休市。
+- **沒有錯值防線**（README §5.2）：大盤 PER、PBR、殖利率都由 adapter 從同一份 BWIBBU 個股資料加總算出，資料庫裡沒有獨立來源可以互證。候選：TWSE 發行量加權股價指數（TAIEX）。本系統的歷史市值用固定股本估算，月與月之間的變化只反映股價，應該跟 TAIEX 的漲跌一致；但要先新增指數 endpoint 與 seed（程式改動，不在指令 7 範圍）。在那之前，run 的維度結論中準確性一律寫「未驗證」。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | PASS 5／5 | [run](../runs/2026-11-27_Q006.md) | 無需補爬；C2 改寫成 field（原本的互推必定成立）；準確性未驗證 |
