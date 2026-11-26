@@ -140,16 +140,22 @@ async def get_financial_statements_yf(stock_id: str, market: Optional[str]) -> l
         return []
 
     if not rows:
-        # 拿不到任何 row：通常代表 ticker 在 Yahoo 上查無，記錄一筆警告但不視為 rate-limit
-        _record_source_error(
-            SourceError(
-                source="yfinance",
-                url=f"yfinance://Ticker/{ticker_sym}/quarterly_financials",
-                status_code=None,
-                message=f"empty quarterly_financials for {ticker_sym}",
+        # 同股利（I014）：有股價、沒財報 = Yahoo 沒收錄（多為新上市公司），是明確答案、可快取；
+        # 連股價都沒有 = 代號無效或暫時失敗，記 source error、不快取。
+        try:
+            has_prices = await asyncio.to_thread(_yf_has_prices_sync, ticker_sym)
+        except Exception:
+            has_prices = False
+        if not has_prices:
+            _record_source_error(
+                SourceError(
+                    source="yfinance",
+                    url=f"yfinance://Ticker/{ticker_sym}/quarterly_financials",
+                    status_code=None,
+                    message=f"empty quarterly_financials and no price history for {ticker_sym}",
+                )
             )
-        )
-        # 仍把空 list 寫入快取，避免短時間重複打
+            return rows
         _yf_cache[cache_key] = rows
         return rows
 
@@ -259,6 +265,14 @@ def _fetch_yfinance_dividends_sync(ticker_sym: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _yf_has_prices_sync(ticker_sym: str) -> bool:
+    """yfinance 最近一個月有沒有股價（用來分辨「無配息」與「代號無效／取數失敗」）。"""
+    import yfinance as yf
+
+    hist = yf.Ticker(ticker_sym).history(period="1mo")
+    return hist is not None and not hist.empty
+
+
 async def get_dividend_yf(
     stock_id: str,
     market: Optional[str],
@@ -297,15 +311,24 @@ async def get_dividend_yf(
             return []
 
         if not rows:
-            _record_source_error(
-                SourceError(
-                    source="yfinance",
-                    url=f"yfinance://Ticker/{ticker_sym}/dividends",
-                    status_code=None,
-                    message=f"empty dividends for {ticker_sym}",
+            # yfinance 遇到網路錯誤／無效代號也是回空、不拋例外，所以「空」要再分辨：
+            # 有股價、沒股利 = 真的沒配過息（或 Yahoo 沒收錄），是明確答案；
+            # 連股價都沒有 = 代號無效或暫時失敗，記 source error、不快取（I010 同類，I014）。
+            try:
+                has_prices = await asyncio.to_thread(_yf_has_prices_sync, ticker_sym)
+            except Exception:
+                has_prices = False
+            if not has_prices:
+                _record_source_error(
+                    SourceError(
+                        source="yfinance",
+                        url=f"yfinance://Ticker/{ticker_sym}/dividends",
+                        status_code=None,
+                        message=f"empty dividends and no price history for {ticker_sym}",
+                    )
                 )
-            )
-        # 全量寫入快取（空 list 也寫入，避免短時間重打）
+                return []
+        # 全量寫入快取（確認無配息的空 list 也寫入，避免短時間重打）
         _yf_dividend_cache[cache_key] = rows
         cached = rows
 

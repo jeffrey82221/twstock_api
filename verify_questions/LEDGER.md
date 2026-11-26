@@ -29,6 +29,7 @@
 | [I011](issues/I011-raw-and-normalized-immv-diverge.md) | S3 | L6 | 上游中途失敗時 raw 與正規化 IMMV 拿到不同回應 | closed（§10.5 refresh 流程） | 2026-11-25 重建 | 2026-11-26 |
 | [I012](issues/I012-finmind-dividend-window-drops-event.md) | S2 | L1 | FinMind 股利以除息日查詢拿到上一次股利 | closed | I011 調查 | 2026-11-26 |
 | [I013](issues/I013-mops-product-revenue-legit-pages-as-failure.md) | S3 | L1 | MOPS 產品營收把營收 0 與外國發行人免申報誤判成上游失敗 | closed | retry_failed 殘留 | 2026-11-26 |
+| [I014](issues/I014-empty-answers-treated-as-failures.md) | S3 | L1 | yfinance 空結果、上櫃零股日、FinMind 限流殘留的誤判 | closed（seed 範圍另議） | 盤點剩餘不可用列 | 2026-11-26 |
 
 ## 覆蓋矩陣（pop 表 × 問題）
 
@@ -64,6 +65,7 @@
 | 2026-11-25 | 86.1（23 個 json 欄位） | `raw_monthly_revenue` 0.0（僅 1 列）、`raw_sbl_history` 40.8、`raw_finmind_news` 72.6 | 指令 3 新開 I001–I008 |
 | 2026-11-25（指令 6 回歸） | 85.9 | `raw_monthly_revenue` 0.0、`raw_sbl_history` 46.5、`raw_finmind_news` 72.6 | 指令 4 開 I009、指令 5 開 I010；關閉 I001、I008、I009。回歸：passing 的 Q003 4／4 PASS。平均略降是因補爬新增了 I005 的上櫃估值 NULL 列 |
 | 2026-11-26（重建＋重試） | 90.9 | `raw_monthly_revenue` 0.0（僅 1 列 FinMind seed）、`raw_finmind_news` 72.6（26 列為 404，無新聞）、`raw_sbl_history` 77.0（85 列為 404） | 開 I011、I012；關閉 I002、I003、I005、I006、I007、I010、I011、I012。Q001–Q004 全 PASS，Q005 只剩刻意保留的 C1 |
+| 2026-11-26（I004、I013、I014 後） | 95.4 | `raw_finmind_news` 72.6（404，無新聞）、`raw_sbl_history` 77.0（404，無借券）、`raw_company_info` 82.3（187 檔興櫃／下市代號） | 開並關閉 I013、I014；I004 關閉。剩下的不可用列都是合法無資料 |
 
 ## 最新盤點發現（2026-11-26，`snapshots/2026-11-26.json`）
 
@@ -100,3 +102,5 @@
 | 2026-11-26 | `institutional_monthly_list` | `refresh_immv` raw → 正規化 | 533 | — | 失敗 11 → 0 | I011 |
 | 2026-11-26 | 8 張正規化 IMMV 的 seed | `pin_seed_responses` → `update_mat_views` → `unpin_responses` | — | 3,586 | 列數不變、NULL 主鍵 0、上游呼叫 0 | I004 |
 | 2026-11-26 | `product_revenue_filer_list` | `retry_failed.py raw_product_revenue --apply --include-not-found` | 2 | 2 | 5206 營收 0 → found；2637 → 免申報（合法無資料） | I013 |
+| 2026-11-26 | `company_list` | `retry_failed.py raw_dividend_history_yfinance --apply`（4587 逾時後另以 reinsert 補回） | 184 | 184 | 上市櫃代號全部可用；剩 154 列為興櫃／下市代號 | I014 |
+| 2026-11-26 | `financial_year_yfinance_list`、`company_valuation_monthly_list`、`financial_month_list` | `retry_failed.py --apply` | 6 | 6 | 6913／7772 → Yahoo 未收錄（found=false）；1264 回溯到有收盤價的交易日；FinMind 月營收可用 | I014 |

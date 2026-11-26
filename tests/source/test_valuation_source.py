@@ -730,6 +730,45 @@ class TestTpexValuation:
         assert c["eps_ttm"] == pytest.approx(453.0 / 20.10)
         assert c["dps"] == pytest.approx(453.0 * 3.53 / 100)
 
+    def test_odd_lot_only_day_walks_back_to_last_close(self, monkeypatch, tmp_path):
+        """1264 德麥 2025-09-05：只有零股成交、收盤「---」→ 往前找有收盤價的交易日。"""
+        import asyncio
+        days = {
+            date(2024, 4, 3): {"6488": {"close_price": None, "per": 20.1, "pbr": 2.8, "dividend_yield": 3.5},
+                               "3105": {"close_price": 90.2, "per": 30.0, "pbr": 2.0, "dividend_yield": 1.0}},
+            date(2024, 4, 2): {"6488": {"close_price": 450.0, "per": 20.0, "pbr": 2.8, "dividend_yield": 3.5}},
+        }
+
+        async def fake_pe_day(d):
+            return days.get(d, {})
+
+        async def fake_basic():
+            return dict(self.BASIC)
+
+        monkeypatch.setattr(vs, "_fetch_tpex_pe_day", fake_pe_day)
+        monkeypatch.setattr(vs, "load_basic_table", fake_basic)
+        out = asyncio.run(vs.get_company_valuation("6488", self.D))
+        assert out["found"] is True and out["data_date"] == "2024-04-02"
+        assert out["constituent"]["close_price"] == 450.0
+
+    def test_no_close_column_does_not_walk_back(self, monkeypatch, tmp_path):
+        """舊版 BWIBBU_d 沒有收盤價欄：不往前找（避免白打 14 天）。"""
+        import asyncio
+        calls = []
+
+        async def fake_twse_day(d):
+            calls.append(d)
+            return {"2330": {"close_price": None, "per": 15.9, "pbr": 3.2, "dividend_yield": 4.9}}
+
+        async def fake_basic():
+            return {"2330": {"market": "上市", "paid_in_capital": 259_000_000_000}}
+
+        monkeypatch.setattr(vs, "_fetch_twse_bwibbu_day", fake_twse_day)
+        monkeypatch.setattr(vs, "load_basic_table", fake_basic)
+        out = asyncio.run(vs.get_company_valuation("2330", date(2016, 6, 6)))
+        assert out["found"] is False and out["reason"] == "no_price"
+        assert calls == [date(2016, 6, 6)]
+
 
 def test_bwibbu_pre_2017_04_layout_is_parsed_by_field_name():
     """I010: before ~2017-04-12 BWIBBU_d has 5 columns in another order and no close price."""
