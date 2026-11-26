@@ -47,6 +47,6 @@ UNION ALL SELECT 'finmind_rev', count(*) FROM pop.raw_monthly_revenue WHERE reve
 - `raw_monthly_revenue`：1 → 0。
 - raw 平均可用率 90.9% → 95.4%，`run_checks --all`：23 PASS，1 FAIL（Q005 C1，刻意保留）。
 
-## 後續（未做）
+## 後續
 
-`company_list` 這個 seed 包含興櫃與下市代號，所以 `raw_company_info`、`raw_dividend_history_yfinance` 等對這些代號的呼叫一定是空的（各約 150–190 列）。要縮小 seed 範圍得改 seed SQL，屬於 rule 18 的「改母體」，留給使用者決定。
+`company_list` 這個 seed 包含興櫃與下市代號，所以 `raw_company_info`、`raw_dividend_history_yfinance` 等對這些代號的呼叫可能是空的。使用者決定只用上市櫃公司後，另開 [I015](I015-company-list-scope-unlisted-codes.md) 處理：yfinance 那條路已改用 `company_basic_info_list`；FinMind 那條路實測有 70 家非上市櫃公司真的有股利歷史，沒有動，待使用者決定。
