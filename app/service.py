@@ -305,10 +305,14 @@ async def query_financials_yfinance(stock_id: str, as_of_str: Optional[str] = No
     fs_rows = await get_financial_statements_yf(stock_id, market)
     qmap = _build_quarter_map(fs_rows)
 
-    eps_ttm, eps_quarters = _ttm_value(qmap, as_of, "EPS")
-    revenue_ttm_fs, _ = _ttm_value(qmap, as_of, "Revenue")
-    net_income_ttm, ni_quarters = _ttm_value(qmap, as_of, "IncomeAfterTaxes")
-    op_income_ttm, _ = _ttm_value(qmap, as_of, "OperatingIncome")
+    # TTM「as of as_of」必須從 as_of 當天應已公告的最新一季起算、且 4 季連續（I016）。
+    # Yahoo 只保留最近約 5 季：歷史 as_of 湊不滿、或 Yahoo 還沒更新最新一季時，TTM 一律回 null，
+    # 不拿較舊或跳季的 4 季冒充。
+    expected = _yf_expected_quarter(as_of)
+    eps_ttm, eps_quarters = _yf_anchored_ttm(qmap, as_of, "EPS", expected)
+    revenue_ttm_fs, _ = _yf_anchored_ttm(qmap, as_of, "Revenue", expected)
+    net_income_ttm, ni_quarters = _yf_anchored_ttm(qmap, as_of, "IncomeAfterTaxes", expected)
+    op_income_ttm, _ = _yf_anchored_ttm(qmap, as_of, "OperatingIncome", expected)
 
     op_margin: Optional[float] = None
     if op_income_ttm is not None and revenue_ttm_fs and revenue_ttm_fs != 0:
@@ -317,8 +321,13 @@ async def query_financials_yfinance(stock_id: str, as_of_str: Optional[str] = No
     latest_eps_q, latest_eps_q_date = _latest_quarter_value(qmap, as_of, "EPS")
     latest_ni_q, latest_ni_q_date = _latest_quarter_value(qmap, as_of, "IncomeAfterTaxes")
 
+    reason = _yf_financials_miss_reason(qmap, expected, eps_ttm)
     return {
-        "found": bool(fs_rows),   # Yahoo 沒收錄該公司財報時 found=false（不是上游失敗，I014）
+        # found=true 只代表「as_of 當天的 EPS TTM 算得出來」。Yahoo 沒收錄（I014）、as_of 在 Yahoo
+        # 季度窗口之外、或最新一季還沒上 Yahoo 時都是 found=false，並以 reason 說明（I016）。
+        "found": reason is None,
+        "reason": reason,
+        "expected_quarter": expected,
         "stock_id": stock_id,
         "as_of": as_of.isoformat(),
         "eps": {
