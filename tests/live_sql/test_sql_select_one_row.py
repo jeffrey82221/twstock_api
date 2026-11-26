@@ -257,10 +257,11 @@ _VIEW_WHERE_OVERRIDES = {
 }
 
 
-def _recent_month_start(months_ago: int = 3):
-    """First month_start_date >= CURRENT_DATE - `months_ago` months, i.e.
-    the first row `as_of >= CURRENT_DATE - INTERVAL '3 months'` selects from
-    a seed of month starts."""
+def _recent_monthly_seed(day: int, months_ago: int = 3):
+    """First date on day-of-month `day` that is >= CURRENT_DATE - `months_ago`
+    months, i.e. the first row `as_of >= CURRENT_DATE - INTERVAL '3 months'`
+    selects from a seed of one date per month on that day (e.g.
+    `financial_month_twse_list.sql`'s 10th-of-month `as_of_date`, I002)."""
     import calendar
     from datetime import date
 
@@ -270,9 +271,28 @@ def _recent_month_start(months_ago: int = 3):
         month += 12
         year -= 1
     floor = date(year, month, min(today.day, calendar.monthrange(year, month)[1]))
-    if floor.day == 1:
-        return floor
-    return date(year + (month == 12), month % 12 + 1, 1)
+    if floor.day <= day:
+        return date(year, month, day)
+    return date(year + (month == 12), month % 12 + 1, day)
+
+
+# `financial_month_twse_list.sql` samples each month on this day (the TWSE
+# monthly-revenue filing deadline, app/pit.py) -- point-in-time rule, I002.
+_MONTHLY_REVENUE_SEED_DAY = 10
+
+
+def _first_quarterly_as_of():
+    """`as_of` of 2330's first `mops_quarterly_financials_quarter_list` row:
+    the filing deadline of MOPS's earliest quarter (2013 Q1 -> 2013-05-15).
+    Read from the app rather than hard-coded, so a change to the seed /
+    point-in-time rule (I002 moved it from the quarter end 2013-03-31, which
+    the endpoint now rejects with 400) cannot silently turn the prewarm
+    into a no-op again (PR #81 CI)."""
+    if REPO_ROOT not in sys.path:
+        sys.path.insert(0, REPO_ROOT)
+    from app.mops_quarterly_financials import QUARTERLY_MIN_DATE
+
+    return QUARTERLY_MIN_DATE
 
 
 # API URLs behind the views whose first call is slow on a cold runner:
@@ -285,8 +305,11 @@ def _recent_month_start(months_ago: int = 3):
 #
 # The URLs are the first row each view's `_VIEW_WHERE_OVERRIDES` entry
 # selects (2330: incorporated 1987, so the seeds' floors apply -- year 2012,
-# quarter 2013-03-31, recent month). If a seed rule changes and a URL no
-# longer matches, the test is still correct, just slower.
+# quarter 2013 Q1 at its filing deadline, recent 10th-of-month). They are
+# derived from the app / seed rules, not hard-coded: a URL that no longer
+# matches its seed leaves the view cold, and the cold MOPS download then
+# answers 504 inside the test's SELECT (PR #81 CI). A prewarm URL the API
+# rejects outright (400/422) fails the views it serves -- see live_prewarm.
 #
 # Prewarm talks to the API directly, NOT through Postgres: a long SELECT
 # keeps its job_control.http_cache upserts uncommitted until it ends, so
@@ -296,14 +319,16 @@ _PREWARM_URLS = {
     "/api/v1/fundamentals/financial-analysis?stock_id=2330&year=2012": (
         "raw_financial_analysis", "financial_analysis",
     ),
-    "/api/company/2330/quarterly-financials?as_of=2013-03-31": (
+    f"/api/company/2330/quarterly-financials?as_of={_first_quarterly_as_of().isoformat()}": (
         "raw_mops_quarterly_financials", "mops_quarterly_financials",
     ),
-    f"/api/company/2330/revenue/twse?as_of={_recent_month_start().isoformat()}": (
+    f"/api/company/2330/revenue/twse?as_of={_recent_monthly_seed(_MONTHLY_REVENUE_SEED_DAY).isoformat()}": (
         "raw_monthly_revenue_twse", "monthly_revenue_twse",
     ),
 }
 PREWARM_DEADLINE_S = 240
+# path -> error, for prewarm URLs the API rejected as invalid (stale URL).
+_PREWARM_REJECTED: dict = {}
 _PREWARM_ATTEMPT_TIMEOUT_S = 60
 _PREWARM_RETRY_SLEEP_S = 3
 
@@ -540,7 +565,9 @@ def live_prewarm(live_app_server) -> Iterator[dict]:
     """Request every `_PREWARM_URLS` URL in a background thread (see the
     comment there). Yields {view: threading.Event}; an event is set once its
     URL answered 200 (or a non-retryable 4xx), or `PREWARM_DEADLINE_S` ran
-    out, and the test for that view waits on it."""
+    out, and the test for that view waits on it. A 400/422 means the URL
+    itself is stale (no longer a valid request for the seed it mirrors), so
+    it is recorded in `_PREWARM_REJECTED` and the views it serves fail."""
     import threading
 
     _ = live_app_server
@@ -555,6 +582,8 @@ def live_prewarm(live_app_server) -> Iterator[dict]:
                     with urllib.request.urlopen(url, timeout=_PREWARM_ATTEMPT_TIMEOUT_S):
                         return
                 except urllib.error.HTTPError as exc:
+                    if exc.code in (400, 422):
+                        _PREWARM_REJECTED[path] = f"HTTP {exc.code}: {exc.read()[:300]!r}"
                     if exc.code < 500:
                         return
                 except (urllib.error.URLError, OSError):
@@ -603,6 +632,14 @@ def test_view_select_one_row_succeeds(live_app_server, live_poc_schema, live_pre
     timeout_s = _VIEW_TIMEOUT_OVERRIDES_S.get(view, DEFAULT_TIMEOUT_S)
     if view in live_prewarm:
         live_prewarm[view].wait(timeout=PREWARM_DEADLINE_S)
+        stale = {
+            path: error for path, error in _PREWARM_REJECTED.items()
+            if view in _PREWARM_URLS[path]
+        }
+        assert not stale, (
+            f"poc.{view} 的 prewarm URL 被 API 拒絕（URL 已和 seed 規則不一致，"
+            f"請更新 _PREWARM_URLS）：{stale}"
+        )
 
     row = None
     columns: list = []
