@@ -438,7 +438,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 - **上游 SQL**：[company_basic_info_list](#company_basic_info_list)
 - **HTTP API endpoint**：無（純 SQL `generate_series`）
 - 對應 [`/api/company/{stock_id}/sbl-history`](../../app/main.py) TWSE SBL t13sa870。
-- 設計理念（rule 11, 15 退化特例）：backend 以 31 日視窗回溯，月度取樣視窗首尾相接、無重複打過密日期。
+- 設計理念（rule 11, 15 退化特例）：backend 以 31 日視窗（`[as_of − 30, as_of]`）回溯，每月取樣一次，不打過密日期。相鄰取樣只差 28–31 天，視窗會重疊 1–3 天；重疊日的紀錄由下游 [sbl_history](#sbl_history) 濾掉（verify_questions I017）。
 - 爬取效率：取樣錨點日固定在每月 5 日，與其餘新增 monthly seed 慣例一致。
 
 | 欄位 | 型別 | 中文描述 | 來源 |
@@ -467,6 +467,7 @@ ESTIMATE_OBSERVE_MINUTES=60 .venv/bin/python db/poc/scripts/estimate_seed_fill_a
 - **上游 SQL**：[raw_sbl_history](#raw_sbl_history)
 - **HTTP API endpoint**：無（純 JSON 攤平）
 - 欄位 align `SblHistoryResponse` + `SblHistoryRecord`；`CROSS JOIN LATERAL` 攤平 `records[]`。
+- 去重（verify_questions I017）：只保留 `completion_date > as_of − 1 個月` 的紀錄，讓每筆還券紀錄只歸屬一個 as_of（上游視窗重疊造成的重複，2026-11-27 實測 296 列）。WHERE 是單純比較、沒有 subquery，符合 rule 16。
 
 | 欄位 | 型別 | 中文描述 | 來源 JSON 路徑 |
 | --- | --- | --- | --- |
