@@ -259,3 +259,20 @@ def test_cache_evict_limit(cache):
 def test_cache_evict_refuses_broad_patterns(pattern):
     with pytest.raises(ValueError):
         pop_maintenance.validate_url_like(pattern)
+
+
+def test_pin_seed_responses_serves_stored_raw_responses(db):
+    # I004 / I011: rebuilding a normalized IMMV must read what the raw IMMV
+    # stored, not what the API answers now ({"v": 2} in the cache).
+    p, connect = db
+    conn = connect()
+    urls = pop_maintenance.pin_seed_responses(conn, SEED, find_immvs=_immvs, raw_sql_for=_raw_sql)
+    assert len(urls) == 12
+    rows = dict(p._db_tool.fetch_all(
+        "SELECT url, status_code FROM job_control.http_cache"))
+    assert rows["http://h:5002/api/x/2317?as_of=2015-01-05"] == 404   # stored NULL
+    served = p._db_tool.fetch_all(
+        "SELECT custom.http_get_content('http://h:5002/api/x/2330?as_of=2015-03-05')::text")
+    assert served[0][0] == '{"v": 1}'
+    assert pop_maintenance.unpin_responses(conn, urls) == 12
+    assert _cache(p) == {}

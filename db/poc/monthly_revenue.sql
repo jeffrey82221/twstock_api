@@ -5,7 +5,7 @@
 --                    保留 full scan；下游需要時再自行過濾 NULL。
 SELECT
     stk_code,
-    custom.parse_iso_date(TRIM('"' FROM (revenue->'as_of')::TEXT)) AS as_of,
+    as_of,  -- seed 日期（rule 7，I004）
     TRIM('"' FROM (revenue->'stock_id')::TEXT) AS stock_id,
     TRIM('"' FROM (revenue->>'latest_month_label')) AS latest_month_label,
     (revenue->>'latest_month_value')::NUMERIC AS latest_month_value,

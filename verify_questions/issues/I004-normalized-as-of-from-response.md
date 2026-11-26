@@ -3,7 +3,7 @@ id: I004
 title: 正規化 view 的 as_of 取自 API 回應，回應失敗時主鍵變成 NULL
 severity: S2
 layer: L5
-status: fixing
+status: closed
 pop_tables: [company_valuation, dividend, dividend_yfinance, finmind_news, institutional_net_buy_sell, market_valuation_summary, monthly_revenue, mops_quarterly_financials, financial_quarterly_yfinance, financial_yearly_yfinance]
 seeds: []
 found_by: [Q001]
@@ -49,3 +49,25 @@ UNION ALL SELECT 'finmind_news', count(*) FILTER (WHERE as_of IS NULL), count(*)
 
 - `company_valuation`：NULL 主鍵 211 → 0。Q001 C1 PASS。
 - 附帶發現：`pop_check_definitions` 顯示 `sbl_history`、`monthly_revenue_twse` 也是 `changed`，是本次之前就存在的 SQL 與 pop 不一致（本次未動）。
+
+## 修復紀錄（2026-11-26，第二批）
+
+- 8 張 view 的 `as_of` 改取 raw 的 seed 欄位：`dividend`、`dividend_yfinance`、`finmind_news`、`institutional_net_buy_sell`、`monthly_revenue`、`financial_quarterly_yfinance`、`financial_yearly_yfinance` 用 `raw.as_of`，`market_valuation_summary` 用 `valuation_date`。`db/poc/README.md` lineage 同步（順便把 `monthly_revenue_twse` 的 lineage 更正為 `raw_monthly_revenue_twse.as_of`）。
+- 上線前重新逐表確認「成功列回應日期 ≠ seed」= 0（institutional 的回應 `trade_date` 就是請求日，實際交易日在 `row.trade_date` 欄）→ rule 18 就地修正。
+- 新增 `pop_maintenance.pin_seed_responses()`／`unpin_responses()`：把 raw IMMV 已存的回應 pin 進 `http_cache`，再 `Pipeline.update_mat_views([name])` 重建正規化 IMMV。重建因此逐字使用 raw 的回應，**不打上游**、raw 與正規化不會分歧（I011）。測試：`tests/pipeline/test_pop_maintenance.py::test_pin_seed_responses_serves_stored_raw_responses`。
+
+## 重爬與驗證（第二批）
+
+| IMMV | pinned | 列數 前 → 後 | NULL as_of | http_log |
+| --- | ---: | --- | ---: | ---: |
+| market_valuation_summary | 115 | 115 → 115 | 0 | +0 |
+| dividend_yfinance | 460 | 460 → 460 | 0 | +0 |
+| institutional_net_buy_sell | 533 | 533 → 533 | 0 | +0 |
+| financial_yearly_yfinance | 769 | 769 → 769 | 0 | +0 |
+| dividend | 51 | 51 → 51 | 0 | +0 |
+| monthly_revenue | 1 | 1 → 1 | 0 | +0 |
+| finmind_news | 95 | 1,955 → 1,955 | 0 | +0 |
+| financial_quarterly_yfinance | 562 | 562 → 562 | 0 | +0 |
+
+`pop_definition_drift` 全部 ok；`run_checks.py --all` 結果不變（Q001–Q004 PASS，Q005 僅 C1）。
+

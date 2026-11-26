@@ -19,7 +19,7 @@
 | [I001](issues/I001-mops-quarterly-financials-ytd.md) | S1 | L1 | mops_quarterly_financials 營收與 EPS 為年初至今累計 | closed | Q002, Q003 | 指令 5 |
 | [I002](issues/I002-point-in-time-look-ahead.md) | S1 | L2／L3 設計 | as_of 看得到尚未公布的月營收與季報 | closed（選項 B：as_of＝已公布＋`available_date`） | Q002 | 2026-11-26 |
 | [I003](issues/I003-yfinance-dividend-adjusted.md) | S1 | L1＋L0 | dividend_yfinance 現金股利為配股還原值 | closed（2882 L0 殘留，Q005 C1 保留 FAIL 作提醒） | Q005 | 指令 5 |
-| [I004](issues/I004-normalized-as-of-from-response.md) | S2 | L5 | 正規化 view 的 as_of 取自回應，失敗列主鍵為 NULL | fixing（第一批完成） | Q001 | 指令 5 |
+| [I004](issues/I004-normalized-as-of-from-response.md) | S2 | L5 | 正規化 view 的 as_of 取自回應，失敗列主鍵為 NULL | closed（第二批 8 張以 pin 重建，0 次 HTTP） | Q001 | 指令 5、2026-11-26 |
 | [I005](issues/I005-otc-valuation-missing.md) | S2 | L1 新上游 | 上櫃股沒有估值資料 | closed（TPEx peQryDate，2007-01-02 起） | Q001 | 2026-11-26 |
 | [I006](issues/I006-otc-foreign-ownership-missing.md) | S2 | L1 新上游 | 上櫃股沒有外資持股資料 | closed（TPEx qfii，2007-05-02 起） | Q004 | 2026-11-26 |
 | [I007](issues/I007-institutional-weekend-no-fallback.md) | S2 | L1 | 法人買賣超取樣日遇假日不回溯 | closed | Q004 | 指令 5、2026-11-26 |
@@ -97,3 +97,4 @@
 | 2026-11-26 | 13 個 raw 的 seed | `retry_failed.py --apply`（NULL 或 `source_errors`；OHLCV 加 `--include-not-found`） | ≈1,240 | 同左 | OHLCV 空月 454 → 0、月營收 111 → 0、FinMind 年報／股利歷史全數可用；被 rollback 的分歧列見 I011 | I007、I010、I011 |
 | 2026-11-26 | `dividend_event_list` | `refresh_immv` raw_dividend → dividend | 51 | — | 可用 33 → 51，reference_date＝as_of 51／51 | I011、I012 |
 | 2026-11-26 | `institutional_monthly_list` | `refresh_immv` raw → 正規化 | 533 | — | 失敗 11 → 0 | I011 |
+| 2026-11-26 | 8 張正規化 IMMV 的 seed | `pin_seed_responses` → `update_mat_views` → `unpin_responses` | — | 3,586 | 列數不變、NULL 主鍵 0、上游呼叫 0 | I004 |

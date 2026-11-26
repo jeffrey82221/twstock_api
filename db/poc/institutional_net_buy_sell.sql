@@ -5,7 +5,7 @@
 -- 設計理念（rule 13）：不做 WHERE 過濾，保留 raw 母體的所有 rows（含 row=null 的非交易日列）。
 SELECT
     stk_code,
-    custom.parse_iso_date(institutional_net_buy_sell->>'trade_date') AS as_of,
+    as_of,  -- seed 取樣日（rule 7，I004）；實際交易日見 trade_date 欄
     institutional_net_buy_sell->>'market' AS market,
     custom.parse_iso_date((institutional_net_buy_sell->'row')->>'trade_date') AS trade_date,
     institutional_net_buy_sell->'row'->>'stock_name' AS stock_name,

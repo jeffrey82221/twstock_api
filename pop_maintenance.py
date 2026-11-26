@@ -149,6 +149,40 @@ def _pin_responses(cur, table: str, clause: str, immv: str, template: str) -> Li
     return pinned
 
 
+def pin_seed_responses(
+    conn,
+    seed: str,
+    find_immvs: Callable[[Any, str], List[str]] = downstream_immvs,
+    raw_sql_for: Callable[[str], Optional[str]] = poc_raw_sql,
+) -> List[str]:
+    """Pin every stored response of the raw_* IMMVs on ``pop.<seed>``; return the URLs.
+
+    Use before re-creating a normalized IMMV on the same seed whose SQL changed
+    (``Pipeline.update_mat_views``): its embedded ``custom.http_get_content`` calls
+    then read these cache entries instead of the upstream, so it is rebuilt from
+    exactly the responses the raw IMMV holds -- no upstream calls, no raw /
+    normalized divergence (I004, I011). Run the rebuild within the cache TTL and
+    call ``unpin_responses`` afterwards so later inserts fetch live again.
+    """
+    urls: List[str] = []
+    with conn.cursor() as cur:
+        for immv in find_immvs(cur, seed):
+            template = raw_sql_for(immv)
+            if template is not None:
+                urls += _pin_responses(cur, seed, "", immv, template)
+    conn.commit()
+    return urls
+
+
+def unpin_responses(conn, urls: List[str]) -> int:
+    """Remove cache entries written by ``pin_seed_responses``."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM job_control.http_cache WHERE url = ANY(%s)", (urls,))
+        n = cur.rowcount
+    conn.commit()
+    return n
+
+
 def delete_seed_rows(
     conn,
     pipeline,

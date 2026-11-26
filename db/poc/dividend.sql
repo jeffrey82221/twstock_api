@@ -8,7 +8,7 @@
 -- 設計理念（rule 13）：不做 WHERE 過濾，保留 raw 母體所有 rows。
 SELECT
     stk_code,
-    custom.parse_iso_date(TRIM('"' FROM (dividend->'as_of')::TEXT)) AS as_of,
+    as_of,  -- seed 日期（rule 7，I004）：回應失敗時主鍵仍有值
     TRIM('"' FROM (dividend->'stock_id')::TEXT) AS stock_id,
     TRIM('"' FROM (dividend->'dividend'->>'year')) AS dividend_year,
     custom.parse_iso_date(TRIM('"' FROM (dividend->'dividend'->>'reference_date'))) AS reference_date,

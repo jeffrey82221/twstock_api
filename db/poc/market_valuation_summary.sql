@@ -7,7 +7,7 @@
 --   如需成分股層級明細，請改用 company_valuation（單股逐日 endpoint）。
 SELECT
     valuation_date,
-    custom.parse_iso_date(market_valuation_summary->>'date') AS as_of,
+    valuation_date AS as_of,  -- seed 日期（rule 7，I004）
     custom.parse_iso_date(market_valuation_summary->>'data_date') AS data_date,
     market_valuation_summary->>'market_scope' AS market_scope,
     market_valuation_summary->>'calculation_method' AS calculation_method,

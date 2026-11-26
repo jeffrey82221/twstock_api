@@ -7,7 +7,7 @@
 -- 設計理念（rule 1, 9）：本 view 只做 JSON 攤平，不做 HTTP 呼叫；上游 raw_ 負責發查。
 SELECT
     stk_code,
-    custom.parse_iso_date(TRIM('"' FROM (financials->'as_of')::TEXT)) AS as_of,
+    as_of,  -- seed 日期（rule 7，I004）
     TRIM('"' FROM (financials->'stock_id')::TEXT) AS stock_id,
     (financials->'eps'->>'ttm')::NUMERIC AS eps_ttm,
     custom.parse_iso_date(TRIM('"' FROM (financials->'eps'->'latest_quarter_date')::TEXT)) AS latest_quarter_date,

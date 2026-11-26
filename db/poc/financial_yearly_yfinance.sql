@@ -6,7 +6,7 @@
 -- 型別安全：所有 numeric 欄位一律走 `->>`（回傳 text）再 ::NUMERIC，jsonb null 會安全轉為 SQL NULL。
 SELECT
     stk_code,
-    custom.parse_iso_date(TRIM('"' FROM (financials->'as_of')::TEXT)) AS as_of,
+    as_of,  -- seed 日期（rule 7，I004）
     TRIM('"' FROM (financials->'stock_id')::TEXT) AS stock_id,
     (financials->'eps'->>'ttm')::NUMERIC AS eps_ttm,
     custom.parse_iso_date(TRIM('"' FROM (financials->'eps'->'latest_quarter_date')::TEXT)) AS latest_quarter_date,
