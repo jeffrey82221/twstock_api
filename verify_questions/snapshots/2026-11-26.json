@@ -1,5 +1,5 @@
 {
- "taken_at": "2026-11-26T09:16:04+08:00",
+ "taken_at": "2026-11-26T22:52:42+08:00",
  "crawl_pop_tables": [
   {
    "table_name": "chain_info_list",
@@ -19,7 +19,7 @@
   {
    "table_name": "company_finmind_list",
    "kind": "seed",
-   "rows": 514
+   "rows": 423
   },
   {
    "table_name": "company_list",
@@ -219,12 +219,12 @@
   {
    "table_name": "raw_dividend_history",
    "kind": "immv",
-   "rows": 514
+   "rows": 423
   },
   {
    "table_name": "raw_dividend_history_yfinance",
    "kind": "immv",
-   "rows": 1057
+   "rows": 870
   },
   {
    "table_name": "raw_dividend_yfinance",
@@ -379,26 +379,26 @@
   {
    "raw_view": "raw_dividend_history",
    "json_column": "dividend_history",
-   "total_rows": 514,
+   "total_rows": 423,
    "null_rows": 0,
    "found_false_rows": 0,
-   "usable_rows": 514,
+   "usable_rows": 423,
    "sources": {
-    "FinMind v4 TaiwanStockDividend": 514
+    "FinMind v4 TaiwanStockDividend": 423
    },
    "usable_pct": 100.0
   },
   {
    "raw_view": "raw_dividend_history_yfinance",
    "json_column": "dividend_history",
-   "total_rows": 1057,
+   "total_rows": 870,
    "null_rows": 0,
-   "found_false_rows": 154,
-   "usable_rows": 903,
+   "found_false_rows": 0,
+   "usable_rows": 870,
    "sources": {
-    "yfinance Ticker.dividends": 1057
+    "yfinance Ticker.dividends": 870
    },
-   "usable_pct": 85.4
+   "usable_pct": 100.0
   },
   {
    "raw_view": "raw_dividend_yfinance",
@@ -676,7 +676,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 514,
+   "pop_rows": 423,
    "rows_per_hour": 0.0
   },
   {
@@ -1673,8 +1673,8 @@
    }
   ],
   "cache": {
-   "entries": 8825,
-   "ok_entries": 8723
+   "entries": 7864,
+   "ok_entries": 7762
   }
  }
 }
