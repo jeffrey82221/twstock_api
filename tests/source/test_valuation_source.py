@@ -614,3 +614,126 @@ class TestLatestTradingDayFallback:
         assert r["found"] is False
         assert r["reason"] == "upstream_error"
         assert r["summary"] is None
+
+
+# =============================================================================
+# I010：只有 TWSE 明確回「沒有符合條件的資料」才快取成非交易日
+# =============================================================================
+
+def _serve_json(monkeypatch, tmp_path, payload):
+    import httpx
+
+    monkeypatch.setattr(vs, "CACHE_ROOT", tmp_path)
+
+    async def fake_get(self, url, **kwargs):
+        return httpx.Response(200, request=httpx.Request("GET", url), json=payload)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+
+
+class TestBwibbuPayloadState:
+    D = date(2007, 11, 2)   # a trading day that was cached as empty on 2026-11-23
+
+    def test_throttle_answer_is_failure_and_not_cached(self, monkeypatch, tmp_path):
+        import asyncio
+        _serve_json(monkeypatch, tmp_path, {"stat": "查詢過於頻繁"})
+        assert asyncio.run(vs._fetch_twse_bwibbu_day(self.D)) is None
+        assert not list(tmp_path.rglob("*.json.gz"))
+
+    def test_no_data_stat_is_cached_empty(self, monkeypatch, tmp_path):
+        import asyncio
+        _serve_json(monkeypatch, tmp_path, {"stat": "很抱歉，沒有符合條件的資料!"})
+        assert asyncio.run(vs._fetch_twse_bwibbu_day(date(2024, 4, 4))) == {}
+        assert vs._cache_read(date(2024, 4, 4)) == {}
+
+
+# =============================================================================
+# I005：上櫃股走 TPEx peQryDate + dailyQuotes
+# =============================================================================
+
+TPEX_PE = {
+    "stat": "ok", "date": "20240403",
+    "tables": [{"date": "113/04/03", "data": [
+        ["6488", "環球晶          ", "20.10", "16.00000000", 112, "3.53", "2.82"],
+        ["9998", "虧損上櫃        ", "N/A", "0.00000000", 112, "0.00", "1.10"],
+    ]}],
+}
+
+
+class TestTpexValuation:
+    D = date(2024, 4, 3)
+    BASIC = {"6488": {"market": "上櫃", "paid_in_capital": 4_350_000_000, "short_name": "環球晶"}}
+
+    def _patch(self, monkeypatch, tmp_path, pe=TPEX_PE, quotes=None):
+        monkeypatch.setattr(vs, "CACHE_ROOT", tmp_path)
+
+        async def fake_http_get(url, **kwargs):
+            return pe
+
+        async def fake_quotes(d):
+            return quotes
+
+        async def fake_basic():
+            return dict(self.BASIC)
+
+        import app.ohlcv_source as ohlcv
+        monkeypatch.setattr(vs, "_http_get", fake_http_get)
+        monkeypatch.setattr(ohlcv, "fetch_tpex_daily_quotes_checked", fake_quotes)
+        monkeypatch.setattr(vs, "load_basic_table", fake_basic)
+
+    def test_pe_rows_get_close_from_daily_quotes_and_are_cached(self, monkeypatch, tmp_path):
+        import asyncio
+        self._patch(monkeypatch, tmp_path, quotes={"6488": {"close": 453.0}})
+        rows = asyncio.run(vs._fetch_tpex_pe_day(self.D))
+        assert rows["6488"] == {
+            "stock_name": "環球晶", "close_price": 453.0, "dividend_yield": 3.53, "dividend_year": "112",
+            "per": 20.10, "pbr": 2.82, "financial_report_period": None,
+        }
+        assert rows["9998"]["per"] is None
+        assert vs._cache_read(self.D, "tpex") == rows
+
+    def test_quotes_failure_is_failure_and_not_cached(self, monkeypatch, tmp_path):
+        import asyncio
+        self._patch(monkeypatch, tmp_path, quotes=None)
+        assert asyncio.run(vs._fetch_tpex_pe_day(self.D)) is None
+        assert not list(tmp_path.rglob("*.json.gz"))
+
+    def test_payload_for_another_date_is_failure(self, monkeypatch, tmp_path):
+        import asyncio
+        stale = {"stat": "ok", "date": "20261125", "tables": [{"date": "115/11/25", "data": TPEX_PE["tables"][0]["data"]}]}
+        self._patch(monkeypatch, tmp_path, pe=stale, quotes={"6488": {"close": 453.0}})
+        assert asyncio.run(vs._fetch_tpex_pe_day(self.D)) is None
+
+    def test_before_tpex_floor_is_no_data_without_request(self, monkeypatch, tmp_path):
+        import asyncio
+
+        async def boom(url, **kwargs):
+            raise AssertionError("must not request before TPEX_VALUATION_MIN_DATE")
+
+        monkeypatch.setattr(vs, "_http_get", boom)
+        assert asyncio.run(vs._fetch_tpex_pe_day(date(2006, 12, 29))) == {}
+
+    def test_company_valuation_routes_otc_to_tpex(self, monkeypatch, tmp_path):
+        import asyncio
+        self._patch(monkeypatch, tmp_path, quotes={"6488": {"close": 453.0}})
+
+        async def twse_must_not_be_called(d):
+            raise AssertionError("OTC stock must not use BWIBBU_d")
+
+        monkeypatch.setattr(vs, "_fetch_twse_bwibbu_day", twse_must_not_be_called)
+        out = asyncio.run(vs.get_company_valuation("6488", self.D))
+        assert out["found"] is True
+        assert out["source"] == vs._SOURCE_TPEX
+        assert out["data_date"] == "2024-04-03"
+        c = out["constituent"]
+        assert c["per"] == 20.10 and c["close_price"] == 453.0
+        assert c["eps_ttm"] == pytest.approx(453.0 / 20.10)
+        assert c["dps"] == pytest.approx(453.0 * 3.53 / 100)
+
+
+def test_bwibbu_pre_2017_04_layout_is_parsed_by_field_name():
+    """I010: before ~2017-04-12 BWIBBU_d has 5 columns in another order and no close price."""
+    out = _parse_bwibbu_payload({"stat": "OK", "fields": ["證券代號", "證券名稱", "本益比", "殖利率(%)", "股價淨值比"],
+                                 "data": [["2330", "台積電", "15.88", "4.89", "3.25"]]})
+    assert out["2330"]["per"] == 15.88 and out["2330"]["dividend_yield"] == 4.89 and out["2330"]["pbr"] == 3.25
+    assert out["2330"]["close_price"] is None and out["2330"]["dividend_year"] is None

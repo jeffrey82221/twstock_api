@@ -24,7 +24,8 @@
 
 **磁碟 cache**（per-day 全市場 payload）：
   /tmp/institutional_cache/{market}/{YYYYMMDD}.json.gz
-  容器內 /tmp（重啟即消失）；非交易日 / 缺 payload 一樣寫入空 dict 避免重打。
+  容器內 /tmp（重啟即消失）。只有上游**明確表示當日無資料**（TWSE stat「很抱歉，沒有符合條件的資料」、
+  TPEx stat ok + 空表）才寫入空 dict；限流 / 封鎖 / 其他錯誤回應視為上游失敗，不寫 cache（I010）。
 
 **擴充空間**：`_fetch_per_day_market` 為 (market, date) 粒度純函式，未來要做
 逐月歷史補抓、DB 落地或批次跑滿全交易日，可直接複用；本次不做 DB 寫入。
@@ -46,6 +47,9 @@ from .sources import (
     _classify_http_exc,
     _record_source_error,
     load_basic_table,
+    record_bad_payload,
+    tpex_payload_state,
+    twse_payload_state,
 )
 
 logger = logging.getLogger("twstock_api.institutional")
@@ -120,9 +124,12 @@ def _parse_int(s: Any) -> Optional[int]:
 # TWSE T86 — per-day 全市場 JSON
 # =============================================================================
 
-async def _fetch_twse_t86_day(d: date) -> dict[str, dict]:
+async def _fetch_twse_t86_day(d: date) -> Optional[dict[str, dict]]:
     """回傳 stk_code -> row dict（該日全上市股票三大法人明細）。
-    cache miss 時打上游、寫磁碟 cache；非交易日回 {}（也 cache 空 dict）。
+
+    * 交易日 → payload（cache）
+    * 非交易日（TWSE 明確回「沒有符合條件的資料」）→ `{}`（cache；今天除外，可能只是尚未收盤）
+    * 上游失敗（HTTP 錯誤 / 封鎖頁 / 其他 stat）→ `None`（不 cache）
     """
     cached = _cache_read("twse", d)
     if cached is not None:
@@ -151,47 +158,65 @@ async def _fetch_twse_t86_day(d: date) -> dict[str, dict]:
         _record_source_error(SourceError(
             source="TWSE", url=url, status_code=status, message=msg, is_rate_limited=rl,
         ))
-        return {}
+        return None
 
-    parsed = _parse_twse_t86_payload(data)
-    _cache_write("twse", d, parsed)
+    state = twse_payload_state(data)
+    if state == "error":
+        record_bad_payload("TWSE", url, data)
+        return None
+    parsed = _parse_twse_t86_payload(data) if state == "ok" else {}
+    if state == "ok" and data.get("data") and not parsed:
+        # 上游有資料卻一列都解析不出來 = 版面變了；絕不能快取成「非交易日」（I010 真正主因）
+        record_bad_payload("TWSE", url, {"stat": f"unparsed layout fields={data.get('fields')}"})
+        return None
+    if parsed or d < date.today():
+        _cache_write("twse", d, parsed)
     return parsed
 
 
-def _parse_twse_t86_payload(data: dict) -> dict[str, dict]:
-    """解析 TWSE T86 JSON payload，回 stk_code -> row。
+# T86 欄位版面依日期不同（2026-11-25 實測），一律以 `fields` 名稱對應欄位：
+#   * 2012-05-02 起：12 欄，自營商未拆自行買賣／避險
+#   * 2014-12 起：16 欄，自營商拆自行買賣／避險
+#   * 2017-12-18 起：19 欄，外資拆成「外陸資（不含外資自營商）」與「外資自營商」
+# 舊版只接受 19 欄，2017-12-18 前每個交易日都解析成空 dict 並被快取成「非交易日」（I010 主因）。
+# 2017-12-18 前的「外資買賣超股數」含外資自營商，對應到 foreign_investors_net_buy_sell，
+# foreign_dealers_net_buy_sell 為 None；12 欄版面沒有自行買賣／避險，對應欄位為 None。
+_T86_FIELD_NAMES = {
+    "foreign_investors_net_buy_sell": ("外陸資買賣超股數(不含外資自營商)", "外資買賣超股數"),
+    "foreign_dealers_net_buy_sell": ("外資自營商買賣超股數",),
+    "investment_trust_net_buy_sell": ("投信買賣超股數",),
+    "dealers_net_buy_sell": ("自營商買賣超股數",),
+    "dealers_proprietary_net_buy_sell": ("自營商買賣超股數(自行買賣)",),
+    "dealers_hedge_net_buy_sell": ("自營商買賣超股數(避險)",),
+    "total_institutional_net_buy_sell": ("三大法人買賣超股數",),
+}
+# 沒有 `fields` 時沿用 19 欄位置
+_T86_DEFAULT_FIELDS = [
+    "證券代號", "證券名稱", "", "", "外陸資買賣超股數(不含外資自營商)", "", "", "外資自營商買賣超股數",
+    "", "", "投信買賣超股數", "自營商買賣超股數", "", "", "自營商買賣超股數(自行買賣)", "", "",
+    "自營商買賣超股數(避險)", "三大法人買賣超股數",
+]
 
-    T86 payload 19 欄位順序：
-      [0]證券代號  [1]證券名稱
-      [2-4]外陸資買/賣/買賣超股數(不含外資自營商)
-      [5-7]外資自營商買/賣/買賣超股數
-      [8-10]投信買/賣/買賣超股數
-      [11]自營商買賣超股數（合計）
-      [12-14]自營商自行買賣買/賣/買賣超股數
-      [15-17]自營商避險買/賣/買賣超股數
-      [18]三大法人買賣超股數
-    """
+
+def _parse_twse_t86_payload(data: dict) -> dict[str, dict]:
+    """解析 TWSE T86 JSON payload，回 stk_code -> row（依 `fields` 名稱對應，支援 12／16／19 欄版面）。"""
     if not isinstance(data, dict) or (data.get("stat") or "").upper() != "OK":
         return {}
-    rows = data.get("data") or []
+    fields = [str(f).strip() for f in (data.get("fields") or _T86_DEFAULT_FIELDS)]
+    index = {name: i for i, name in enumerate(fields) if name}
+    if "三大法人買賣超股數" not in index:
+        return {}
+    cols = {key: next((index[n] for n in names if n in index), None) for key, names in _T86_FIELD_NAMES.items()}
     out: dict[str, dict] = {}
-    for row in rows:
-        if not row or len(row) < 19:
+    for row in data.get("data") or []:
+        if not row or len(row) < len(fields):
             continue
         code = str(row[0]).strip()
         if not code:
             continue
-        name = str(row[1]).strip()
-        out[code] = {
-            "stock_name": name,
-            "foreign_investors_net_buy_sell": _parse_int(row[4]),
-            "foreign_dealers_net_buy_sell": _parse_int(row[7]),
-            "investment_trust_net_buy_sell": _parse_int(row[10]),
-            "dealers_net_buy_sell": _parse_int(row[11]),
-            "dealers_proprietary_net_buy_sell": _parse_int(row[14]),
-            "dealers_hedge_net_buy_sell": _parse_int(row[17]),
-            "total_institutional_net_buy_sell": _parse_int(row[18]),
-        }
+        out[code] = {"stock_name": str(row[1]).strip()}
+        for key, i in cols.items():
+            out[code][key] = _parse_int(row[i]) if i is not None else None
     return out
 
 
@@ -199,8 +224,8 @@ def _parse_twse_t86_payload(data: dict) -> dict[str, dict]:
 # TPEx dailyTrade — per-day 全市場 JSON
 # =============================================================================
 
-async def _fetch_tpex_daily_trade(d: date) -> dict[str, dict]:
-    """回傳 stk_code -> row dict（該日全上櫃股票三大法人明細）。"""
+async def _fetch_tpex_daily_trade(d: date) -> Optional[dict[str, dict]]:
+    """回傳 stk_code -> row dict（該日全上櫃股票三大法人明細）；語意同 `_fetch_twse_t86_day`。"""
     cached = _cache_read("tpex", d)
     if cached is not None:
         return cached
@@ -231,51 +256,56 @@ async def _fetch_tpex_daily_trade(d: date) -> dict[str, dict]:
         _record_source_error(SourceError(
             source="TPEx", url=url, status_code=status, message=msg, is_rate_limited=rl,
         ))
-        return {}
+        return None
 
+    if tpex_payload_state(data, d) == "error":
+        record_bad_payload("TPEx", url, data)
+        return None
     parsed = _parse_tpex_daily_trade_payload(data)
-    _cache_write("tpex", d, parsed)
+    has_rows = any(isinstance(t, dict) and t.get("data") for t in data.get("tables") or [])
+    if has_rows and not parsed:
+        record_bad_payload("TPEx", url, {"stat": "unparsed dailyTrade layout"})
+        return None
+    if parsed or d < date.today():
+        _cache_write("tpex", d, parsed)
     return parsed
 
 
 def _parse_tpex_daily_trade_payload(data: dict) -> dict[str, dict]:
     """解析 TPEx dailyTrade JSON payload，回 stk_code -> row。
 
-    TPEx 24 欄位順序（依 政府開放資料平臺 上櫃股票三大法人買賣明細資訊定義）：
-      [0]代號  [1]名稱
-      [2-4]外資及陸資（不含自營商）買/賣/超
-      [5-7]外資自營商買/賣/超
-      [8-10]外資及陸資（合計）買/賣/超
-      [11-13]投信買/賣/超
-      [14-16]自營商自行買賣買/賣/超
-      [17-19]自營商避險買/賣/超
-      [20-22]自營商合計買/賣/超
-      [23]三大法人買賣超股數合計
+    資料表不一定在 tables[0]（舊日期 tables[0] 為 {}、資料在 tables[1]），取第一個有資料的表。
+    兩種版面（2026-11-25 實測）：
+      * 24 欄（近年）：[0]代號 [1]名稱 [2-4]外資及陸資(不含自營商) [5-7]外資自營商 [8-10]外資及陸資合計
+        [11-13]投信 [14-16]自營商自行買賣 [17-19]自營商避險 [20-22]自營商合計 [23]三大法人合計
+      * 16 欄（舊）：[0]代號 [1]名稱 [2-4]外資及陸資（含自營商） [5-7]投信 [8]自營淨買
+        [9-11]自營商自行買賣 [12-14]自營商避險 [15]三大法人買賣超；沒有外資自營商（None）
     """
     if not isinstance(data, dict) or (data.get("stat") or "").lower() != "ok":
         return {}
-    tables = data.get("tables") or []
-    if not tables:
-        return {}
-    rows = tables[0].get("data") or []
+    rows = next((t.get("data") for t in data.get("tables") or [] if isinstance(t, dict) and t.get("data")), [])
     out: dict[str, dict] = {}
     for row in rows:
-        if not row or len(row) < 24:
+        if not row:
             continue
         code = str(row[0]).strip()
         if not code:
             continue
-        name = str(row[1]).strip()
-        out[code] = {
-            "stock_name": name,
-            "foreign_investors_net_buy_sell": _parse_int(row[4]),
-            "foreign_dealers_net_buy_sell": _parse_int(row[7]),
-            "investment_trust_net_buy_sell": _parse_int(row[13]),
-            "dealers_net_buy_sell": _parse_int(row[22]),
-            "dealers_proprietary_net_buy_sell": _parse_int(row[16]),
-            "dealers_hedge_net_buy_sell": _parse_int(row[19]),
-            "total_institutional_net_buy_sell": _parse_int(row[23]),
-        }
+        if len(row) >= 24:
+            idx = {"foreign_investors_net_buy_sell": 4, "foreign_dealers_net_buy_sell": 7,
+                   "investment_trust_net_buy_sell": 13, "dealers_net_buy_sell": 22,
+                   "dealers_proprietary_net_buy_sell": 16, "dealers_hedge_net_buy_sell": 19,
+                   "total_institutional_net_buy_sell": 23}
+        elif len(row) >= 16:
+            idx = {"foreign_investors_net_buy_sell": 4, "foreign_dealers_net_buy_sell": None,
+                   "investment_trust_net_buy_sell": 7, "dealers_net_buy_sell": 8,
+                   "dealers_proprietary_net_buy_sell": 11, "dealers_hedge_net_buy_sell": 14,
+                   "total_institutional_net_buy_sell": 15}
+        else:
+            continue
+        out[code] = {"stock_name": str(row[1]).strip()}
+        for key, i in idx.items():
+            out[code][key] = _parse_int(row[i]) if i is not None else None
     return out
 
 
@@ -283,8 +313,8 @@ def _parse_tpex_daily_trade_payload(data: dict) -> dict[str, dict]:
 # 對外主函式
 # =============================================================================
 
-async def _fetch_per_day_market(market: str, d: date) -> dict[str, dict]:
-    """依市場別呼叫對應 per-day 全市場 endpoint。未來歷史補抓可直接複用。"""
+async def _fetch_per_day_market(market: str, d: date) -> Optional[dict[str, dict]]:
+    """依市場別呼叫對應 per-day 全市場 endpoint（`None` = 上游失敗）。未來歷史補抓可直接複用。"""
     if market == "上市":
         return await _fetch_twse_t86_day(d)
     if market == "上櫃":
@@ -292,22 +322,21 @@ async def _fetch_per_day_market(market: str, d: date) -> dict[str, dict]:
     return {}
 
 
-async def _latest_trading_day(market: str, d: date) -> tuple[date, dict[str, dict]]:
+async def _latest_trading_day(market: str, d: date) -> tuple[date, Optional[dict[str, dict]]]:
     """(交易日, 全市場 payload)：查詢日或之前最近、且在 MAX_LOOKBACK_DAYS 內有資料的交易日。
 
-    非交易日的空 payload 會寫進磁碟 cache；下載失敗回 {} 但不寫 cache。所以空 payload
-    且 cache 沒有該日時代表上游失敗，停止回溯，避免把失敗誤當成假日一路往前打。
+    * 回溯範圍內都沒有交易 → `(d, {})`
+    * 途中上游失敗 → `(d, None)`：立即停止，不把失敗當成假日一路往前打
     """
-    cache_key = {"上市": "twse", "上櫃": "tpex"}.get(market)
     for back in range(MAX_LOOKBACK_DAYS + 1):
         day = d - timedelta(days=back)
         if day < INSTITUTIONAL_MIN_DATE:
             break
         day_map = await _fetch_per_day_market(market, day)
+        if day_map is None:
+            return d, None
         if day_map:
             return day, day_map
-        if cache_key is None or _cache_read(cache_key, day) is None:
-            break
     return d, {}
 
 
@@ -317,8 +346,9 @@ async def get_institutional_net_buy_sell(stk_code: str, d: date) -> dict:
     回傳統一 dict schema（見 module docstring）；欄位若上游未提供則為 None。
 
     * 找不到 stk_code（基本資料）→ `found=False`, `market=None`
-    * 找到 stk_code 但當日全市場 payload 為空（非交易日 / 當日尚未收盤 / 上游失敗）
+    * 找到 stk_code，但回溯範圍內沒有交易日、或該股當日不在 payload
       → `found=True, market="上市"|"上櫃", row=None`
+    * 上游失敗 → `found=True, row=None, reason="upstream_error"`（endpoint 回 502，不被 DB 快取）
     """
     basic = await load_basic_table()
     info = basic.get(stk_code)
@@ -334,7 +364,7 @@ async def get_institutional_net_buy_sell(stk_code: str, d: date) -> dict:
 
     market = info.get("market") or ""
     data_day, day_map = await _latest_trading_day(market, d)
-    row = day_map.get(stk_code)
+    row = (day_map or {}).get(stk_code)
 
     if market == "上市":
         source = "TWSE T86 (per-day)"
@@ -351,6 +381,7 @@ async def get_institutional_net_buy_sell(stk_code: str, d: date) -> dict:
             "trade_date": d.isoformat(),
             "row": None,
             "source": source,
+            "reason": "upstream_error" if day_map is None else None,
         }
 
     # stock_name 以基本資料 short_name 為主，退回 payload 上的名稱

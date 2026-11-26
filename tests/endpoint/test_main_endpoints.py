@@ -138,7 +138,11 @@ def test_market_data_endpoint_family(client, monkeypatch):
 
     monkeypatch.setattr(main.ohlcv_source, "get_ohlcv", fake_ohlcv)
     monkeypatch.setattr(main.institutional_source, "get_institutional_net_buy_sell", fake_institutional)
+    async def fake_market_of(stock_id):
+        return "上市"
+
     monkeypatch.setattr(main.foreign_ownership_source, "get_foreign_ownership", fake_foreign)
+    monkeypatch.setattr(main.foreign_ownership_source, "market_of", fake_market_of)
     monkeypatch.setattr(main.valuation_source, "get_market_valuation_summary", fake_market_valuation)
     monkeypatch.setattr(main.valuation_source, "get_company_valuation", fake_company_valuation)
     monkeypatch.setattr(main.mops_financial_analysis, "get_annual_financial_analysis", fake_analysis)
@@ -225,3 +229,33 @@ def test_valuation_upstream_error_is_502_and_no_data_is_404(client, monkeypatch)
     reasons["reason"] = "no_market_data"
     assert client.get(company[0], params=company[1]).status_code == 404
     assert client.get(market[0], params=market[1]).status_code == 404
+
+
+
+def test_institutional_upstream_failure_is_502_not_cached_200(client, monkeypatch):
+    """I010: a T86 failure used to be a 200 with row=null, cached by http_cache and frozen
+    in pop as an empty trading day."""
+    async def failed(*args, **kwargs):
+        return {"found": True, "stk_code": "2330", "market": "上市", "trade_date": "2017-06-05",
+                "row": None, "source": "test", "reason": "upstream_error"}
+
+    monkeypatch.setattr(main.institutional_source, "get_institutional_net_buy_sell", failed)
+    response = client.get("/api/institutional-net-buy-sell", params={"stk_code": "2330", "date": "2017-06-05"})
+    assert response.status_code == 502
+
+
+def test_foreign_ownership_otc_reports_tpex_source(client, monkeypatch):
+    seen = {}
+
+    async def fake_market_of(stock_id):
+        return "上櫃"
+
+    async def fake_foreign(stock_id, as_of, max_lookback_days, market=None):
+        seen["market"] = market
+        return {"trade_date": "2024-04-03", "stock_id": stock_id, "stock_name": "環球晶"}
+
+    monkeypatch.setattr(main.foreign_ownership_source, "market_of", fake_market_of)
+    monkeypatch.setattr(main.foreign_ownership_source, "get_foreign_ownership", fake_foreign)
+    body = client.get("/api/company/6488/foreign-ownership", params={"as_of": "2024-04-03"}).json()
+    assert seen["market"] == "上櫃"
+    assert body["source"] == "TPEx qfii" and body["found"] is True

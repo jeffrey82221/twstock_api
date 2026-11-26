@@ -544,7 +544,10 @@ class RevenueResponse(BaseModel):
     found: bool = Field(..., description="是否有資料。")
     stock_id: str = Field(..., description="查詢股票代號。")
     as_of: str = Field(..., description="查詢基準日。")
-    latest_month_label: Optional[str] = Field(None, description="最近一個月的年/月標籤（例 `2026/04`）。")
+    latest_month_label: Optional[str] = Field(None, description="as_of 當天已公告的最近一個月的年/月標籤（例 `2026/04`）。")
+    data_date: Optional[str] = Field(None, description="`latest_month_label` 該月的月底日。")
+    available_date: Optional[str] = Field(
+        None, description="該月營收的法定公告期限（次月 10 日），一定 ≤ as_of（point-in-time，見 `app/pit.py`）。")
     latest_month_value: Optional[int] = Field(None, description="最近一個月營收（新台幣元）。")
     latest_month_yoy_pct: Optional[float] = Field(None, description="該月年增率 %。")
     ttm_value: Optional[int] = Field(None, description="最近 12 個完整月份營收加總（TTM 月營收）。")
@@ -794,7 +797,7 @@ class InstitutionalNetBuySellResponse(BaseModel):
     trade_date: str = Field(..., description="查詢交易日（`YYYY-MM-DD`）。")
     row: Optional[InstitutionalNetBuySellRow] = Field(
         None,
-        description="三大法人買賣超明細；當日全市場 payload 為空（非交易日、當日尚未收盤、或上游失敗）時為 null。",
+        description="三大法人買賣超明細；回溯 10 天內沒有交易日、或該股當日不在 payload 時為 null（上游失敗則整個 endpoint 回 502）。",
     )
     source: Optional[str] = Field(None, description="本筆資料來源註記。")
 
@@ -826,7 +829,7 @@ class ForeignOwnershipResponse(BaseModel):
     as_of: str = Field(..., description="查詢基準日，`YYYY-MM-DD`；服務會回傳該日或之前最近可得資料。")
     data_date: Optional[str] = Field(None, description="實際資料日期，等同 `row.trade_date`；若 as_of 為週末或休市日，通常早於 as_of。")
     row: Optional[ForeignOwnershipRow] = Field(None, description="as_of 當日或往前最近交易日的外資持股資料；找不到歷史資料時為 null。")
-    source: Optional[str] = Field(None, description="TWSE MI_QFIIS 官方資料源註記。")
+    source: Optional[str] = Field(None, description="資料源註記：`TWSE MI_QFIIS`（上市）或 `TPEx qfii`（上櫃）。")
 
 
 class SblHistoryRecord(BaseModel):
@@ -1087,8 +1090,10 @@ class MopsQuarterlyFinancialsResponse(BaseModel):
     stock_id: str = Field(..., description="查詢股票代號。")
     company_name: Optional[str] = Field(None, description="MOPS 公司名稱。")
     market: Optional[str] = Field(None, description="`sii`（上市）或 `otc`（上櫃）。")
-    as_of: str = Field(..., description="查詢基準日；不代表實際財報日期。")
-    data_date: Optional[str] = Field(None, description="實際回傳季度結束日；當 as_of 落在季度中或無當季資料時會早於 as_of。")
+    as_of: str = Field(..., description="查詢基準日（point-in-time：只回此日已公開的季度）；不代表實際財報日期。")
+    data_date: Optional[str] = Field(None, description="實際回傳季度結束日。")
+    available_date: Optional[str] = Field(
+        None, description="該季財報的法定公告期限（Q1 5/15、Q2 8/14（金融業 8/31）、Q3 11/14、Q4 隔年 3/31），一定 ≤ as_of。")
     fiscal_year: Optional[int] = Field(None, description="財報西元年度。")
     quarter: Optional[int] = Field(None, description="財報季度，1 至 4。")
     data: Optional[MopsQuarterlyFinancialsData] = Field(

@@ -171,3 +171,109 @@ def test_upstream_error_stops_lookback(monkeypatch, tmp_path):
     with pytest.raises(UpstreamFetchError):
         asyncio.run(fos.get_foreign_ownership("2330", date(2026, 8, 31)))
     assert requested == [date(2026, 8, 31)]  # no day-by-day hammering of a blocking upstream
+
+
+# --- I010: a 200 response without the CSV header is a block page, not a holiday ---
+
+def test_fetch_day_without_header_raises_and_is_not_cached(monkeypatch, tmp_path):
+    import httpx
+    import pytest
+
+    from app.sources import UpstreamFetchError
+
+    monkeypatch.setattr(fos, "CACHE_ROOT", tmp_path)
+
+    async def fake_get(self, url, **kwargs):
+        return httpx.Response(200, request=httpx.Request("GET", url), text="<html>var contactPhone</html>")
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    with pytest.raises(UpstreamFetchError):
+        asyncio.run(fos._fetch_day(date(2017, 6, 5)))
+    assert not list(tmp_path.rglob("*.json.gz"))
+
+
+def test_holiday_csv_with_header_only_is_cached_empty(monkeypatch, tmp_path):
+    import httpx
+
+    monkeypatch.setattr(fos, "CACHE_ROOT", tmp_path)
+    holiday = '"113年04月04日 外資及陸資投資持股統計"\r\n"證券代號","證券名稱","國際證券編碼"\r\n'.encode("big5")
+
+    async def fake_get(self, url, **kwargs):
+        return httpx.Response(200, request=httpx.Request("GET", url), content=holiday)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    assert asyncio.run(fos._fetch_day(date(2024, 4, 4))) == {}
+    assert fos._cache_read(date(2024, 4, 4)) == {}
+
+
+# --- I006: OTC stocks use TPEx qfii ---
+
+TPEX_QFII = {
+    "stat": "ok", "date": "20240403",
+    "tables": [{"date": "113/04/03", "data": [
+        ["1", "8455", "大拓-KY", "25,219,056", "3,081,750", "22,137,306", "12.22%", "87.78%", "100%", ""],
+        ["5", "6488", "環球晶", "478,450,000", "357,000,000", "121,450,000", "74.62%", "25.38%", "100%", "僑外資持股"],
+    ]}],
+}
+
+
+def test_parse_tpex_qfii_payload_maps_to_mi_qfiis_row():
+    rows = fos.parse_tpex_qfii_payload(TPEX_QFII, date(2024, 4, 3))
+    assert rows["6488"] == {
+        "trade_date": "2024-04-03", "stock_id": "6488", "stock_name": "環球晶",
+        "issued_shares": 478450000.0, "foreign_investment_available_shares": 357000000.0,
+        "foreign_investment_shares": 121450000.0, "foreign_investment_available_ratio_pct": 74.62,
+        "foreign_investment_ratio_pct": 25.38, "foreign_investment_limit_ratio_pct": 100.0,
+        "china_investment_limit_ratio_pct": None, "change_reason": "僑外資持股", "last_change_date": None,
+    }
+    assert rows["8455"]["change_reason"] is None
+
+
+def test_otc_stock_uses_tpex_and_caches_separately(monkeypatch, tmp_path):
+    monkeypatch.setattr(fos, "CACHE_ROOT", tmp_path)
+
+    async def fake_http_get(url, **kwargs):
+        assert "tpex.org.tw" in url and "2024/04/03" in url
+        return TPEX_QFII
+
+    async def twse_must_not_be_called(d):
+        raise AssertionError("OTC stock must not use MI_QFIIS")
+
+    monkeypatch.setattr(fos, "_http_get", fake_http_get)
+    monkeypatch.setattr(fos, "_fetch_day", twse_must_not_be_called)
+    row = asyncio.run(fos.get_foreign_ownership("6488", date(2024, 4, 3), market="上櫃"))
+    assert row["foreign_investment_ratio_pct"] == 25.38
+    assert fos._cache_read(date(2024, 4, 3), "tpex")["6488"] == row
+    assert fos._cache_read(date(2024, 4, 3)) is None          # TWSE cache untouched
+
+
+def test_tpex_payload_for_another_date_raises(monkeypatch, tmp_path):
+    import pytest
+
+    from app.sources import UpstreamFetchError
+
+    monkeypatch.setattr(fos, "CACHE_ROOT", tmp_path)
+
+    async def fake_http_get(url, **kwargs):
+        return {**TPEX_QFII, "date": "20261125", "tables": [{"date": "115/11/25", "data": []}]}
+
+    monkeypatch.setattr(fos, "_http_get", fake_http_get)
+    with pytest.raises(UpstreamFetchError):
+        asyncio.run(fos._fetch_tpex_day(date(2024, 4, 3)))
+    assert not list(tmp_path.rglob("*.json.gz"))
+
+
+def test_parses_pre_2009_layout_by_header_name():
+    """I010: the 2004-2009 CSV has 11 columns (no mainland limit). Fixed positions read the
+    change-reason code as the mainland limit and the change date as the reason."""
+    content = _csv(
+        '"93年02月11日 外資投資持股統計"',
+        '"證券代號","證券名稱","國際證券編碼","發行股數","外資尚可投資股數","全體外資持有股數","外資尚可投資比率","全體外資持股比率","法令投資上限比率","與前日異動原因(註)","最近一次上市公司申報外資持股異動日期",',
+        '"2330","台積電","TW0002330008","20,266,618,984","9,226,391,259","11,040,227,725","45.52","54.47","0.00","1","92/08/18",',
+    )
+    row = fos.parse_mi_qfiis_csv(content, date(2004, 2, 11))["2330"]
+    assert row["foreign_investment_ratio_pct"] == 54.47
+    assert row["foreign_investment_limit_ratio_pct"] == 0.0
+    assert row["china_investment_limit_ratio_pct"] is None
+    assert row["change_reason"] == "1"
+    assert row["last_change_date"] == "2003-08-18"

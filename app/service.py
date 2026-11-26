@@ -21,7 +21,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
-from . import icchain
+from . import icchain, pit
 from .industry import industry_name
 from .sources import (
     ensure_source_errors_buffer,
@@ -126,8 +126,14 @@ def _build_quarter_map(rows: list[dict]) -> dict[str, dict[str, float]]:
 
 
 def _is_quarter_before(quarter_date: str, as_of: date) -> bool:
+    """True when the quarter ending `quarter_date` was public on `as_of`.
+
+    Point-in-time (app/pit.py): the quarter's filing deadline, not its end date, must be
+    <= as_of. The company type is unknown here, so the longer financial-company Q2
+    deadline applies (never early, at worst 17 days late for Q2).
+    """
     qd = _parse_date(quarter_date)
-    return qd is not None and qd <= as_of
+    return qd is not None and pit.quarter_available_on(qd, as_of)
 
 
 def _ttm_value(quarter_map: dict[str, dict], as_of: date, field: str) -> tuple[Optional[float], list[str]]:
@@ -161,6 +167,11 @@ async def _get_basic(stock_id: str) -> Optional[dict]:
     """共用：取得 TWSE/TPEx 合併後的基本資料。"""
     table = await load_basic_table()
     return table.get(stock_id)
+
+
+# How far past as_of to fetch TaiwanStockDividend: its `date` (record date) trails the
+# ex-dividend date by about 5 days; a month leaves room for holidays and stock-only rows.
+FINMIND_DIVIDEND_RECORD_LAG_DAYS = 31
 
 
 def _finmind_window(as_of: date) -> tuple[str, str]:
@@ -328,6 +339,15 @@ async def query_financials_yfinance(stock_id: str, as_of_str: Optional[str] = No
     }
 
 
+def _revenue_period_fields(latest: Optional[dict]) -> dict[str, Optional[str]]:
+    """`data_date` (month end) and `available_date` (filing deadline) of the latest month."""
+    if not latest:
+        return {"data_date": None, "available_date": None}
+    y, m = latest["revenue_year"], latest["revenue_month"]
+    return {"data_date": pit.month_end(y, m).isoformat(),
+            "available_date": pit.revenue_available_date(y, m).isoformat()}
+
+
 # =====================================================================
 # 4) /api/company/{stock_id}/revenue — FinMind 月營收
 # =====================================================================
@@ -338,8 +358,14 @@ async def query_revenue(stock_id: str, as_of_str: Optional[str] = None) -> dict[
     start, end = _finmind_window(as_of)
 
     mr_rows = await get_month_revenue(stock_id, start, end)
-    eligible_mr = [m for m in mr_rows if _parse_date(m.get("date") or "") and _parse_date(m["date"]) <= as_of]
-    eligible_mr.sort(key=lambda x: x["date"], reverse=True)
+    # Point-in-time: a month counts once its revenue was due (10th of the next month), not
+    # FinMind's `date` (1st of the next month), which is up to 9 days before publication.
+    eligible_mr = [
+        m for m in mr_rows
+        if m.get("revenue_year") and m.get("revenue_month")
+        and pit.revenue_available_date(m["revenue_year"], m["revenue_month"]) <= as_of
+    ]
+    eligible_mr.sort(key=lambda x: (x["revenue_year"], x["revenue_month"]), reverse=True)
 
     last12 = eligible_mr[:12]
     prev12 = eligible_mr[12:24]
@@ -372,6 +398,7 @@ async def query_revenue(stock_id: str, as_of_str: Optional[str] = None) -> dict[
         "stock_id": stock_id,
         "as_of": as_of.isoformat(),
         "latest_month_label": latest_label,
+        **_revenue_period_fields(latest),
         "latest_month_value": latest_value,
         "latest_month_yoy_pct": revenue_yoy,
         "ttm_value": revenue_ttm,
@@ -398,7 +425,10 @@ async def _fetch_revenue_twse_upstream(
     """query_revenue_twse 的上游部分：t187ap05 最新月 + MOPS t21sc03 歷史。"""
     from app.sources import get_mops_revenue_history
 
-    # ---- Step 1: 從 t187ap05 取「最新一個月」（僅當 as_of 正好在 t187ap05 公告月以後時才用）----
+    # Point-in-time：只取 as_of 當天已到公告期限（次月 10 日）的月份。
+    avail_year, avail_month = pit.latest_available_revenue_month(as_of)
+
+    # ---- Step 1: 從 t187ap05 取「最新一個月」（僅當該月在 as_of 已公告時才用）----
     t187ap05_matched: Optional[dict] = None
     t187ap05_code: Optional[str] = None
     for code in market_codes:
@@ -411,7 +441,7 @@ async def _fetch_revenue_twse_upstream(
                 roc_year = int(yyymm[:-2])
                 month = int(yyymm[-2:])
                 year_ce = roc_year + 1911
-                if (year_ce, month) <= (as_of.year, as_of.month):
+                if (year_ce, month) <= (avail_year, avail_month):
                     t187ap05_matched = r
                     t187ap05_code = code
                     break
@@ -431,8 +461,9 @@ async def _fetch_revenue_twse_upstream(
         rows_hist = await get_mops_revenue_history(
             stock_id=stock_id,
             market_code=mkt,
-            as_of_year=as_of.year,
-            as_of_month=as_of.month,
+            # get_mops_revenue_history 從「基準月的上一個月」開始往回抓，所以基準月 = 最新可得月 + 1。
+            as_of_year=avail_year + (avail_month == 12),
+            as_of_month=avail_month % 12 + 1,
             months=26,
         )
         if rows_hist:
@@ -506,8 +537,11 @@ async def query_revenue_twse(stock_id: str, as_of_str: Optional[str] = None) -> 
         seen_ym.add(ym)
         merged.append(row)
 
-    # 依 as_of 過濾 + 排序（newest first）
-    eligible = [m for m in merged if _parse_date(m["date"]) and _parse_date(m["date"]) <= as_of]
+    # Point-in-time 過濾（公告期限 <= as_of）+ 排序（newest first）
+    eligible = [
+        m for m in merged
+        if pit.revenue_available_date(m["revenue_year"], m["revenue_month"]) <= as_of
+    ]
     eligible.sort(key=lambda x: x["date"], reverse=True)
 
     if not eligible:
@@ -579,6 +613,7 @@ async def query_revenue_twse(stock_id: str, as_of_str: Optional[str] = None) -> 
         "stock_id": stock_id,
         "as_of": as_of.isoformat(),
         "latest_month_label": label,
+        **_revenue_period_fields(latest),
         "latest_month_value": latest_value,
         "latest_month_yoy_pct": latest_yoy,
         "ttm_value": revenue_ttm,
@@ -619,7 +654,13 @@ def _twse_to_float(s: Any) -> Optional[float]:
 async def query_dividend(stock_id: str, as_of_str: Optional[str] = None) -> dict[str, Any]:
     stock_id = stock_id.strip()
     as_of = _resolve_as_of(as_of_str)
-    start, end = _finmind_window(as_of)
+    start, _ = _finmind_window(as_of)
+    # FinMind filters TaiwanStockDividend by its `date` column, the record date (除權息基準日),
+    # which falls ~5 days after the ex-dividend date. end_date=as_of would drop an event whose
+    # ex-date is on or just before as_of, so raw_dividend (as_of = each event's ex-date) got
+    # the previous event every time. Fetch past as_of; _pick_dividend still keeps only
+    # ex-date <= as_of, and the announcement precedes the ex-date, so nothing leaks (I012).
+    end = (as_of + timedelta(days=FINMIND_DIVIDEND_RECORD_LAG_DAYS)).isoformat()
 
     dv_rows = await get_dividend(stock_id, start, end)
     picked = _pick_dividend(dv_rows, as_of)

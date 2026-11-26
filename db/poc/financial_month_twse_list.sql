@@ -12,18 +12,21 @@
 -- 可用大幅拉高的 batch_size 快速拉齊，raw_monthly_revenue（FinMind）保持保守進度。
 --
 -- 邊界（rule 13：對齊資料源實際覆蓋）：MOPS t21sc03 靜態頁最早為上市 民國 98/12（2009-12）、
---   上櫃 民國 99/1（2010-01）；更早的月份 404（2026-11 實測）。as_of 早於 2010-01-01 拿不到
---   任何歷史月營收，故起點取 GREATEST(成立月 1 日, 2010-01-01)。
+--   上櫃 民國 99/1（2010-01）；更早的月份 404（2026-11 實測）。as_of 早於 2010-01-10 拿不到
+--   任何歷史月營收，故起點取 GREATEST(成立月 10 日, 2010-01-10)。
 -- rule 13 例外：`incorporation_date IS NOT NULL` 為技術性 guard（GREATEST 會忽略 NULL）。
+-- Point-in-time（I002，app/pit.py）：取樣日 = 每月 10 日（上月營收的法定公告期限）。endpoint 只回
+--   as_of 當天已到期限的月份，所以每列恰好對應「上個月」一個營收月份，不重複、不缺月，
+--   回測以 as_of 為決策日也不會看到尚未公告的營收。終點 CURRENT_DATE：未到期限的月份不產生。
 SELECT
     stk_code,
     generate_series(
         GREATEST(
-            make_date(EXTRACT(YEAR FROM incorporation_date)::INT, EXTRACT(MONTH FROM incorporation_date)::INT, 1),
-            DATE '2010-01-01'
+            make_date(EXTRACT(YEAR FROM incorporation_date)::INT, EXTRACT(MONTH FROM incorporation_date)::INT, 10),
+            DATE '2010-01-10'
         ),
         CURRENT_DATE,
         INTERVAL '1 month'
-    )::DATE AS month_start_date
+    )::DATE AS as_of_date
 FROM {{ schema }}.company_basic_info_list
 WHERE incorporation_date IS NOT NULL;

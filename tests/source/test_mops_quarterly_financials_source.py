@@ -24,13 +24,16 @@ def test_parse_income_statement_html_extracts_eps():
     assert mqf.parse_income_statement_html(_table(headers, values))["2330"]["eps"] == 12.34
 
 
-def test_period_uses_previous_completed_quarter():
-    assert mqf._period_for(date(2024, 5, 10)) == (113, 1, date(2024, 3, 31))
+def test_period_is_latest_quarter_already_public():
+    # Point-in-time (I002): Q1 2024 is due 05-15, so on 05-10 the latest public quarter is 2023 Q4.
+    assert mqf._period_for(date(2024, 5, 10)) == (112, 4, date(2023, 12, 31))
+    assert mqf._period_for(date(2024, 5, 15)) == (113, 1, date(2024, 3, 31))
 
 
-def test_period_rejects_before_verified_source_boundary():
+def test_period_rejects_before_first_quarter_is_public():
+    assert mqf.QUARTERLY_MIN_DATE == date(2013, 5, 15)
     with pytest.raises(ValueError):
-        mqf._period_for(date(2013, 3, 30))
+        mqf._period_for(date(2013, 5, 14))
 
 
 def test_previous_period_crosses_year_boundary():
@@ -48,9 +51,10 @@ def test_get_quarterly_financials_uses_market_and_combines_sources(monkeypatch):
 
     monkeypatch.setattr(mqf, "load_basic_table", fake_basic)
     monkeypatch.setattr(mqf, "_fetch", fake_fetch)
-    result = asyncio.run(mqf.get_quarterly_financials(" 2330 ", date(2024, 5, 10)))
+    result = asyncio.run(mqf.get_quarterly_financials(" 2330 ", date(2024, 5, 15)))
     assert result["found"] is True
     assert result["data_date"] == "2024-03-31"
+    assert result["available_date"] == "2024-05-15"
     assert result["data"]["eps"] == 12.34
 
 
@@ -67,7 +71,7 @@ def test_get_quarterly_financials_falls_back_to_previous_available_quarter(monke
 
     monkeypatch.setattr(mqf, "load_basic_table", fake_basic)
     monkeypatch.setattr(mqf, "_fetch", fake_fetch)
-    result = asyncio.run(mqf.get_quarterly_financials("2330", date(2024, 8, 10)))
+    result = asyncio.run(mqf.get_quarterly_financials("2330", date(2024, 8, 20)))
     assert result["data_date"] == "2024-03-31"
 
 def _patch_basic(monkeypatch, market="上市"):
@@ -105,7 +109,7 @@ def test_get_quarterly_financials_stops_on_upstream_failure(monkeypatch):
         return None
 
     monkeypatch.setattr(mqf, "_fetch", fake_fetch)
-    result = asyncio.run(mqf.get_quarterly_financials("2330", date(2024, 5, 10)))
+    result = asyncio.run(mqf.get_quarterly_financials("2330", date(2024, 5, 15)))
     assert result["found"] is False
     assert result["reason"] == "upstream_error"
     assert set(calls) == {(113, 1)}
@@ -122,7 +126,7 @@ def test_get_quarterly_financials_times_out_within_budget(monkeypatch):
 
     monkeypatch.setattr(mqf, "_fetch", slow_fetch)
     monkeypatch.setattr(mqf, "run_within_budget", functools.partial(mqf.run_within_budget, budget_s=0.05))
-    result = asyncio.run(mqf.get_quarterly_financials("2330", date(2024, 5, 10)))
+    result = asyncio.run(mqf.get_quarterly_financials("2330", date(2024, 5, 15)))
     assert result["found"] is False
     assert result["reason"] == "upstream_timeout"
     assert result["data_date"] == "2024-03-31"
@@ -187,8 +191,9 @@ def test_q4_returns_single_quarter_and_full_year_ytd(monkeypatch):
         ("income", 3): {"2330": {"eps": 47.86}},
     }
     monkeypatch.setattr(mqf, "_fetch", _fake_tables(tables))
-    result = asyncio.run(mqf.get_quarterly_financials("2330", date(2026, 1, 5)))
+    result = asyncio.run(mqf.get_quarterly_financials("2330", date(2026, 3, 31)))
     assert (result["fiscal_year"], result["quarter"]) == (2025, 4)
+    assert result["available_date"] == "2026-03-31"
     assert result["data_ytd"]["eps"] == 66.26          # full year, as MOPS reports it
     assert result["data"]["eps"] == round(66.26 - 47.86, 2)
     assert result["data"]["revenue_millions"] == round(3809054.27 - 2762963.85, 2)
@@ -218,7 +223,7 @@ def test_previous_quarter_download_failure_is_upstream_error(monkeypatch):
         return {"2330": _ytd(2404483.69, 67.03, None)} if kind == "operating" else {"2330": {"eps": 49.33}}
 
     monkeypatch.setattr(mqf, "_fetch", fake_fetch)
-    result = asyncio.run(mqf.get_quarterly_financials("2330", date(2026, 7, 31)))
+    result = asyncio.run(mqf.get_quarterly_financials("2330", date(2026, 8, 20)))
     assert result["found"] is False and result["reason"] == "upstream_error"
 
 
@@ -236,8 +241,48 @@ def test_financial_company_found_with_eps_only(monkeypatch):
     }
     monkeypatch.setattr(mqf, "load_basic_table", fake_basic)
     monkeypatch.setattr(mqf, "_fetch", _fake_tables(tables))
-    result = asyncio.run(mqf.get_quarterly_financials("2882", date(2025, 9, 30)))
+    result = asyncio.run(mqf.get_quarterly_financials("2882", date(2025, 11, 20)))
     assert result["found"] is True
     assert result["company_name"] == "國泰金"
     assert result["data"]["eps"] == 2.5
     assert result["data"]["revenue_millions"] is None and result["data"]["gross_margin_pct"] is None
+
+
+# --- I002: point-in-time -- never return a quarter before its filing deadline ---
+
+def _two_quarters(code="2330", op=True):
+    ytd_q1, ytd_q2 = _ytd(100.0, 50.0, None), _ytd(220.0, 50.0, None)
+    return {
+        ("operating", 1): {code: ytd_q1} if op else {},
+        ("income", 1): {code: {"stock_id": code, "eps": 1.0}},
+        ("operating", 2): {code: ytd_q2} if op else {},
+        ("income", 2): {code: {"stock_id": code, "eps": 2.5}},
+    }
+
+
+def test_quarter_filed_in_mops_but_not_yet_due_is_not_returned(monkeypatch):
+    # MOPS today has Q2 2025, but on 2025-08-13 Q2 was not yet due (08-14): return Q1.
+    _patch_basic(monkeypatch)
+    monkeypatch.setattr(mqf, "_fetch", _fake_tables(_two_quarters()))
+    result = asyncio.run(mqf.get_quarterly_financials("2330", date(2025, 8, 13)))
+    assert (result["quarter"], result["available_date"]) == (1, "2025-05-15")
+
+
+def test_general_company_q2_public_on_aug_14(monkeypatch):
+    _patch_basic(monkeypatch)
+    monkeypatch.setattr(mqf, "_fetch", _fake_tables(_two_quarters()))
+    result = asyncio.run(mqf.get_quarterly_financials("2330", date(2025, 8, 14)))
+    assert (result["quarter"], result["available_date"]) == (2, "2025-08-14")
+    assert result["data"]["eps"] == 1.5
+
+
+def test_financial_company_q2_waits_for_aug_31(monkeypatch):
+    async def fake_basic():
+        return {"2882": {"market": "上市"}}
+
+    monkeypatch.setattr(mqf, "load_basic_table", fake_basic)
+    monkeypatch.setattr(mqf, "_fetch", _fake_tables(_two_quarters("2882", op=False)))
+    early = asyncio.run(mqf.get_quarterly_financials("2882", date(2025, 8, 20)))
+    assert (early["quarter"], early["available_date"]) == (1, "2025-05-15")
+    due = asyncio.run(mqf.get_quarterly_financials("2882", date(2025, 8, 31)))
+    assert (due["quarter"], due["available_date"]) == (2, "2025-08-31")

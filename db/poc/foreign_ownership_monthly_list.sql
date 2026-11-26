@@ -1,5 +1,5 @@
 -- foreign_ownership_monthly_list
--- 新增 endpoint 覆蓋：GET /api/company/{stock_id}/foreign-ownership（TWSE MI_QFIIS 外資及陸資持股）
+-- 新增 endpoint 覆蓋：GET /api/company/{stock_id}/foreign-ownership（上市 TWSE MI_QFIIS／上櫃 TPEx qfii 外資及陸資持股）
 -- 上游 SQL：company_basic_info_list
 --
 -- 設計理念（rule 11, 15 退化特例）：外資持股為交易日頻資料（連續型，非離散事件），若逐日抓取
@@ -12,8 +12,8 @@
 --   * 起點取掛牌日「之後」的 5 日（掛牌日晚於 5 日則下個月 5 日），不產生掛牌前的列：
 --     舊版從「掛牌月 5 日」起，掛牌日晚於 5 日時第一列落在掛牌前，backend 當年無上限回溯，
 --     一列就可能打上千次 MI_QFIIS（2026-11-23 實測 20 分鐘累積 1,694 個日檔）。
---   * 上櫃股不在 MI_QFIIS 涵蓋範圍，backend 遇到「有資料但無該股」的交易日即回 found=false，
---     每列只打一次（且日檔跨股共用 cache）。
+--   * 上櫃股走 TPEx qfii（I006），實測最早有資料日 2007-05-02，故上櫃股起點下限改為 2007-05-05
+--     （app/foreign_ownership_source.py TPEX_MIN_DATE）；更早的列只會回 found=false。
 -- 爬取效率：取樣日固定在每月 5 日，與 market_valuation_date_list 同慣例，避開元旦等長假。
 -- rule 13 例外：`listing_date IS NOT NULL` 為技術性 guard（GREATEST 會忽略 NULL）。
 SELECT
@@ -22,7 +22,7 @@ SELECT
 FROM {{ schema }}.company_basic_info_list
 CROSS JOIN LATERAL generate_series(
         GREATEST(
-            DATE '2004-02-05',
+            CASE WHEN market = '上櫃' THEN DATE '2007-05-05' ELSE DATE '2004-02-05' END,
             make_date(EXTRACT(YEAR FROM listing_date)::INT, EXTRACT(MONTH FROM listing_date)::INT, 5)
                 + CASE WHEN EXTRACT(DAY FROM listing_date) > 5 THEN INTERVAL '1 month' ELSE INTERVAL '0 month' END
         ),

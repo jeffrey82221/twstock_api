@@ -102,3 +102,26 @@ def test_upstream_error_propagates_instead_of_not_found(monkeypatch):
     with pytest.raises(UpstreamFetchError):
         asyncio.run(sbl.get_sbl_history("2330", date(2024, 3, 5), max_lookback_days=93))
     assert len(windows) == 1
+
+
+def test_non_ok_stat_is_upstream_error_and_not_cached(monkeypatch, tmp_path):
+    """I010: only stat OK (with or without rows) may be cached; a throttle answer must not
+    become a permanent "no returns in this window"."""
+    import asyncio
+    from datetime import date
+
+    import httpx
+    import pytest
+
+    import app.twse_sbl_source as sbl
+    from app.sources import UpstreamFetchError
+
+    monkeypatch.setattr(sbl, "CACHE_ROOT", tmp_path)
+
+    async def fake_get(self, url, **kwargs):
+        return httpx.Response(200, request=httpx.Request("GET", str(url)), json={"stat": "查詢過於頻繁"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    with pytest.raises(UpstreamFetchError):
+        asyncio.run(sbl._fetch_window("2330", date(2024, 4, 1), date(2024, 4, 30)))
+    assert not list(tmp_path.rglob("*.json.gz"))

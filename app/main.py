@@ -502,7 +502,8 @@ async def api_company_financials_yfinance(
         "&data_id={stock_id}&start_date={as_of-5y}&end_date={as_of}`\n"
         "- Output：`data:[{date, revenue_year, revenue_month, revenue}]`。\n\n"
         "**處理邏輯**：\n"
-        "1. 取 `date ≤ as_of` 排序後最新一筆 → `latest_month_*`。\n"
+        "1. Point-in-time：取「公告期限（次月 10 日）≤ as_of」的月份中最新一筆 → `latest_month_*`；"
+        "`data_date` 為該月月底、`available_date` 為公告期限（見 `app/pit.py`）。\n"
         "2. 找去年同月計算 `latest_month_yoy_pct = (本月 - 去年同月) / 去年同月 × 100`。\n"
         "3. 最近 12 個月加總 → `ttm_value`；再往前 12 個月加總 → 用來算 `ttm_yoy_pct`。\n"
         "4. 月份不足長度時個別欄位回 null。"
@@ -538,6 +539,9 @@ async def api_company_revenue(
         "5. `latest_month_yoy_pct` 取 t187ap05 「去年同月增減(%)」；若為空則由 MOPS 歷史 fallback。\n"
         "6. `ttm_value` = 最新 12 個月營收加總；`ttm_yoy_pct` = (last12 總 - prev12 總) / prev12 總 × 100。\n"
         "7. 欄位值為空 / `-` / 無法轉為數字時，對應欄位回 `null`。\n\n"
+        "**as_of 行為（point-in-time）**：只採用 as_of 當天已到法定公告期限（次月 10 日）的月份，"
+        "例如 `as_of=2026-11-01` 的最新月是 2026/09（10 月營收 11/10 才到期限）。"
+        "`data_date` 為該月月底、`available_date` 為公告期限（見 `app/pit.py`）。\n\n"
         "**優點**：完全使用證交所 / 櫃買中心 + 公開資訊觀測站「官方」公開資料，免 token、免限流；\n"
         "資料沿革與《證交法》規定之「月營收公告（次月 10 日前）」同步。\n"
         "**缺點**：MOPS 頁面為 HTML（big5 編碼）需解析，首次跳 26 個月較慢；不過併發 + 24h TTL cache，同一公司重查及他公司查詢都接近即時。"
@@ -567,10 +571,12 @@ async def api_company_revenue_twse(
         "**資料來源網站正式名稱**：FinMind v4。\n\n"
         "**資料源 API URL 與呼叫方法**：\n"
         "- `GET https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividend"
-        "&data_id={stock_id}&start_date={as_of-5y}&end_date={as_of}`\n"
+        "&data_id={stock_id}&start_date={as_of-5y}&end_date={as_of+31d}`\n"
         "- Output：`data:[{year, date, CashEarningsDistribution, CashStatutorySurplus, "
         "StockEarningsDistribution, StockStatutorySurplus, CashExDividendTradingDate, "
-        "StockExDividendTradingDate, ...}]`。\n\n"
+        "StockExDividendTradingDate, ...}]`。\n"
+        "- FinMind 以 `date`（除權息基準日，約除息日後 5 天）過濾，所以窗口要超過 as_of，"
+        "否則除息日當天查不到該次事件（I012）；超過 as_of 的事件由下方步驟 1 排除。\n\n"
         "**處理邏輯**：\n"
         "1. 依 `CashExDividendTradingDate` / `StockExDividendTradingDate` / `date` 依序選「除息日 ≤ as_of」最後一次。\n"
         "2. 現金股利 = `CashEarningsDistribution + CashStatutorySurplus`；\n"
@@ -769,7 +775,8 @@ async def api_company_product_revenue(
         "* 上櫃 per-day：<https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes> `?date=YYYY/MM/DD&type=EW&response=json`\n"
         "* 上櫃 per-month：<https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock> `?code=XXXX&date=YYYY/MM/DD&response=json`\n\n"
         "**單位正規化**：TPEx 上游回「張 / 仟元」，backend 自動 ×1000 對齊到「股 / 元」。\n"
-        "**範圍限制**：1 天 ≤ `to_date - from_date` ≤ 366 天，超過回 400。"
+        "**範圍限制**：1 天 ≤ `to_date - from_date` ≤ 366 天，超過回 400。\n"
+        "**上游失敗**：per-stock-month 上游失敗（封鎖頁、限流、非預期回應）回 HTTP 502，不回空陣列。"
     ),
 )
 async def ohlcv(
@@ -805,7 +812,12 @@ async def ohlcv(
             status_code=400,
             detail=f"date range too large (max {ohlcv_source.MAX_RANGE_DAYS} days)",
         )
-    return await ohlcv_source.get_ohlcv(stk_code.strip(), d_from, d_to)
+    result = await ohlcv_source.get_ohlcv(stk_code.strip(), d_from, d_to)
+    if result.get("reason") in _UPSTREAM_REASON_STATUS:
+        # 502：上游失敗不可回 200 + rows=[]（會被當成該月無交易而凍結在 pop）
+        raise HTTPException(status_code=_UPSTREAM_REASON_STATUS[result["reason"]],
+                            detail=f"OHLCV upstream {result['reason']} for stk_code={stk_code!r}")
+    return result
 
 
 @app.get(
@@ -823,7 +835,9 @@ async def ohlcv(
         "**同一日多支股票查詢** 共享 backend 磁碟 cache `/tmp/institutional_cache/{market}/{YYYYMMDD}.json.gz`。\n"
         "**資料起始日**：民國 101/5/2 = 2012-05-02，早於此日期回 400。\n"
         "**非交易日回溯**：查詢日為週末或假日（全市場 payload 為空）時，往前找最多 10 個日曆天內最近的交易日；"
-        "`row.trade_date` 與 `data_date` 為實際交易日，頂層 `trade_date` 維持查詢日。上游下載失敗時不回溯。\n"
+        "`row.trade_date` 與 `data_date` 為實際交易日，頂層 `trade_date` 維持查詢日。\n"
+        "**上游失敗**：限流 / 封鎖頁 / 非預期回應立即停止回溯並回 HTTP 502（不被 DB http_cache 快取、不寫磁碟 cache）；"
+        "只有上游明確回「當日無資料」才當作非交易日。\n"
         "**收盤前查詢當日**：上游回空 payload，會回溯到前一個交易日。"
     ),
 )
@@ -854,7 +868,14 @@ async def institutional_net_buy_sell(
         )
     if d > date.today():
         raise HTTPException(status_code=400, detail="`date` must be <= today")
-    return await institutional_source.get_institutional_net_buy_sell(stk_code.strip(), d)
+    result = await institutional_source.get_institutional_net_buy_sell(stk_code.strip(), d)
+    if result.get("reason") in _UPSTREAM_REASON_STATUS:
+        # 502：不被 DB http_cache 快取，下次重試；不可回 200 + row=null 被當成「當日無資料」凍結（I010）。
+        raise HTTPException(
+            status_code=_UPSTREAM_REASON_STATUS[result["reason"]],
+            detail=f"institutional upstream {result['reason']} for stk_code={stk_code!r} date={d.isoformat()}",
+        )
+    return result
 
 
 @app.get(
@@ -908,7 +929,7 @@ async def sbl_history(
     "/api/company/{stock_id}/foreign-ownership",
     response_model=ForeignOwnershipResponse,
     tags=["Company (per-source)"],
-    summary="外資及陸資持股歷史（TWSE MI_QFIIS）",
+    summary="外資及陸資持股歷史（上市 TWSE MI_QFIIS／上櫃 TPEx qfii）",
     description=(
         "取得指定股票在基準日或之前最近可得交易日的外資及陸資持股股數與比率。\n\n"
         "**資料來源網站正式名稱**：臺灣證券交易所（TWSE）外資及陸資投資持股統計。\n\n"
@@ -916,9 +937,14 @@ async def sbl_history(
         "回應是 Big5 編碼 CSV；本服務尋找 `證券代號` 表頭，略過頁首說明與頁尾文字，再以 `csv.reader` 解析。\n\n"
         "**查詢參數**：`as_of` 為西元日期 `YYYY-MM-DD`。TWSE MI_QFIIS 實際可取得的最早日期為 **2004-02-11**；"
         "早於此日期回 HTTP 400。若 as_of 當日沒有資料（非交易日），服務會逐日往前查找，最多 `max_lookback_days` 天（預設 31）；"
-        "若遇到有資料的交易日但沒有該股（上櫃股、尚未掛牌或已下市），直接回 `found=false`，不再往前。\n\n"
+        "若遇到有資料的交易日但沒有該股（尚未掛牌或已下市），直接回 `found=false`，不再往前。\n\n"
         "**欄位轉換**：股數欄位去除千分位逗號後轉為股；比例欄位保留百分點（例如 `2.54` 代表 2.54%）；"
         "民國日期轉為 `YYYY-MM-DD`；回應的 `data_date` / `row.trade_date` 是實際資料日，可能早於使用者輸入的 `as_of`。\n\n"
+        "**上櫃股**：改用 TPEx 櫃檯買賣股票僑外資及陸資持股比例 "
+        "`GET https://www.tpex.org.tw/www/zh-tw/insti/qfii?date=YYYY/MM/DD&response=json`（JSON；"
+        f"實測最早有資料日 `{foreign_ownership_source.TPEX_MIN_DATE.isoformat()}`），欄位對齊為相同 row 格式；"
+        "TPEx 不提供陸資上限與異動日期，`china_investment_limit_ratio_pct` / `last_change_date` 為 null，"
+        "`change_reason` 取「備註」。快取於 `/tmp/foreign_ownership_cache/tpex/`。\n\n"
         "**成本與限流**：官方免費且不需 API key。資料只能逐日下載；fallback 過程的連續 cache miss 間隔 3 秒，"
         "並以 `/tmp/foreign_ownership_cache/{YYYYMMDD}.json.gz` 快取整日全市場 CSV，因此重複查詢不會重打上游。"
         "上游失敗（含 TWSE WAF 307 封鎖頁）立即停止回溯並回 502，不被 DB http_cache 快取。"
@@ -942,18 +968,21 @@ async def company_foreign_ownership(
         raise HTTPException(status_code=400, detail=f"`as_of` must be >= {foreign_ownership_source.MIN_DATE.isoformat()}")
     if query_date > date.today():
         raise HTTPException(status_code=400, detail="`as_of` must be <= today")
+    market = await foreign_ownership_source.market_of(stock_id.strip())
+    source = foreign_ownership_source.source_name(market)
     try:
-        row = await foreign_ownership_source.get_foreign_ownership(stock_id.strip(), query_date, max_lookback_days)
+        row = await foreign_ownership_source.get_foreign_ownership(
+            stock_id.strip(), query_date, max_lookback_days, market=market)
     except UpstreamFetchError as exc:
         # 502：不被 DB http_cache 快取，下次重試（見 _UPSTREAM_REASON_STATUS 說明）。
-        raise HTTPException(status_code=502, detail=f"TWSE MI_QFIIS upstream error: {exc}")
+        raise HTTPException(status_code=502, detail=f"{source} upstream error: {exc}")
     return {
         "found": row is not None,
         "stock_id": stock_id.strip(),
         "as_of": query_date.isoformat(),
         "data_date": row.get("trade_date") if row else None,
         "row": row,
-        "source": "TWSE MI_QFIIS",
+        "source": source,
     }
 
 
@@ -1031,11 +1060,16 @@ async def market_valuation_summary(
     "/api/company-valuation",
     response_model=CompanyValuationResponse,
     tags=["Market Data"],
-    summary="單一上市公司於指定交易日的估值展開（反推 EPS / BVPS / DPS + 估股數 / 市值）",
+    summary="單一上市 / 上櫃公司於指定交易日的估值展開（反推 EPS / BVPS / DPS + 估股數 / 市值）",
     description=(
-        "取得單一上市公司於指定交易日的單股層級估值明細。\n\n"
-        "**上游 endpoint**：與 `/api/market-valuation-summary` 共用 TWSE `BWIBBU_d`，"
-        "同一天 by-company + by-market 只會打上游一次（磁碟 cache 共用）。\n\n"
+        "取得單一上市或上櫃公司於指定交易日的單股層級估值明細。\n\n"
+        "**上游 endpoint**：\n"
+        "* 上市：與 `/api/market-valuation-summary` 共用 TWSE `BWIBBU_d`，"
+        "同一天 by-company + by-market 只會打上游一次（磁碟 cache 共用）。\n"
+        "* 上櫃：TPEx `https://www.tpex.org.tw/www/zh-tw/afterTrading/peQryDate?date=YYYY/MM/DD&response=json`"
+        "（本益比 / 每股股利 / 殖利率 / 股價淨值比），收盤價取同日 TPEx `dailyQuotes`；"
+        f"資料起始日 `{valuation_source.TPEX_VALUATION_MIN_DATE.isoformat()}`，更早的日期回 404（`no_market_data`）。"
+        "磁碟 cache `/tmp/valuation_cache/tpex/`。\n\n"
         "**回傳欄位**：close / PER / PBR / yield%（上游原始）、"
         "反推後的 EPS / BVPS / DPS、估股數（`paid_in_capital / 10`）、估市值（`close × shares`）。\n\n"
         "**反推公式**（與 `/api/market-valuation-summary` 完全一致）：\n"
@@ -1173,23 +1207,25 @@ async def financial_analysis(
         "**單季 vs 累計**：MOPS 這兩張彙總表是**年初至今累計**（Q2 = 1–6 月、Q4 = 全年）。`data` 為**單季**值："
         "Q2–Q4 以本季累計減前一季累計換算（比率先還原成金額再相減）；原始累計值放在 `data_ytd`。"
         "金融業不在營益分析表（t163sb06），只回 `eps`，營收與比率為 null。\n\n"
-        f"**最早資料**：實測 2330 最早可得季度為 `{mops_quarterly_financials.QUARTERLY_MIN_DATE.isoformat()}` "
-        "（民國 102 年第 1 季）；早於此日回 HTTP 400。\n\n"
-        "**as_of 行為**：`as_of` 為查詢基準日，省略時為今天；服務選取不晚於該日的最近完整季度，"
-        "並以 `data_date` 回傳實際季度結束日。例如週末、季度中或尚未有當季資料時，會回傳前一個完整季度，"
-        "不把 `as_of` 偽裝成資料日期。\n\n"
+        f"**最早資料**：實測 2330 最早可得季度為 `{mops_quarterly_financials.QUARTERLY_MIN_PERIOD.isoformat()}` "
+        f"（民國 102 年第 1 季），其公告期限為 `{mops_quarterly_financials.QUARTERLY_MIN_DATE.isoformat()}`；"
+        "`as_of` 早於此日回 HTTP 400。\n\n"
+        "**as_of 行為（point-in-time）**：`as_of` 代表「當天已公開的資訊」，省略時為今天。服務選取"
+        "**公告期限不晚於 as_of** 的最近一季（期限：Q1 5/15、Q2 8/14（金融業 8/31）、Q3 11/14、Q4 隔年 3/31，"
+        "見 `app/pit.py`），以 `data_date` 回傳季末日、`available_date` 回傳公告期限。"
+        "例如 `as_of=2024-05-10` 回 2023 Q4（Q1 尚未到期限），回測不會看到當時還沒公告的財報。\n\n"
         "**快取與限流**：同一市場／年度／季度的兩份全市場 HTML 會分別 gzip 快取於 `/tmp/valuation_cache/mops_quarterly`；"
         "MOPS 為免費官方來源，無需 token，但 endpoint 沒有穩定公開 rate-limit 保證，服務只在 cache miss 時請求。"
     ),
 )
 async def quarterly_financials(
     stock_id: str,
-    as_of: date = Query(default_factory=date.today, description="查詢基準日；選取不晚於此日的最近完整季度。"),
+    as_of: date = Query(default_factory=date.today, description="查詢基準日；選取公告期限不晚於此日的最近一季（point-in-time）。"),
 ):
     if as_of < mops_quarterly_financials.QUARTERLY_MIN_DATE:
         raise HTTPException(status_code=400, detail=(
             f"`as_of` must be >= {mops_quarterly_financials.QUARTERLY_MIN_DATE.isoformat()} "
-            "(MOPS t163sb06 實測最早可得季度)"
+            "(MOPS t163sb06 最早季度 2013 Q1 的公告期限)"
         ))
     if as_of > date.today():
         raise HTTPException(status_code=400, detail="`as_of` must be <= today")
