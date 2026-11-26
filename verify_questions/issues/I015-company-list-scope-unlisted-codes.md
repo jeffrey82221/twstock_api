@@ -1,9 +1,9 @@
 ---
 id: I015
-title: company_list 含興櫃／已下市代號，yfinance 股利歷史對它們每次都是空呼叫
+title: company_list 含興櫃／已下市代號，兩條股利歷史路徑都對它們發查
 severity: S3
 layer: L4（seed 範圍）
-status: closed（FinMind 部分待使用者決定）
+status: closed
 pop_tables: [raw_dividend_history_yfinance, raw_dividend_history]
 seeds: [company_list, company_basic_info_list, company_finmind_list]
 found_by: [I014 後續]
@@ -43,7 +43,7 @@ L4：`raw_dividend_history_yfinance` 以「產業鏈公司全集」為 seed，�
 
 - `db/poc/raw_dividend_history_yfinance.sql`：`FROM company_list` → `FROM company_basic_info_list`。輸出欄位不變，成功列的值不變，只移除必定為空的列。
 - `db/poc/README.md`：lineage 同步；順便更正 `raw_dividend_history.stk_code` 的 lineage（實際來源是 `company_finmind_list`）。
-- **FinMind（`company_finmind_list`）不動**：移除會丟掉 70 家公司的股利歷史，其中包括已下市公司，回測時會造成倖存者偏差。待使用者決定（見「待決定」）。
+- **FinMind（`company_finmind_list`）**：第一輪沒動（移除會丟掉 70 家公司的股利歷史）。使用者決定也只留上市櫃，見「修復（第二輪，FinMind）」。
 
 上線（README §10.5 的 pin 流程，不打上游）：
 
@@ -65,12 +65,28 @@ L4：`raw_dividend_history_yfinance` 以「產業鏈公司全集」為 seed，�
 
 `pop_definition_drift` 全部 ok；離線測試 493 passed。
 
-## 待決定（FinMind）
+## 修復（第二輪，FinMind；使用者決定只留上市櫃）
 
-`company_finmind_list` 要不要也改成只取上市櫃？
+取捨：每輪省 91 次 FinMind 呼叫（約 30% 的每小時額度），股利歷史與其他表對齊同一個母體（目前上市櫃公司）；代價是那 70 家非上市櫃公司（含已下市的新光金、錢櫃、台視）的股利歷史從資料庫移除。
 
-- 改：每輪省 91 次 FinMind 呼叫（約 30% 的每小時額度），但失去 70 家公司的股利歷史（含已下市公司）。
-- 不改（建議）：保留已下市公司的歷史，避免倖存者偏差。
+- `db/poc/company_finmind_list.sql`：`FROM company_list` → `FROM company_basic_info_list`（欄位不變，rule 18 只換 hidden view）。
+- `db/poc/README.md`：lineage 與章節索引（`company_finmind_list` 移到 `company_basic_info_list` 之後）同步。
+- `tests/pipeline/test_pop_update.py`：「下游 seed 等上游 seed 建好才能編譯」的測試例子改用 `company_basic_info_list` → `company_finmind_list`。
+
+上線：
+
+1. `Pipeline.create_views()` → `Pipeline.update_mat_views(["company_finmind_list"])`（replace_hidden_view）
+2. `pop_maintenance.delete_seed_rows(conn, p, "company_finmind_list", {"stk_code": <91 個代號>})`：先 dry run 確認 91 → 91 一對一；刪除時 pin 住回應（pg_ivm 刪除會重跑 IMMV 查詢），結束後自動清除
+
+| 項目 | 前 | 後 |
+| --- | ---: | ---: |
+| `company_finmind_list` | 514 | 423 |
+| `raw_dividend_history` | 514 | 423 |
+| 其中有股利事件的列 | 483 | 413 |
+| `dividend_event_list` | 51 | 51 |
+| http_log 新增 | — | 0 |
+
+`pop_definition_drift` 全部 ok；`run_checks.py --all` 不變（23 PASS，Q005 C1 刻意 FAIL）；離線 493 passed。
 
 相關的既有限制：其他 seed 本來就只從 `company_basic_info_list`（目前上市櫃）出發，所以已下市公司的估值、財報、月營收原本就不在資料庫裡。若之後要做無倖存者偏差的回測，需要另一份「歷史上市櫃名單」作為 seed，這是比本 issue 更大的範圍。
 

@@ -64,17 +64,18 @@ def test_seed_column_change_is_refused_and_data_kept(p):
 
 
 def test_object_blocked_by_missing_upstream_is_created_in_the_same_call(p):
-    # company_finmind_list reads pop.company_list; with neither present the
-    # downstream one does not compile until company_list is created first.
-    # company_list itself reads pop.chain_info_list (fed by an IMMV pgserver
-    # cannot build), so stand it in with an empty table of the same shape.
-    p._db_tool.execute_query("CREATE TABLE pop.chain_info_list (LIKE poc.chain_info_list);")
-    names = ["company_list", "company_finmind_list"]
+    # company_finmind_list reads pop.company_basic_info_list; with neither
+    # present the downstream one does not compile until company_basic_info_list
+    # is created first. company_basic_info_list itself reads pop.raw_company_info
+    # (an IMMV pgserver cannot build), so stand it in with an empty table of the
+    # same shape.
+    p._db_tool.execute_query("CREATE TABLE pop.raw_company_info (LIKE poc.raw_company_info);")
+    names = ["company_basic_info_list", "company_finmind_list"]
     statuses = {r["name"]: r["status"] for r in p.pop_definition_drift(names)}
-    assert statuses == {"company_list": "missing", "company_finmind_list": "invalid_sql"}
+    assert statuses == {"company_basic_info_list": "missing", "company_finmind_list": "invalid_sql"}
 
     done = {r["name"]: r for r in p.update_mat_views(names)}
-    assert done["company_list"]["result"] == "ok"
+    assert done["company_basic_info_list"]["result"] == "ok"
     assert done["company_finmind_list"]["action"] == "create_seed_table+hidden_view"
     assert done["company_finmind_list"]["result"] == "ok"
     assert all(r["status"] == "ok" for r in p.pop_definition_drift(names))
