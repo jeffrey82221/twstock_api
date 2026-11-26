@@ -240,6 +240,7 @@ _mops_filer_cache: TTLCache = TTLCache(maxsize=4096, ttl=60 * 60 * 6)
 _product_revenue_at_cache: TTLCache = TTLCache(maxsize=4096, ttl=60 * 60 * 6)
 # MOPS 該公司「最後申報期」(year, month) 或 None，24 小時；來自 t05st08（單一公司）快取加速回溯
 _last_filed_cache: TTLCache = TTLCache(maxsize=4096, ttl=60 * 60 * 24)
+_last_filed_notes: TTLCache = TTLCache(maxsize=4096, ttl=60 * 60 * 24)   # 與 _last_filed_cache 同步：單一公司頁的 notes
 # TWSE/TPEx t187ap05 每月營收彙總表：每市場一次取全市場 1000+ 筆，cache 1 小時
 _twse_revenue_cache: TTLCache = TTLCache(maxsize=4, ttl=60 * 60)
 # MOPS t21sc03 歷史月營收彙總表：以 (market_code, roc_year, month) 為 key 快取整張表 (dict[stock_id] = row)
@@ -790,6 +791,23 @@ _MOPS_HEADERS = {
 }
 
 
+# MOPS t05st08 explicit "nothing to report" answers (anything else unparsed is a failure).
+# 外國發行人（KY 股）出現在全市場申報名單裡，但單一公司頁與明細頁都回「免申報」。
+_MOPS_T05ST08_NO_DATA = {
+    "外國發行人免申報": "外國發行人免申報各項產品業務營收。",
+    "該公司無申報": "該公司未申報各項產品業務營收（採 IFRSs 後採自願申報）。",
+    "無此資料": "該公司無申報或該期間無資料。",
+}
+
+
+def _mops_t05st08_no_data(html: str) -> Optional[str]:
+    """The note for an explicit MOPS no-data page, or None."""
+    for marker, note in _MOPS_T05ST08_NO_DATA.items():
+        if marker in html:
+            return note
+    return None
+
+
 def _parse_mops_autoform(html: str) -> Optional[dict]:
     """從 step 1 回傳的 autoForm HTML 抽出 year/month/TYPEK/yearmonth。"""
     import re
@@ -854,9 +872,11 @@ def _parse_mops_table(html: str) -> dict:
         result["year"] = ym.group(1)
         result["month"] = ym.group(2).zfill(2)
 
-    # 「無申報」/錯誤訊息
-    if "該公司無申報" in html or "無此資料" in html:
-        result["notes"] = "該公司無申報或該期間無資料。"
+    # 明確的「無申報／免申報」頁
+    no_data = _mops_t05st08_no_data(html)
+    if no_data:
+        result["notes"] = no_data
+        result["no_data"] = True
         return result
 
     # 找 class='hasBorder' 表
@@ -921,7 +941,8 @@ def _parse_mops_table(html: str) -> dict:
             result["total_revenue"] = c3_amount
             continue
 
-    if result["items"] or result["total_revenue"]:
+    # 營收淨額 0（例：建商當月無認列收入，5206 民國 111/03）也是成功申報
+    if result["items"] or result["total_revenue"] is not None:
         result["found"] = True
 
     # 為每一項算佔比
@@ -991,8 +1012,8 @@ async def get_product_revenue(stock_id: str) -> dict:
             data1 = r1.json()
             if data1.get("code") != 200 or not data1.get("result", {}).get("url"):
                 out["error"] = f"MOPS redirectToOld 失敗：{data1.get('message', 'unknown')}"
-                _product_revenue_cache[stock_id] = out
-                return out
+                record_bad_payload("MOPS", MOPS_REDIRECT_URL, {"stat": f"redirectToOld {data1.get('code')}"})
+                return out          # 不快取
             mopsov_url = data1["result"]["url"]
 
             # Step 2: GET mopsov 加密 URL → autoForm HTML
@@ -1001,9 +1022,10 @@ async def get_product_revenue(stock_id: str) -> dict:
             r2.encoding = r2.encoding or "utf-8"
             html2 = r2.text
 
-            # 該公司無申報的情況直接從 step 2 HTML 偵測
-            if "該公司無申報" in html2:
-                out["notes"] = "該公司未申報各項產品業務營收（採 IFRSs 後採自願申報）。"
+            # 該公司無申報／外國發行人免申報：直接從 step 2 HTML 偵測
+            no_data = _mops_t05st08_no_data(html2)
+            if no_data:
+                out["notes"] = no_data
                 _product_revenue_cache[stock_id] = out
                 return out
 
@@ -1013,9 +1035,10 @@ async def get_product_revenue(stock_id: str) -> dict:
                 parsed = _parse_mops_table(html2)
                 if parsed["found"]:
                     out.update(parsed)
-                else:
+                    _product_revenue_cache[stock_id] = out
+                else:   # 錯誤頁／WAF 頁：記 source error、不快取（I010 同類）
                     out["error"] = "MOPS step 2 未含 autoForm，也未含資料表。"
-                _product_revenue_cache[stock_id] = out
+                    record_bad_payload("MOPS", MOPS_T05ST08_URL, {"stat": f"t05st08 step 2 unparsed {stock_id}"})
                 return out
 
             # Step 3: POST 完整參數取得 table HTML
@@ -1050,8 +1073,12 @@ async def get_product_revenue(stock_id: str) -> dict:
                 # 若 step 3 沒成功，至少使用 step 2 的 year/month
                 out["year"] = form_fields.get("year")
                 out["month"] = form_fields.get("month", "").zfill(2) if form_fields.get("month") else None
-                out["notes"] = parsed.get("notes") or "未解析到產品營收表內容。"
-                _product_revenue_cache[stock_id] = out
+                if parsed.get("no_data"):
+                    out["notes"] = parsed["notes"]
+                    _product_revenue_cache[stock_id] = out
+                else:   # 有申報期卻解析不到明細 = 錯誤頁：不可當成「未申報」快取
+                    out["error"] = "MOPS step 3 未解析到產品營收表內容。"
+                    record_bad_payload("MOPS", MOPS_T05ST08_URL, {"stat": f"t05st08 step 3 unparsed {stock_id}"})
                 return out
             out.update(parsed)
 
@@ -1069,7 +1096,8 @@ async def get_product_revenue(stock_id: str) -> dict:
         ))
         out["error"] = f"MOPS 解析錯誤：{type(e).__name__}: {str(e)[:120]}"
 
-    _product_revenue_cache[stock_id] = out
+    if not out.get("error"):   # 上游失敗不快取，下次重試
+        _product_revenue_cache[stock_id] = out
     return out
 
 
@@ -1287,6 +1315,7 @@ async def _get_last_filed_ym(stock_id: str) -> Optional[tuple[int, int]]:
         # 上游失敗（已記 source error）≠「從未申報」：不快取，讓呼叫端回報失敗（I010 同類）
         raise UpstreamFetchError(raw["error"])
     last: Optional[tuple[int, int]] = None
+    _last_filed_notes[stock_id] = raw.get("notes")   # 例：外國發行人免申報
     if raw.get("found") and raw.get("year") and raw.get("month"):
         try:
             mg_year = int(raw["year"])
@@ -1347,7 +1376,8 @@ async def get_product_revenue_at(stock_id: str, as_of_year: int, as_of_month: in
     as_of_t = (as_of_year, as_of_month)
     if last_filed is None:
         # t05st08 未回傳該公司 — 代表 MOPS 根本沒有此公司任何申報記錄，直接短路。
-        out["notes"] = (
+        exempt = _last_filed_notes.get(stock_id)
+        out["notes"] = exempt if exempt and "免申報" in exempt else (
             "公開資訊觀測站查無該公司「各項產品業務營收統計表」任何申報記錄。"
             "可能原因：代號不存在、公司未上市柜、或採用 IFRSs 後未曾自願揭露。"
         )
@@ -1410,6 +1440,13 @@ async def get_product_revenue_at(stock_id: str, as_of_year: int, as_of_month: in
 
             ym, typek, form_fields, step2_url = found_at
             parsed = await _fetch_detail_at(client, stock_id, form_fields, step2_url)
+            if parsed.pop("no_data", False):
+                out["year"] = form_fields.get("year")
+                month_v = form_fields.get("month", "")
+                out["month"] = month_v.zfill(2) if month_v else None
+                out["notes"] = parsed["notes"]
+                _product_revenue_at_cache[cache_key] = out
+                return out
             if not parsed.get("found"):
                 out["year"] = form_fields.get("year")
                 month_v = form_fields.get("month", "")

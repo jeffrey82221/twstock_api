@@ -28,6 +28,7 @@
 | [I010](issues/I010-t86-failed-day-cached-as-empty.md) | S2 | L1 | TWSE T86 下載失敗被快取成空的交易日（擴及 TPEx、BWIBBU、MI_QFIIS、SBL、STOCK_DAY、MOPS） | closed | I007 重爬（指令 5） | 2026-11-26 |
 | [I011](issues/I011-raw-and-normalized-immv-diverge.md) | S3 | L6 | 上游中途失敗時 raw 與正規化 IMMV 拿到不同回應 | closed（§10.5 refresh 流程） | 2026-11-25 重建 | 2026-11-26 |
 | [I012](issues/I012-finmind-dividend-window-drops-event.md) | S2 | L1 | FinMind 股利以除息日查詢拿到上一次股利 | closed | I011 調查 | 2026-11-26 |
+| [I013](issues/I013-mops-product-revenue-legit-pages-as-failure.md) | S3 | L1 | MOPS 產品營收把營收 0 與外國發行人免申報誤判成上游失敗 | closed | retry_failed 殘留 | 2026-11-26 |
 
 ## 覆蓋矩陣（pop 表 × 問題）
 
@@ -69,7 +70,7 @@
 依使用者要求，照 repo README 刪除並重建 `poc`、`pop`、`hidden` 三個 schema（README §10.6），再還原 seed、跑 `retry_failed.py`：
 
 - **usable% 變化（對 2026-11-25）**：`raw_company_valuation` 89.5 → 99.8、`raw_monthly_revenue_twse` 75.1 → 100、`raw_sbl_history` 40.8 → 77.0、`raw_financial_analysis` 88.3 → 94.8、`raw_yearly_financials` 83.0 → 100、`raw_dividend_history` 90.4 → 100、`raw_dividend` 95.1 → 100、`raw_institutional_net_buy_sell` 100 → 100（533 列，假日回溯後取樣日不同）。
-- **剩下的非可用列多為正當的 404**：`raw_sbl_history` 85 列（該月無借券）、`raw_finmind_news` 26 列（2330 2019–2024 部分月份 FinMind 無新聞）、`raw_financial_analysis` 15 列。`raw_product_revenue` 2 列仍是 MOPS 失敗，`raw_mops_quarterly_financials` 1 列是 8463 上市前。
+- **剩下的非可用列多為正當的 404**：`raw_sbl_history` 85 列（該月無借券）、`raw_finmind_news` 26 列（2330 2019–2024 部分月份 FinMind 無新聞）、`raw_financial_analysis` 15 列。`raw_product_revenue` 剩 1 列為 2637（KY）免申報的合法無資料（I013），`raw_mops_quarterly_financials` 1 列是 8463 上市前。
 - **重建後少掉的列**：yfinance 年／季財報約 300／270 列、FinMind 股利事件 5 筆、借券 2 個月。這些 key 已不在目前 seed SQL 的產生範圍內（不是遺失）。
 - **新發現**：I011（raw／正規化分歧）、I012（FinMind 股利 end_date 截掉當次事件）。兩者都已修復。
 - 備份：`data/backup/pop_hidden_20261125.dump`、`data/backup/pop_seed_lists_20261125.sql.gz`、DB schema `seed_backup_20261125`（23 張 seed，17,332 列；確認無誤後可 DROP）。
@@ -98,3 +99,4 @@
 | 2026-11-26 | `dividend_event_list` | `refresh_immv` raw_dividend → dividend | 51 | — | 可用 33 → 51，reference_date＝as_of 51／51 | I011、I012 |
 | 2026-11-26 | `institutional_monthly_list` | `refresh_immv` raw → 正規化 | 533 | — | 失敗 11 → 0 | I011 |
 | 2026-11-26 | 8 張正規化 IMMV 的 seed | `pin_seed_responses` → `update_mat_views` → `unpin_responses` | — | 3,586 | 列數不變、NULL 主鍵 0、上游呼叫 0 | I004 |
+| 2026-11-26 | `product_revenue_filer_list` | `retry_failed.py raw_product_revenue --apply --include-not-found` | 2 | 2 | 5206 營收 0 → found；2637 → 免申報（合法無資料） | I013 |
