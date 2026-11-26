@@ -38,3 +38,49 @@ def test_no_splits_leaves_values_unchanged(monkeypatch):
     monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(Ticker=lambda sym: fake))
     (row,) = yfs._fetch_yfinance_dividends_sync("2882.TW")
     assert row["CashEarningsDistribution"] == 2.4614 and row["SplitUnadjustFactor"] == 1.0
+
+
+# ---- empty dividends: no-dividend vs failure (I014) ----
+import asyncio  # noqa: E402
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture
+def yf_env(monkeypatch):
+    yfs._yf_dividend_cache.clear()
+    errors = []
+    monkeypatch.setattr(yfs, "_record_source_error", lambda e: errors.append(e))
+    monkeypatch.setattr(yfs, "_fetch_yfinance_dividends_sync", lambda sym: [])
+    yield monkeypatch, errors
+    yfs._yf_dividend_cache.clear()
+
+
+def test_empty_dividends_with_prices_is_no_dividend_not_error(yf_env):
+    mp, errors = yf_env
+    mp.setattr(yfs, "_yf_has_prices_sync", lambda sym: True)
+    assert asyncio.run(yfs.get_dividend_yf("1443", "上市")) == []
+    assert errors == []
+    assert yfs._yf_dividend_cache.get("1443.TW") == []        # explicit answer: cached
+
+
+def test_empty_dividends_without_prices_is_error_and_not_cached(yf_env):
+    mp, errors = yf_env
+    mp.setattr(yfs, "_yf_has_prices_sync", lambda sym: False)
+    assert asyncio.run(yfs.get_dividend_yf("9999", "上市")) == []
+    assert len(errors) == 1 and "no price history" in errors[0].message
+    assert yfs._yf_dividend_cache.get("9999.TW") is None      # retried next time
+
+
+def test_empty_statements_with_prices_is_not_error(monkeypatch):
+    yfs._yf_cache.clear()
+    errors = []
+    monkeypatch.setattr(yfs, "_record_source_error", lambda e: errors.append(e))
+    monkeypatch.setattr(yfs, "_fetch_yfinance_sync", lambda sym: [])
+    monkeypatch.setattr(yfs, "_yf_has_prices_sync", lambda sym: True)
+    assert asyncio.run(yfs.get_financial_statements_yf("6913", "上櫃")) == []
+    assert errors == [] and yfs._yf_cache.get("6913.TWO") == []
+    monkeypatch.setattr(yfs, "_yf_has_prices_sync", lambda sym: False)
+    assert asyncio.run(yfs.get_financial_statements_yf("9999", "上市")) == []
+    assert len(errors) == 1 and yfs._yf_cache.get("9999.TW") is None
+    yfs._yf_cache.clear()

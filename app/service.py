@@ -318,7 +318,7 @@ async def query_financials_yfinance(stock_id: str, as_of_str: Optional[str] = No
     latest_ni_q, latest_ni_q_date = _latest_quarter_value(qmap, as_of, "IncomeAfterTaxes")
 
     return {
-        "found": True,
+        "found": bool(fs_rows),   # Yahoo 沒收錄該公司財報時 found=false（不是上游失敗，I014）
         "stock_id": stock_id,
         "as_of": as_of.isoformat(),
         "eps": {

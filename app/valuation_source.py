@@ -572,7 +572,9 @@ async def get_company_valuation(stock_id: str, d: date) -> dict:
     * 上游失敗 → `found=False`，`reason="upstream_error"`（endpoint 回 502）
     * 股票代號不在該交易日 payload 中 → `found=False`，`reason="stock_id_not_listed"`
       （不再往前找：BWIBBU_d 每個交易日都列出全部上市股，當天沒有就代表不在涵蓋範圍）
-    * 該交易日有資料但缺 close / shares → `found=False`，reason 對應雷同 market aggregator
+    * 該股當天沒有收盤價（只有零股成交）→ 在回溯窗口內往前找該股有收盤價的交易日；
+      找不到才回 `found=False`、`reason="no_price"`
+    * 該交易日有資料但缺 shares → `found=False`，reason 對應雷同 market aggregator
     * 有完整資料 → `found=True`，`constituent` 含反推後的每股資料 + 估算股數 / 市值
     """
     code = (stock_id or "").strip()
@@ -606,6 +608,21 @@ async def get_company_valuation(stock_id: str, d: date) -> dict:
         return _result(False, "stock_id_not_listed", data_date)
 
     c, reason = build_constituent_row(code, row, basic.get(code))
+    # 當天沒有整股成交（只有零股）→ 收盤價「---」：在同一個回溯窗口內往前找這檔最近一個有收盤價的
+    # 交易日，與「非交易日回溯」同語意（例：1264 德麥 2025-09-05 只有零股成交）。
+    # 舊版 BWIBBU_d（2017-04 前）整張表都沒有收盤價欄，往前找也不會有 → 只在「別檔有收盤價」時回溯。
+    floor = d - timedelta(days=MAX_LOOKBACK_DAYS)
+    has_close_column = any((r or {}).get("close_price") is not None for r in payload.values())
+    while (c is None and reason == "no_price" and has_close_column and data_date is not None
+           and data_date - timedelta(days=1) >= floor):
+        prev = data_date - timedelta(days=1)
+        prev_date, prev_payload = await _fetch_latest_trading_day(prev, (prev - floor).days, market=market)
+        if prev_payload is None:
+            return _result(False, "upstream_error")
+        if not prev_payload or code not in prev_payload:
+            break
+        data_date = prev_date
+        c, reason = build_constituent_row(code, prev_payload[code], basic.get(code))
     if c is None:
         return _result(False, reason, data_date)
     return _result(True, None, data_date, c)
