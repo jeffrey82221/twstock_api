@@ -120,6 +120,7 @@
 - **新 issue（全部 diagnosed）**：I017 借券視窗重疊（S2）、I018 新聞重複與單日覆蓋（S3，待決定）、I019 金融股 Q3 凍結成上一季（S2）、I020 2882 TWSE 隱含 EPS 與 MOPS 差 6–7%（S2，假說待確認）、I021 日 K 當月凍結（S3，待決定）。
 - **維度矩陣的空格**：準確一欄全空；精確、合理只有 Q011／Q009 的 draft 試跑；唯一性正式斷言只有 Q008 C5（draft）。
 - **挑題**：執行 Q006（最舊的 draft）。跳過 Q005（failing，但唯一的 FAIL C1 是使用者決定保留的）與 Q007（依賴未修的 I016，且使用者在 `app/service.py` 有進行中的修改）。
+- **提交**：`93db519`，[PR #81](https://github.com/jeffrey82221/twstock_api/pull/81) 8 個 check 全過（test-db-demo、endpoint、live-sql、pg-tool、pipeline、source、sql、upstream），沒有補救。
 - **環境**：MCP `twstock-db` 連線逾時，改用 `server.py` 函式；API 原本沒有啟動。DB 時區是 UTC，台北時間 00:00–08:00 的 `CURRENT_DATE` 是前一天（已寫進 README §7.2）。
 
 ## 前次盤點發現（2026-11-26 指令 7）

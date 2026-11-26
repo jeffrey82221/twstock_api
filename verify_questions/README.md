@@ -884,6 +884,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
      附上 log 證據，用 `gh run rerun <run-id> --failed` 重跑一次；重跑仍失敗才當成程式問題處理。
    重複直到所有 check 都通過。
 6. 把 commit hash、PR 連結、CI 結果（含補救過程）寫回對應的 issue 與 LEDGER。
+   一個 commit 記不了自己的 CI 結果：留在工作目錄，下一輪指令 1 更新 LEDGER 時一起提交，不要為了記錄 CI 再開一個 commit。
 ```
 
 注意：前一次 push 的 CI 還沒通過時，不要開始下一個 issue。每個 issue 都要在 check 全過的狀態下收尾，CI 失敗才找得到是哪一次改動造成的。
