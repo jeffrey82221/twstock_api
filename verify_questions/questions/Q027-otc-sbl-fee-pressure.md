@@ -2,7 +2,7 @@
 id: Q027
 title: 上櫃 5483、3105、3264 近 3 個月的借券費率是否明顯上升（放空壓力）？
 strategy: flow               # §5.1 籌碼（上櫃邊界）
-status: draft
+status: passing
 stocks: ["5483", "3105", "3264"]
 window: {since: 2025-12-05, until: 2026-11-27}
 pop_tables: [sbl_history, raw_sbl_history, ohlcv_daily]
@@ -13,7 +13,7 @@ crawl:                       # 出題時（2026-11-27）三檔都沒有借券資
     since: 2025-12-05
     budget: 36               # TWSE t13sa870（上市櫃都在這個 endpoint）；3 檔 × 12 個月
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -109,3 +109,4 @@ WHERE stk_code IN ('5483','3105','3264') AND as_of >= DATE '2025-12-05'
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（6／6） | [run](../runs/2026-11-27_Q027.md) | 補爬 TWSE 36 列；3264 費率 0.22 倍 → 放空壓力解除；官網抽查 2 筆一致 |

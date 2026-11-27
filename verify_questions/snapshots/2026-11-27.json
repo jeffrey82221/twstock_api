@@ -1,5 +1,5 @@
 {
- "taken_at": "2026-11-27T20:09:59+08:00",
+ "taken_at": "2026-11-27T20:14:03+08:00",
  "crawl_pop_tables": [
   {
    "table_name": "chain_info_list",
@@ -79,12 +79,12 @@
   {
    "table_name": "foreign_ownership_monthly_list",
    "kind": "seed",
-   "rows": 125
+   "rows": 161
   },
   {
    "table_name": "institutional_monthly_list",
    "kind": "seed",
-   "rows": 569
+   "rows": 605
   },
   {
    "table_name": "market_valuation_date_list",
@@ -159,12 +159,12 @@
   {
    "table_name": "foreign_ownership",
    "kind": "immv",
-   "rows": 125
+   "rows": 161
   },
   {
    "table_name": "institutional_net_buy_sell",
    "kind": "immv",
-   "rows": 569
+   "rows": 605
   },
   {
    "table_name": "market_valuation_summary",
@@ -244,12 +244,12 @@
   {
    "table_name": "raw_foreign_ownership",
    "kind": "immv",
-   "rows": 125
+   "rows": 161
   },
   {
    "table_name": "raw_institutional_net_buy_sell",
    "kind": "immv",
-   "rows": 569
+   "rows": 605
   },
   {
    "table_name": "raw_market_valuation_summary",
@@ -441,25 +441,25 @@
   {
    "raw_view": "raw_foreign_ownership",
    "json_column": "foreign_ownership",
-   "total_rows": 125,
+   "total_rows": 161,
    "null_rows": 0,
    "found_false_rows": 0,
-   "usable_rows": 125,
+   "usable_rows": 161,
    "sources": {
     "TWSE MI_QFIIS": 110,
-    "TPEx qfii": 15
+    "TPEx qfii": 51
    },
    "usable_pct": 100.0
   },
   {
    "raw_view": "raw_institutional_net_buy_sell",
    "json_column": "institutional_net_buy_sell",
-   "total_rows": 569,
+   "total_rows": 605,
    "null_rows": 0,
    "found_false_rows": 0,
-   "usable_rows": 569,
+   "usable_rows": 605,
    "sources": {
-    "TPEx dailyTrade (per-day)": 28,
+    "TPEx dailyTrade (per-day)": 64,
     "TWSE T86 (per-day)": 541
    },
    "usable_pct": 100.0
@@ -904,7 +904,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 125,
+   "pop_rows": 161,
    "rows_per_hour": 0.0
   },
   {
@@ -923,7 +923,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 569,
+   "pop_rows": 605,
    "rows_per_hour": 0.0
   },
   {
@@ -1067,6 +1067,28 @@
     "max_seconds": 0.0
    },
    {
+    "endpoint": "/api/company/{id}/foreign-ownership",
+    "requests": 73,
+    "distinct_urls": 73,
+    "repeated_requests": 0,
+    "ok_2xx": 73,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.01,
+    "max_seconds": 0.0
+   },
+   {
+    "endpoint": "/api/institutional-net-buy-sell",
+    "requests": 72,
+    "distinct_urls": 72,
+    "repeated_requests": 0,
+    "ok_2xx": 72,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.02,
+    "max_seconds": 0.0
+   },
+   {
     "endpoint": "/api/company/{id}/revenue/twse",
     "requests": 63,
     "distinct_urls": 63,
@@ -1076,28 +1098,6 @@
     "server_5xx": 0,
     "avg_seconds": 0.63,
     "max_seconds": 11.9
-   },
-   {
-    "endpoint": "/api/company/{id}/foreign-ownership",
-    "requests": 37,
-    "distinct_urls": 37,
-    "repeated_requests": 0,
-    "ok_2xx": 37,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.01,
-    "max_seconds": 0.0
-   },
-   {
-    "endpoint": "/api/institutional-net-buy-sell",
-    "requests": 36,
-    "distinct_urls": 36,
-    "repeated_requests": 0,
-    "ok_2xx": 36,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.03,
-    "max_seconds": 0.0
    },
    {
     "endpoint": "/api/company/{id}/quarterly-financials",
@@ -1211,8 +1211,8 @@
    }
   ],
   "cache": {
-   "entries": 7938,
-   "ok_entries": 7921
+   "entries": 8010,
+   "ok_entries": 7993
   }
  },
  "profile": {
@@ -1352,39 +1352,39 @@
     }
    },
    "foreign_ownership": {
-    "rows": 125,
+    "rows": 161,
     "non_null": {
-     "stk_code": 125,
-     "as_of": 125,
-     "stock_id": 125,
-     "data_date": 125,
-     "stock_name": 125,
-     "issued_shares": 125,
-     "foreign_investment_available_shares": 125,
-     "foreign_investment_shares": 125,
-     "foreign_investment_available_ratio_pct": 125,
-     "foreign_investment_ratio_pct": 125,
-     "foreign_investment_limit_ratio_pct": 125,
+     "stk_code": 161,
+     "as_of": 161,
+     "stock_id": 161,
+     "data_date": 161,
+     "stock_name": 161,
+     "issued_shares": 161,
+     "foreign_investment_available_shares": 161,
+     "foreign_investment_shares": 161,
+     "foreign_investment_available_ratio_pct": 161,
+     "foreign_investment_ratio_pct": 161,
+     "foreign_investment_limit_ratio_pct": 161,
      "china_investment_limit_ratio_pct": 70,
      "change_reason": 110,
      "last_change_date": 110
     }
    },
    "institutional_net_buy_sell": {
-    "rows": 569,
+    "rows": 605,
     "non_null": {
-     "stk_code": 569,
-     "as_of": 569,
-     "market": 569,
-     "trade_date": 542,
-     "stock_name": 542,
-     "foreign_investors_net_buy_sell": 542,
-     "foreign_dealers_net_buy_sell": 279,
-     "investment_trust_net_buy_sell": 542,
-     "dealers_net_buy_sell": 542,
-     "dealers_proprietary_net_buy_sell": 402,
-     "dealers_hedge_net_buy_sell": 402,
-     "total_institutional_net_buy_sell": 542
+     "stk_code": 605,
+     "as_of": 605,
+     "market": 605,
+     "trade_date": 578,
+     "stock_name": 578,
+     "foreign_investors_net_buy_sell": 578,
+     "foreign_dealers_net_buy_sell": 315,
+     "investment_trust_net_buy_sell": 578,
+     "dealers_net_buy_sell": 578,
+     "dealers_proprietary_net_buy_sell": 438,
+     "dealers_hedge_net_buy_sell": 438,
+     "total_institutional_net_buy_sell": 578
     }
    },
    "market_valuation_summary": {
