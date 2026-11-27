@@ -1,5 +1,5 @@
 {
- "taken_at": "2026-11-28T04:22:02+08:00",
+ "taken_at": "2026-11-28T05:27:09+08:00",
  "crawl_pop_tables": [
   {
    "table_name": "chain_info_list",
@@ -64,7 +64,7 @@
   {
    "table_name": "financial_year_list",
    "kind": "seed",
-   "rows": 100
+   "rows": 104
   },
   {
    "table_name": "financial_year_yfinance_list",
@@ -299,7 +299,7 @@
   {
    "table_name": "raw_yearly_financials",
    "kind": "immv",
-   "rows": 100
+   "rows": 104
   },
   {
    "table_name": "raw_yearly_financials_yfinance",
@@ -580,12 +580,12 @@
   {
    "raw_view": "raw_yearly_financials",
    "json_column": "financials",
-   "total_rows": 100,
+   "total_rows": 104,
    "null_rows": 0,
    "found_false_rows": 0,
-   "usable_rows": 100,
+   "usable_rows": 104,
    "sources": {
-    "FinMind v4 TaiwanStockFinancialStatements": 100
+    "FinMind v4 TaiwanStockFinancialStatements": 104
    },
    "usable_pct": 100.0
   },
@@ -847,7 +847,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 100,
+   "pop_rows": 104,
    "rows_per_hour": 0.0
   },
   {
@@ -1177,6 +1177,17 @@
     "max_seconds": 0.0
    },
    {
+    "endpoint": "/api/company/{id}/financials",
+    "requests": 4,
+    "distinct_urls": 4,
+    "repeated_requests": 0,
+    "ok_2xx": 4,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.3,
+    "max_seconds": 0.4
+   },
+   {
     "endpoint": "/api/company/{id}/dividend/history/yfinance",
     "requests": 2,
     "distinct_urls": 2,
@@ -1222,8 +1233,8 @@
    }
   ],
   "cache": {
-   "entries": 8145,
-   "ok_entries": 8128
+   "entries": 8149,
+   "ok_entries": 8132
   }
  },
  "profile": {

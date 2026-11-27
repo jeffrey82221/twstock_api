@@ -2,13 +2,13 @@
 id: Q036
 title: 2330 近 3 個月的新聞熱度是否比之前一年明顯升高？新聞資料的連結、標題、日期有效嗎？
 strategy: event              # §5.1 事件
-status: draft
+status: passing
 stocks: ["2330"]
 window: {since: 2025-08-05, until: 2026-11-27}
 pop_tables: [finmind_news, raw_finmind_news]
 crawl: []                    # 出題時（2026-11-28）2330 2021-02 ～ 2026-11 每月都已在 pop
 issues: []
-last_run: null
+last_run: 2026-11-28
 ---
 
 ## 決策情境
@@ -68,3 +68,4 @@ WHERE stk_code = '2330' AND as_of >= DATE '2025-08-05'
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-28 | passing（4／4） | [run](../runs/2026-11-28_Q036.md) | 不需補爬；新聞熱度 1.14 倍，無訊號 |
