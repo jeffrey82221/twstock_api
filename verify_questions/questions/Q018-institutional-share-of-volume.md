@@ -2,7 +2,7 @@
 id: Q018
 title: 2330、2317、6488、2454 近 6 個月取樣日的法人買賣超占成交量多少？法人買賣超、成交量、成交金額彼此合理嗎？
 strategy: flow               # §5.1 籌碼（技術面的量價也用到）
-status: draft
+status: passing
 stocks: ["2330", "2317", "6488", "2454"]
 window: {since: 2026-06-05, until: 2026-11-27}
 pop_tables: [institutional_net_buy_sell, ohlcv_daily]
@@ -13,7 +13,7 @@ crawl:                       # 出題時（2026-11-27）四檔近 6 個月的法
     since: 2026-06-05
     budget: 24               # TWSE T86／TPEx；4 檔 × 6 個月，已有的不會重爬
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -101,3 +101,4 @@ WHERE stk_code IN ('2330','2317','6488','2454') AND as_of >= DATE '2026-06-05' A
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（4／4） | [run](../runs/2026-11-27_Q018.md) | 不需補爬；2330、2317 法人主導；T86／STOCK_DAY 抽查一致 |

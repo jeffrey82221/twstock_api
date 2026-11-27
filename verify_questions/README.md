@@ -860,7 +860,8 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 ### 指令 6：回歸
 
 ```text
-依 verify_questions/README.md §4 步驟 7 回歸：對所有 status 為 passing 的問題只跑斷言（不補爬），
+依 verify_questions/README.md §4 步驟 7 回歸：對所有 status 為 passing 的問題只跑斷言（不補爬；run_checks.py --status passing，
+它會先警告問題卡 status 與 LEDGER 不同步的題目，有警告先修正，否則該題會被漏掉），
 再跑 .venv/bin/python verify_questions/snapshot.py --no-save，對照 LEDGER「剖析基線」。
 變成 FAIL 的問題改為 failing；剖析相對基線退化（新的全空欄位、非空率下降、新的實體重複）也算退化。
 兩者都依 §7.3 開 issue 或附加到既有 issue。在 LEDGER 品質趨勢記一行。
