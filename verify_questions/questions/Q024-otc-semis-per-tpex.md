@@ -2,7 +2,7 @@
 id: Q024
 title: 上櫃半導體 5483、3105、3264 目前本益比在近 12 個月第幾百分位？TPEx 的估值收盤價和日 K 對得上嗎？
 strategy: valuation          # §5.1 估值（上櫃邊界）
-status: draft
+status: passing
 stocks: ["5483", "3105", "3264"]
 window: {since: 2025-12-05, until: 2026-11-27}
 pop_tables: [company_valuation, ohlcv_daily]
@@ -18,7 +18,7 @@ crawl:                       # 出題時（2026-11-27）三檔都在母體（上
     since: 2025-12-01
     budget: 36               # TPEx tradingStock；3 檔 × 12 個月（合計 72，§8.3 TWSE／TPEx 上限 120）
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -110,3 +110,4 @@ GROUP BY 1, 2 HAVING count(*) > 1
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（5／5） | [run](../runs/2026-11-27_Q024.md) | 補爬 TPEx 72 列；三檔 PER 第 16.7 百分位 → 觀察；TPEx 官網抽查一致 |
