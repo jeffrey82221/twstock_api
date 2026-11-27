@@ -81,7 +81,8 @@ curl -s http://localhost:5002/api/health  # API 存活
 verify_questions/
 ├── README.md                   # 本文件：方法與 AI 指令
 ├── DATA_QUALITY_DIMENSIONS.md  # DAMA 資料品質維度的一般定義（§7.1 的依據）
-├── LEDGER.md                   # 總帳：問題狀態、issue 清單、維度矩陣、剖析基線、品質趨勢
+├── LEDGER.md                   # 總帳：問題狀態、issue 清單、維度矩陣、剖析基線、品質趨勢、最近兩輪的盤點發現
+├── LEDGER_HISTORY.md           # 更早的盤點發現（由新到舊）
 ├── questions/                  # 問題卡，一題一檔
 │   └── Q001-valuation-per-percentile.md
 ├── runs/                       # 每次執行一份：補爬紀錄、斷言結果、維度結論、決策資料、結論
@@ -179,6 +180,7 @@ crawl:                       # 步驟 3 依序執行；budget = 本題此 seed �
   - seed: ohlcv_monthly_list
     filters: {stk_code: ["2330", "2317"]}
     order_by: ["month_start_date"]
+    since: 2023-11-01        # 選填：只補時間欄 >= since 的列（crawl_card.py 轉成 IN 清單；filters 沒有範圍條件）
     budget: 24
   - seed: mops_quarterly_financials_quarter_list
     filters: {stk_code: ["2330", "2317"]}
@@ -387,6 +389,12 @@ found_by: [Q005]
 
 ## 品質趨勢（每次盤點一行）
 | 日期 | raw 平均 usable%（可取得） | 最低三個 raw（usable%） | 全空欄位數（完整） | 實體重複列數（唯一） | 新開／關閉 issue |
+
+## 最新盤點發現／前次盤點發現
+（指令 1、7 的發現；只留最近兩輪，更早的搬到 LEDGER_HISTORY.md 最前面）
+
+## 重爬紀錄
+| 日期 | seed | filters | 刪除列數 | pinned | 重爬後狀態 | 相關 issue |
 ```
 
 `snapshots/<日期>.json` 的格式是 `{"taken_at": ..., "crawl_pop_tables": [...], "pop_raw_quality": [...], "crawl_status": [...], "http_stats": {...}, "profile": {...}}`。前五項是各 tool 的原始輸出；`profile` 是 §7.5 的剖析：`fields`（每表 `rows` 與每欄 `non_null` 列數）、`entity_dups`（每表的實體鍵、`keys` 重複組數、`extra_rows` 多出的列數）、`latest`（每表最新資料日）。
@@ -574,7 +582,7 @@ seed 的 INSERT 要求**所有欄位 NOT NULL**（[`pipeline.py` `_build_seed_in
 規則：
 
 1. **先看現有**：先用 `select` 查 `pop` 已有的列，能不爬就不爬。
-2. **dry run 再寫入**：看 `pending_matching` 和產生的 SQL，確認在預算內才以 `dry_run=false` 執行。
+2. **dry run 再寫入**：看 `pending_matching` 和產生的 SQL，確認在預算內才以 `dry_run=false` 執行。pending 遠大於 budget 時，先確認 DESC 取到的是窗口內的列：窗口有下限時在 crawl 步驟寫 `since`，否則窗口內補完後 budget 會被更舊的列吃掉（Q009：360 列 pending 全在窗口外）。
 3. **分批**：`row_cnt` 不超過上表，`timeout_seconds=300`。逾時會整批 rollback，此時把 `row_cnt` 減半重試。
 4. **爬完立刻驗可得性**：只看本次 insert 的列的 raw 可用率，不必等整體的 `pop_raw_quality`。`found=true` 不代表內容完整：上游回 200 但頁面被截斷時，adapter 可能把缺的部分當成「沒資料」（I023）。所以再看一眼本次列的實體鍵有沒有重複（§7.5 的 `ENTITY_KEYS`，例：同一個營收月出現在兩個 as_of）。
 5. **當月的日 K 要重爬才會更新**：`ohlcv_monthly_list` 一列是一整個月，insert 當天就凍結（I021）。題目要用最近幾天的日 K 時，先用 `crawl_delete_rows` 刪掉當月那一列（先 dry run），再 `crawl_insert_filtered` 重爬，每檔 1 次 TWSE／TPEx 呼叫。
@@ -857,7 +865,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 ```text
 依 verify_questions/README.md 跑一輪：
 §2 前置條件 → 指令 1 → 挑一題（優先順序：failing > 最久未跑的 draft > 最久未跑的 passing；跳過的題見下方）執行指令 3 →
-對新開的 issue 執行指令 4 → draft 少於 3 題時執行指令 2 補 3 題（優先填維度矩陣的空格）。補爬遵守 §8.3。
+對新開的 issue 執行指令 4 → 可跑的 draft（扣掉下方「挑題時跳過」的）少於 3 題時執行指令 2，補到 3 題（優先填維度矩陣的空格）。補爬遵守 §8.3。
 不要執行指令 5，把建議修復的 issue 依 §7.4 嚴重度排好（附維度）列給我。最後執行指令 8（commit、push、確認 PR check 全過）。
 ```
 

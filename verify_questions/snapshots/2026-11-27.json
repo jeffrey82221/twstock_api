@@ -1,5 +1,5 @@
 {
- "taken_at": "2026-11-27T18:15:38+08:00",
+ "taken_at": "2026-11-27T18:29:00+08:00",
  "crawl_pop_tables": [
   {
    "table_name": "chain_info_list",
@@ -14,7 +14,7 @@
   {
    "table_name": "company_basic_info_list",
    "kind": "seed",
-   "rows": 870
+   "rows": 872
   },
   {
    "table_name": "company_finmind_list",
@@ -24,7 +24,7 @@
   {
    "table_name": "company_list",
    "kind": "seed",
-   "rows": 1057
+   "rows": 1059
   },
   {
    "table_name": "company_valuation_monthly_list",
@@ -54,7 +54,7 @@
   {
    "table_name": "financial_month_twse_list",
    "kind": "seed",
-   "rows": 484
+   "rows": 499
   },
   {
    "table_name": "financial_quarter_yfinance_list",
@@ -104,7 +104,7 @@
   {
    "table_name": "product_revenue_filer_list",
    "kind": "seed",
-   "rows": 168
+   "rows": 182
   },
   {
    "table_name": "product_revenue_filer_scope_list",
@@ -119,7 +119,7 @@
   {
    "table_name": "company_business_items",
    "kind": "immv",
-   "rows": 19602
+   "rows": 19684
   },
   {
    "table_name": "company_valuation",
@@ -179,7 +179,7 @@
   {
    "table_name": "monthly_revenue_twse",
    "kind": "immv",
-   "rows": 484
+   "rows": 499
   },
   {
    "table_name": "mops_quarterly_financials",
@@ -194,7 +194,7 @@
   {
    "table_name": "product_revenue",
    "kind": "immv",
-   "rows": 553
+   "rows": 627
   },
   {
    "table_name": "raw_chain_info",
@@ -204,7 +204,7 @@
   {
    "table_name": "raw_company_info",
    "kind": "immv",
-   "rows": 1057
+   "rows": 1059
   },
   {
    "table_name": "raw_company_valuation",
@@ -224,7 +224,7 @@
   {
    "table_name": "raw_dividend_history_yfinance",
    "kind": "immv",
-   "rows": 870
+   "rows": 872
   },
   {
    "table_name": "raw_dividend_yfinance",
@@ -264,7 +264,7 @@
   {
    "table_name": "raw_monthly_revenue_twse",
    "kind": "immv",
-   "rows": 484
+   "rows": 499
   },
   {
    "table_name": "raw_mops_quarterly_financials",
@@ -279,7 +279,7 @@
   {
    "table_name": "raw_product_revenue",
    "kind": "immv",
-   "rows": 168
+   "rows": 182
   },
   {
    "table_name": "raw_product_revenue_filers",
@@ -328,25 +328,25 @@
   {
    "raw_view": "raw_company_info",
    "json_column": "basic",
-   "total_rows": 1057,
+   "total_rows": 1059,
    "null_rows": 0,
    "found_false_rows": 187,
-   "usable_rows": 870,
+   "usable_rows": 872,
    "sources": {
     "(none)": 187,
-    "TWSE OpenAPI t187ap03_L / TPEx OpenAPI mopsfin_t187ap03_O": 870
+    "TWSE OpenAPI t187ap03_L / TPEx OpenAPI mopsfin_t187ap03_O": 872
    },
    "usable_pct": 82.3
   },
   {
    "raw_view": "raw_company_info",
    "json_column": "business_items",
-   "total_rows": 1057,
+   "total_rows": 1059,
    "null_rows": 0,
    "found_false_rows": 187,
-   "usable_rows": 870,
+   "usable_rows": 872,
    "sources": {
-    "經濟部商工登記公示資料 · 公司登記基本資料 (236EE382-...025E7C)": 870,
+    "經濟部商工登記公示資料 · 公司登記基本資料 (236EE382-...025E7C)": 872,
     "(none)": 187
    },
    "usable_pct": 82.3
@@ -391,12 +391,12 @@
   {
    "raw_view": "raw_dividend_history_yfinance",
    "json_column": "dividend_history",
-   "total_rows": 870,
+   "total_rows": 872,
    "null_rows": 0,
    "found_false_rows": 0,
-   "usable_rows": 870,
+   "usable_rows": 872,
    "sources": {
-    "yfinance Ticker.dividends": 870
+    "yfinance Ticker.dividends": 872
    },
    "usable_pct": 100.0
   },
@@ -491,14 +491,14 @@
   {
    "raw_view": "raw_monthly_revenue_twse",
    "json_column": "revenue",
-   "total_rows": 484,
+   "total_rows": 499,
    "null_rows": 0,
    "found_false_rows": 0,
-   "usable_rows": 484,
+   "usable_rows": 499,
    "sources": {
     "TPEx OpenAPI t187ap05_O + MOPS t21sc03 (history)": 1,
-    "TWSE OpenAPI t187ap05_L + MOPS t21sc03 (history)": 3,
-    "MOPS t21sc03 (history)": 480
+    "TWSE OpenAPI t187ap05_L + MOPS t21sc03 (history)": 8,
+    "MOPS t21sc03 (history)": 490
    },
    "usable_pct": 100.0
   },
@@ -531,14 +531,14 @@
   {
    "raw_view": "raw_product_revenue",
    "json_column": "product_revenue",
-   "total_rows": 168,
+   "total_rows": 182,
    "null_rows": 0,
    "found_false_rows": 1,
-   "usable_rows": 167,
+   "usable_rows": 181,
    "sources": {
-    "公開資訊觀測站 (MOPS) - 各項產品業務營收統計表 (t05st08)": 168
+    "公開資訊觀測站 (MOPS) - 各項產品業務營收統計表 (t05st08)": 182
    },
-   "usable_pct": 99.4
+   "usable_pct": 99.5
   },
   {
    "raw_view": "raw_product_revenue_filers",
@@ -657,7 +657,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 870,
+   "pop_rows": 872,
    "rows_per_hour": 0.0
   },
   {
@@ -695,7 +695,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 1057,
+   "pop_rows": 1059,
    "rows_per_hour": 0.0
   },
   {
@@ -809,7 +809,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 484,
+   "pop_rows": 499,
    "rows_per_hour": 0.0
   },
   {
@@ -999,7 +999,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 168,
+   "pop_rows": 182,
    "rows_per_hour": 0.0
   },
   {
@@ -1045,6 +1045,28 @@
   "minutes": 1440,
   "endpoints": [
    {
+    "endpoint": "/api/company/{id}/revenue/twse",
+    "requests": 15,
+    "distinct_urls": 15,
+    "repeated_requests": 0,
+    "ok_2xx": 15,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.69,
+    "max_seconds": 9.2
+   },
+   {
+    "endpoint": "/api/company/{id}/product-revenue",
+    "requests": 14,
+    "distinct_urls": 14,
+    "repeated_requests": 0,
+    "ok_2xx": 14,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.33,
+    "max_seconds": 0.9
+   },
+   {
     "endpoint": "/api/company/{id}/dividend",
     "requests": 9,
     "distinct_urls": 9,
@@ -1054,21 +1076,54 @@
     "server_5xx": 0,
     "avg_seconds": 0.3,
     "max_seconds": 0.4
+   },
+   {
+    "endpoint": "/api/company/{id}/basic",
+    "requests": 2,
+    "distinct_urls": 2,
+    "repeated_requests": 0,
+    "ok_2xx": 2,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 1.17,
+    "max_seconds": 2.3
+   },
+   {
+    "endpoint": "/api/company/{id}/business-items",
+    "requests": 2,
+    "distinct_urls": 2,
+    "repeated_requests": 0,
+    "ok_2xx": 2,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.17,
+    "max_seconds": 0.2
+   },
+   {
+    "endpoint": "/api/company/{id}/dividend/history/yfinance",
+    "requests": 2,
+    "distinct_urls": 2,
+    "repeated_requests": 0,
+    "ok_2xx": 2,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 1.15,
+    "max_seconds": 1.9
    }
   ],
   "cache": {
-   "entries": 7503,
-   "ok_entries": 7486
+   "entries": 7538,
+   "ok_entries": 7521
   }
  },
  "profile": {
   "fields": {
    "company_business_items": {
-    "rows": 19602,
+    "rows": 19684,
     "non_null": {
-     "stock_id": 19602,
-     "code": 19602,
-     "desc": 19602
+     "stock_id": 19684,
+     "code": 19684,
+     "desc": 19684
     }
    },
    "company_valuation": {
@@ -1275,18 +1330,18 @@
     }
    },
    "monthly_revenue_twse": {
-    "rows": 484,
+    "rows": 499,
     "non_null": {
-     "stk_code": 484,
-     "as_of": 484,
-     "stock_id": 484,
-     "latest_month_label": 484,
-     "data_date": 484,
-     "available_date": 484,
-     "latest_month_value": 484,
-     "latest_month_yoy_pct": 412,
-     "ttm_value": 418,
-     "ttm_yoy_pct": 346
+     "stk_code": 499,
+     "as_of": 499,
+     "stock_id": 499,
+     "latest_month_label": 499,
+     "data_date": 499,
+     "available_date": 499,
+     "latest_month_value": 499,
+     "latest_month_yoy_pct": 427,
+     "ttm_value": 433,
+     "ttm_yoy_pct": 361
     }
    },
    "mops_quarterly_financials": {
@@ -1325,19 +1380,19 @@
     }
    },
    "product_revenue": {
-    "rows": 553,
+    "rows": 627,
     "non_null": {
-     "stk_code": 553,
-     "ym": 553,
-     "report_month": 553,
-     "stock_id": 553,
-     "company_name": 553,
-     "sales_return": 553,
-     "total_revenue": 553,
-     "rank": 553,
-     "name": 553,
-     "amount": 553,
-     "percentage": 553
+     "stk_code": 627,
+     "ym": 627,
+     "report_month": 627,
+     "stock_id": 627,
+     "company_name": 627,
+     "sales_return": 627,
+     "total_revenue": 627,
+     "rank": 627,
+     "name": 627,
+     "amount": 627,
+     "percentage": 627
     }
    },
    "sbl_history": {
@@ -1392,8 +1447,8 @@
    "monthly_revenue_twse": {
     "key": "stk_code, latest_month_label",
     "across_as_of": false,
-    "keys": 0,
-    "extra_rows": 0
+    "keys": 3,
+    "extra_rows": 3
    },
    "monthly_revenue": {
     "key": "stk_code, latest_month_label",

@@ -20,6 +20,7 @@ crawl:
   - seed: financial_month_twse_list
     filters: {stk_code: ["1402", "2308", "3045", "2882", "1519"]}
     order_by: ["as_of_date"]
+    since: 2026-09-10        # crawl_card.py：只補窗口內的取樣月
     budget: 15               # TWSE／MOPS t21sc03；2026-09-10、10-10、11-10 → 8、9、10 月營收
 issues: [I022]
 last_run: 2026-11-27

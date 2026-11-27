@@ -2,7 +2,7 @@
 id: Q009
 title: 2330、2317、6488 近 3 個月的借券費率是否明顯上升（放空壓力）？
 strategy: flow               # §5.1 籌碼
-status: draft
+status: passing
 stocks: ["2330", "2317", "6488"]
 window: {since: 2025-06-05, until: 2026-11-27}
 pop_tables: [sbl_history, raw_sbl_history, ohlcv_daily]
@@ -10,9 +10,10 @@ crawl:                       # 出題時（2026-11-27）三檔 2025-06 ～ 2026-
   - seed: sbl_history_monthly_list
     filters: {stk_code: ["2330", "2317", "6488"]}
     order_by: ["month_start_date"]
+    since: 2025-06-05        # crawl_card.py：只補窗口內的取樣月（沒有 since 時 DESC 會補到 2025-06 以前）
     budget: 6                # 只補 2026-12 之後新到期的取樣月
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -108,3 +109,4 @@ WHERE stk_code IN ('2330','2317','6488') AND as_of >= DATE '2025-06-05'
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（6／6） | [run](../runs/2026-11-27_Q009.md) | 6488 費率 1.76 倍 → 放空壓力升高；官網抽查 2 筆一致 |
