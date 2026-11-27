@@ -1,5 +1,5 @@
 {
- "taken_at": "2026-11-27T19:06:44+08:00",
+ "taken_at": "2026-11-27T19:14:12+08:00",
  "crawl_pop_tables": [
   {
    "table_name": "chain_info_list",
@@ -29,7 +29,7 @@
   {
    "table_name": "company_valuation_monthly_list",
    "kind": "seed",
-   "rows": 1684
+   "rows": 1726
   },
   {
    "table_name": "dividend_event_list",
@@ -99,7 +99,7 @@
   {
    "table_name": "ohlcv_monthly_list",
    "kind": "seed",
-   "rows": 1129
+   "rows": 1183
   },
   {
    "table_name": "product_revenue_filer_list",
@@ -124,7 +124,7 @@
   {
    "table_name": "company_valuation",
    "kind": "immv",
-   "rows": 1684
+   "rows": 1726
   },
   {
    "table_name": "dividend",
@@ -189,7 +189,7 @@
   {
    "table_name": "ohlcv_daily",
    "kind": "immv",
-   "rows": 23067
+   "rows": 24165
   },
   {
    "table_name": "product_revenue",
@@ -209,7 +209,7 @@
   {
    "table_name": "raw_company_valuation",
    "kind": "immv",
-   "rows": 1684
+   "rows": 1726
   },
   {
    "table_name": "raw_dividend",
@@ -274,7 +274,7 @@
   {
    "table_name": "raw_ohlcv_monthly",
    "kind": "immv",
-   "rows": 1129
+   "rows": 1183
   },
   {
    "table_name": "raw_product_revenue",
@@ -354,13 +354,13 @@
   {
    "raw_view": "raw_company_valuation",
    "json_column": "company_valuation",
-   "total_rows": 1684,
+   "total_rows": 1726,
    "null_rows": 0,
    "found_false_rows": 0,
-   "usable_rows": 1684,
+   "usable_rows": 1726,
    "sources": {
     "TPEx peQryDate + dailyQuotes (per-day)": 211,
-    "TWSE BWIBBU_d (per-day)": 1473
+    "TWSE BWIBBU_d (per-day)": 1515
    },
    "usable_pct": 100.0
   },
@@ -518,13 +518,13 @@
   {
    "raw_view": "raw_ohlcv_monthly",
    "json_column": "ohlcv",
-   "total_rows": 1129,
+   "total_rows": 1183,
    "null_rows": 0,
    "found_false_rows": 0,
-   "usable_rows": 1129,
+   "usable_rows": 1183,
    "sources": {
     "TPEx tradingStock (per-stock-per-month)": 35,
-    "TWSE STOCK_DAY (per-stock-per-month)": 1094
+    "TWSE STOCK_DAY (per-stock-per-month)": 1148
    },
    "usable_pct": 100.0
   },
@@ -714,7 +714,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 1684,
+   "pop_rows": 1726,
    "rows_per_hour": 0.0
   },
   {
@@ -980,7 +980,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 1129,
+   "pop_rows": 1183,
    "rows_per_hour": 0.0
   },
   {
@@ -1045,14 +1045,25 @@
   "minutes": 1440,
   "endpoints": [
    {
-    "endpoint": "/api/institutional-net-buy-sell",
-    "requests": 36,
-    "distinct_urls": 36,
+    "endpoint": "/api/ohlcv",
+    "requests": 57,
+    "distinct_urls": 57,
     "repeated_requests": 0,
-    "ok_2xx": 36,
+    "ok_2xx": 57,
     "not_found_404": 0,
     "server_5xx": 0,
-    "avg_seconds": 0.03,
+    "avg_seconds": 0.18,
+    "max_seconds": 0.3
+   },
+   {
+    "endpoint": "/api/company-valuation",
+    "requests": 42,
+    "distinct_urls": 42,
+    "repeated_requests": 0,
+    "ok_2xx": 42,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.01,
     "max_seconds": 0.0
    },
    {
@@ -1064,6 +1075,17 @@
     "not_found_404": 0,
     "server_5xx": 0,
     "avg_seconds": 0.01,
+    "max_seconds": 0.0
+   },
+   {
+    "endpoint": "/api/institutional-net-buy-sell",
+    "requests": 36,
+    "distinct_urls": 36,
+    "repeated_requests": 0,
+    "ok_2xx": 36,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.03,
     "max_seconds": 0.0
    },
    {
@@ -1122,17 +1144,6 @@
     "max_seconds": 0.0
    },
    {
-    "endpoint": "/api/ohlcv",
-    "requests": 3,
-    "distinct_urls": 3,
-    "repeated_requests": 0,
-    "ok_2xx": 3,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.27,
-    "max_seconds": 0.3
-   },
-   {
     "endpoint": "/api/company/{id}/dividend/history/yfinance",
     "requests": 2,
     "distinct_urls": 2,
@@ -1167,8 +1178,8 @@
    }
   ],
   "cache": {
-   "entries": 7639,
-   "ok_entries": 7622
+   "entries": 7735,
+   "ok_entries": 7718
   }
  },
  "profile": {
@@ -1182,24 +1193,24 @@
     }
    },
    "company_valuation": {
-    "rows": 1684,
+    "rows": 1726,
     "non_null": {
-     "stk_code": 1684,
-     "as_of": 1684,
-     "data_date": 1684,
-     "stock_id": 1684,
+     "stk_code": 1726,
+     "as_of": 1726,
+     "data_date": 1726,
+     "stock_id": 1726,
      "reason": 0,
-     "calculation_method": 1684,
-     "stock_name": 1684,
-     "close_price": 1684,
-     "per": 1526,
-     "pbr": 1684,
-     "dividend_yield_pct": 1684,
-     "estimated_shares": 1684,
-     "market_cap": 1684,
-     "eps_ttm": 1526,
-     "bvps": 1684,
-     "dps": 1684
+     "calculation_method": 1726,
+     "stock_name": 1726,
+     "close_price": 1726,
+     "per": 1562,
+     "pbr": 1726,
+     "dividend_yield_pct": 1726,
+     "estimated_shares": 1726,
+     "market_cap": 1726,
+     "eps_ttm": 1562,
+     "bvps": 1726,
+     "dps": 1726
     }
    },
    "dividend": {
@@ -1420,18 +1431,18 @@
     }
    },
    "ohlcv_daily": {
-    "rows": 23067,
+    "rows": 24165,
     "non_null": {
-     "trade_date": 23067,
-     "stk_code": 23067,
-     "open": 23054,
-     "high": 23054,
-     "low": 23054,
-     "close": 23054,
-     "volume": 23067,
-     "trade_value": 23067,
-     "transaction_count": 23067,
-     "change": 22954
+     "trade_date": 24165,
+     "stk_code": 24165,
+     "open": 24151,
+     "high": 24151,
+     "low": 24151,
+     "close": 24151,
+     "volume": 24165,
+     "trade_value": 24165,
+     "transaction_count": 24165,
+     "change": 24044
     }
    },
    "product_revenue": {

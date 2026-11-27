@@ -2,7 +2,7 @@
 id: Q013
 title: 2330、2317、1402 月營收年增率是否連 3 個月為正且走高？FinMind 和 TWSE／MOPS 兩個來源一致嗎？
 strategy: growth             # §5.1 成長
-status: draft
+status: passing
 stocks: ["2330", "2317", "1402"]
 window: {since: 2026-05-01, until: 2026-11-27}
 pop_tables: [monthly_revenue, monthly_revenue_twse]
@@ -18,7 +18,7 @@ crawl:                       # 出題時（2026-11-27）FinMind 只有 2330 as_o
     since: 2026-06-10
     budget: 18               # TWSE／MOPS t21sc03；3 檔 × 2026-06-10 ～ 11-10
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -74,7 +74,7 @@ JOIN (SELECT DISTINCT stk_code, latest_month_label, latest_month_value FROM pop.
   ON t.stk_code = f.stk_code AND t.latest_month_label = f.latest_month_label
 WHERE abs(f.latest_month_value - t.latest_month_value) > 0.001 * t.latest_month_value
 ```
-可比對列數（必須 > 0，否則 INCONCLUSIVE；補爬後預期 15 = 3 檔 × 2026/05–09，FinMind 標籤 2026/04–09、TWSE 2026/05–10 的交集）：
+可比對列數（必須 > 0，否則 INCONCLUSIVE；補爬後預期 15 = 3 檔 × 2026/05–09，FinMind 標籤 2026/04–09、TWSE 2026/05–10 的交集；2330 的 TWSE 另有窗口前的 2026/04，實際 16）：
 ```sql
 SELECT count(*) FROM
   (SELECT DISTINCT stk_code, latest_month_label FROM pop.monthly_revenue
@@ -126,3 +126,4 @@ WHERE stk_code IN ('2330','2317','1402') AND latest_month_value % 1000 <> 0
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（5／5） | [run](../runs/2026-11-27_Q013.md) | 補爬 FinMind 17、TWSE 9；2330 營收動能轉強；官網抽查 2 筆一致 |
