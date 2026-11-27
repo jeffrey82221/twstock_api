@@ -2,7 +2,7 @@
 id: Q019
 title: 2330、2317、2454、1101、6488 最近一年流動比率 > 150% 且負債比 < 50% 嗎？年度財務比率彼此對得上嗎？
 strategy: quality            # §5.1 體質
-status: draft
+status: passing
 stocks: ["2330", "2317", "2454", "1101", "6488", "2882"]
 window: {since: 2023, until: 2025}
 pop_tables: [financial_analysis]
@@ -13,7 +13,7 @@ crawl:                       # 出題時（2026-11-27）只有 6488 沒有年度
     since: 2022
     budget: 4                # MOPS t51sb02；2022–2025
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -89,3 +89,4 @@ HAVING max(f.year) IS DISTINCT FROM extract(year FROM (now() AT TIME ZONE 'Asia/
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（5／5） | [run](../runs/2026-11-27_Q019.md) | 補爬 6488 4 列；只有 2330 財務穩健；年報驗算一致 |
