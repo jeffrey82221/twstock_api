@@ -2,13 +2,13 @@
 id: Q028
 title: 上櫃 5483、3105、3264 近 12 個月取樣日的法人買賣超占成交量多少？TPEx 的法人買賣超、成交量、成交金額彼此合理嗎？
 strategy: flow               # §5.1 籌碼（上櫃邊界）
-status: draft
+status: passing
 stocks: ["5483", "3105", "3264"]
 window: {since: 2025-12-05, until: 2026-11-27}
 pop_tables: [institutional_net_buy_sell, ohlcv_daily]
 crawl: []                    # 出題時（2026-11-27）法人取樣由 Q026、日 K 由 Q024 補齊
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -95,3 +95,4 @@ WHERE stk_code IN ('5483','3105','3264') AND as_of >= DATE '2025-12-05' AND mark
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（4／4） | [run](../runs/2026-11-27_Q028.md) | 不需補爬；5483 法人主導；TPEx 官網抽查一致 |

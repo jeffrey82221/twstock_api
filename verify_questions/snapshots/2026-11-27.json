@@ -1,5 +1,5 @@
 {
- "taken_at": "2026-11-27T20:14:03+08:00",
+ "taken_at": "2026-11-27T20:19:09+08:00",
  "crawl_pop_tables": [
   {
    "table_name": "chain_info_list",
@@ -114,7 +114,7 @@
   {
    "table_name": "sbl_history_monthly_list",
    "kind": "seed",
-   "rows": 370
+   "rows": 406
   },
   {
    "table_name": "company_business_items",
@@ -294,7 +294,7 @@
   {
    "table_name": "raw_sbl_history",
    "kind": "immv",
-   "rows": 370
+   "rows": 406
   },
   {
    "table_name": "raw_yearly_financials",
@@ -309,7 +309,7 @@
   {
    "table_name": "sbl_history",
    "kind": "immv",
-   "rows": 26762
+   "rows": 28926
   }
  ],
  "pop_raw_quality": [
@@ -567,15 +567,15 @@
   {
    "raw_view": "raw_sbl_history",
    "json_column": "sbl_history",
-   "total_rows": 370,
+   "total_rows": 406,
    "null_rows": 85,
    "found_false_rows": 0,
-   "usable_rows": 285,
+   "usable_rows": 321,
    "sources": {
     "(none)": 85,
-    "TWSE SBL t13sa870": 285
+    "TWSE SBL t13sa870": 321
    },
-   "usable_pct": 77.0
+   "usable_pct": 79.1
   },
   {
    "raw_view": "raw_yearly_financials",
@@ -1037,7 +1037,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 370,
+   "pop_rows": 406,
    "rows_per_hour": 0.0
   }
  ],
@@ -1098,6 +1098,17 @@
     "server_5xx": 0,
     "avg_seconds": 0.63,
     "max_seconds": 11.9
+   },
+   {
+    "endpoint": "/api/company/{id}/sbl-history",
+    "requests": 36,
+    "distinct_urls": 36,
+    "repeated_requests": 0,
+    "ok_2xx": 36,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.44,
+    "max_seconds": 1.1
    },
    {
     "endpoint": "/api/company/{id}/quarterly-financials",
@@ -1211,8 +1222,8 @@
    }
   ],
   "cache": {
-   "entries": 8010,
-   "ok_entries": 7993
+   "entries": 8046,
+   "ok_entries": 8029
   }
  },
  "profile": {
@@ -1495,20 +1506,20 @@
     }
    },
    "sbl_history": {
-    "rows": 26762,
+    "rows": 28926,
     "non_null": {
-     "stk_code": 26762,
-     "as_of": 26762,
-     "stock_id": 26762,
-     "data_date": 26762,
-     "transaction_date": 26762,
-     "stock_name": 26762,
-     "transaction_type": 26762,
-     "quantity_lots": 26762,
-     "fee_rate_pct": 26762,
-     "completion_close_price": 24645,
-     "completion_date": 26762,
-     "lending_days": 26762
+     "stk_code": 28926,
+     "as_of": 28926,
+     "stock_id": 28926,
+     "data_date": 28926,
+     "transaction_date": 28926,
+     "stock_name": 28926,
+     "transaction_type": 28926,
+     "quantity_lots": 28926,
+     "fee_rate_pct": 28926,
+     "completion_close_price": 26809,
+     "completion_date": 28926,
+     "lending_days": 28926
     }
    }
   },
