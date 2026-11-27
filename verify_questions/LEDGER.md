@@ -34,8 +34,9 @@
 | [Q026](questions/Q026-otc-foreign-ratio-internal.md) | 籌碼 | 上櫃 5483、3105、3264 外資持股比；TPEx qfii 股數／比率／上限內部一致 | passing | 2026-11-27 | — |
 | [Q027](questions/Q027-otc-sbl-fee-pressure.md) | 籌碼 | 上櫃 5483、3105、3264 近 3 個月借券費率是否上升 | passing | 2026-11-27 | — |
 | [Q028](questions/Q028-otc-institutional-share-of-volume.md) | 籌碼 | 上櫃 5483、3105、3264 法人買賣超占成交量；TPEx 買賣超 ≤ 成交量、均價在漲跌停內 | passing | 2026-11-27 | — |
-| [Q029](questions/Q029-otc-dividend-two-sources.md) | 股利 | 上櫃 5483、3105、3264 除息到發放天數；FinMind vs yfinance（上櫃） | draft | — | — |
+| [Q029](questions/Q029-otc-dividend-two-sources.md) | 股利 | 上櫃 5483、3105、3264 除息到發放天數；FinMind vs yfinance（上櫃） | failing | 2026-11-27 | I026 |
 | [Q030](questions/Q030-bank-pbr-percentile.md) | 估值 | 銀行股 5880、2886、2892 PBR 近 12 個月百分位；估值收盤 vs 日 K | draft | — | — |
+| [Q031](questions/Q031-otc-dividend-accuracy-tpex.md) | 股利 | 上櫃 5483、3105、3264、6488 現金股利是否逐年提高；FinMind 對照櫃買中心除息結果 | draft | — | — |
 
 ## Issues
 
@@ -66,6 +67,7 @@
 | [I023](issues/I023-mops-revenue-page-truncated.md) | S1 | 完整性 | L0＋L1 | MOPS t21sc03 月營收頁被截斷仍當成完整頁，截斷點後的公司缺 9 月、TTM 跨 13 個月（6 列） | diagnosed（上游 18:58 已恢復，6 列待重爬） | Q008 | — |
 | [I024](issues/I024-dividend-rights-issue-as-event.md) | S3（＋S4） | 有效性 | L1＋L0 | FinMind 股利把增資／減資除權（金額全 0）當成股利事件；dividend 1 列，股利歷史另有 331 個待爬 | diagnosed（方案 A／B 待決定） | Q014（指令 7 出題） | — |
 | [I025](issues/I025-valuation-drops-report-period.md) | S3 | 完整性 | L1 | company_valuation 丟掉 BWIBBU 的「財報年/季」「股利年度」，PBR 換季跳動與 I020 的 EPS 基準無法驗證 | diagnosed | Q016（指令 7 出題） | — |
+| [I026](issues/I026-yfinance-otc-dividend-wrong-and-missing.md) | S1 | 準確性 | L0 | yfinance 上櫃股利錯值（5483 2023-01-12 記 5.57、實際 3.20）與缺事件（3264 2023-06-20） | diagnosed（方案 A／B 待決定） | Q029 | — |
 
 ## 維度矩陣（pop 表 × DAMA 維度）
 
@@ -83,7 +85,7 @@
 | `financial_analysis` | 體質 | Q003-C1 ✓；Q012-C3 ✓ | 剖析 | Q019-C5 ✓ | Q003-C3 ✓；Q019-C4 ✓ | Q012-C1 ✓（9 列）；Q019 抽查 ✓ | Q003-C4 ✓；Q019-C3 ✓ | Q012-C5 ✓ | Q003-C2 ✓ | Q019-C2 ✓ |
 | `raw_yearly_financials`（FinMind，無正規化表） | 體質 | — | — | — | — | — | — | — | 剖析 | — |
 | `dividend` | 股利 | Q005-C2 ✓；Q020-C1 ✓；Q014-C3、C6 ✓(d) | Q020-C5 ✓；Q014-C4 ✓(d) | Q020-C3 ✓ | Q014-C5 ✗(d, I024) | Q014-C1 ✓(d，27 列) | Q005-C1 ✗（使用者決定保留，I003） | — | Q005-C4 ✓ | — |
-| `dividend_yfinance` | 股利 | Q014-C3 ✓(d) | Q014-C4 ✓(d) | 剖析 | — | Q014-C2 ✓(d，27 列) | Q005-C1 ✗（同上） | — | 剖析 | — |
+| `dividend_yfinance` | 股利 | Q014-C3 ✓(d) | Q014-C4 ✓(d) | 剖析 | — | Q014-C2 ✓(d，27 列)；Q029-C2 ✗（I026） | Q005-C1 ✗（同上） | — | 剖析 | — |
 | `institutional_net_buy_sell` | 籌碼 | Q004-C1 ✓；Q015-C1 ✓ | 剖析；Q015-C4 ✓ | Q015-C5 ✓ | Q018-C4 ✓ | — | Q004-C2 ✓ | Q015-C6 ✓ | 剖析 | Q018-C2 ✓ |
 | `foreign_ownership` | 籌碼 | Q004-C3 ✓ | 剖析；Q015-C4 ✓ | Q004-C4 ✓；Q015-C5 ✓ | Q004-C4 ✓ | — | Q015-C2、C3 ✓ | Q015-C6 ✓ | 剖析 | — |
 | `sbl_history` | 籌碼 | Q009-C3 ✓ | Q009-C1 ✓ | 剖析 | Q009-C5 ✓ | Q009 抽查 ✓（非斷言） | Q009-C2 ✓ | — | Q009-C4 ✓ | Q009-C6 ✓ |
@@ -155,22 +157,22 @@
 | 2026-11-27（第 17 輪指令 7） | 96.0 | 同上（皆為已知的合法無資料） | 13（不變） | 701（不變） | 執行 Q026（passing）；出 Q028；沒有新 issue |
 | 2026-11-27（第 18 輪指令 7） | 96.0 | 同上（皆為已知的合法無資料） | 13（不變） | 701（不變） | 執行 Q027（passing）；出 Q029；沒有新 issue |
 | 2026-11-27（第 19 輪指令 7） | 96.1 | 同上（`raw_sbl_history` 77.0 → 79.1，Q027 新增 36 列全可用） | 13（不變） | 701（不變） | 執行 Q028（passing）；出 Q030；沒有新 issue |
+| 2026-11-27（第 20 輪指令 7） | 96.1 | `raw_finmind_news` 72.6、`raw_sbl_history` 79.1、`raw_company_info` 82.3 | 13（不變） | 701（不變） | 執行 Q029（failing）；開 I026（S1，L0）；出 Q031 |
 
-## 最新盤點發現（2026-11-27 20:30 第 19 輪指令 7，`snapshots/2026-11-27.json`）
+## 最新盤點發現（2026-11-27 20:40 第 20 輪指令 7，`snapshots/2026-11-27.json`）
+
+- **和第 19 輪比**：沒有任何變化（第 19 輪沒有補爬）；raw 平均 usable 96.1%。
+- **第 19 輪提交**：`f5f05b7`，PR #82 8 個 check 全過，沒有補救。
+- **挑題**：執行 Q029（最舊的可跑 draft）。補爬 FinMind 16、yfinance 11；C1、C2 FAIL。用 TPEx 除權除息計算結果表（`exDailyQ`，管線沒有用到）判定：FinMind 3 筆爭議都對，yfinance 一筆錯值（5483 2023-01-12：5.57 vs 3.20）、一筆缺事件（3264 2023-06-20），直接呼叫 yfinance 確認是 Yahoo 原值（L0）→ **I026（S1）**。另一組 5483 2024-07-25／26 是凱米颱風休市（L7），C1 改成「同日或 3 天內且金額相同」。
+- **出題（指令 2）**：補 1 題 **Q031**：櫃買中心除息結果 23 個事件當 golden，驗 FinMind 的上櫃股利（上市版是 Q014）。試跑 23／23 一致。
+- **建議修復順序（§7.4）**：I023（S1）、I026（S1，L0，方案 A 0 成本）→ I019 → I022 → I020 → I016（S2）→ I025 → I024 → I021、I018。
+
+## 前次盤點發現（2026-11-27 20:30 第 19 輪指令 7，`snapshots/2026-11-27.json`）
 
 - **和第 18 輪比**：Q027 補爬讓 `raw_sbl_history` usable 77.0 → 79.1%（新增 36 列全部可用）、`sbl_history` +2,164。
 - **第 18 輪提交**：`d744b5e`，PR #82 8 個 check 全過，沒有補救。
 - **挑題**：執行 Q028（最舊的可跑 draft，不需補爬），4／4 PASS；5483 法人主導，TPEx 三大法人與日 K 官網抽查一致（TPEx 法人單位是股、日 K 是仟股，換算後對得上）。
 - **出題（指令 2）**：補 1 題 **Q030**（銀行股估值）：5880、2886、2892，避開 I019／I020 影響的壽險型金控，只用 PBR。
-- **建議修復順序**：同第 6 輪。
-
-## 前次盤點發現（2026-11-27 20:25 第 18 輪指令 7，`snapshots/2026-11-27.json`）
-
-- **和第 17 輪比**：列數變化全部來自 Q026 補爬（外資持股、法人各 +36）。
-- **第 17 輪提交**：`482a1ab`，PR #82 8 個 check 全過，沒有補救。
-- **挑題**：執行 Q027（最舊的可跑 draft），補爬 TWSE 36 列（上櫃股借券也在 t13sa870）；6／6 PASS，還券日收盤 vs TPEx 日 K 2,097 筆一致。3264 費率 0.22 倍 → 放空壓力解除，官網抽查一致。
-- **出題（指令 2）**：補 1 題 **Q029**（上櫃股利）：Q020 換成上櫃三檔；hidden 裡 3264 的 FinMind 事件比 yfinance 多 1 個，C1 會看是不是 I024 類。
-- **上櫃路徑小結**：第 15–18 輪用 5483、3105、3264 驗了 TPEx 估值、日 K、月營收（otc 頁）、季報、qfii、三大法人、借券，全部通過。
 - **建議修復順序**：同第 6 輪。
 
 ## 重爬紀錄（crawl_delete_rows → crawl_insert_filtered）
