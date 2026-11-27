@@ -592,7 +592,12 @@ seed 的 INSERT 要求**所有欄位 NOT NULL**（[`pipeline.py` `_build_seed_in
 3. **分批**：`row_cnt` 不超過上表，`timeout_seconds=300`。逾時會整批 rollback，此時把 `row_cnt` 減半重試。
 4. **爬完立刻驗可得性**：只看本次 insert 的列的 raw 可用率，不必等整體的 `pop_raw_quality`。`found=true` 不代表內容完整：上游回 200 但頁面被截斷時，adapter 可能把缺的部分當成「沒資料」（I023）。所以再看一眼本次列的實體鍵有沒有重複（§7.5 的 `ENTITY_KEYS`，例：同一個營收月出現在兩個 as_of）。
 5. **當月的日 K 要重爬才會更新**：`ohlcv_monthly_list` 一列是一整個月，insert 當天就凍結（I021）。題目要用最近幾天的日 K 時，先用 `crawl_delete_rows` 刪掉當月那一列（先 dry run），再 `crawl_insert_filtered` 重爬，每檔 1 次 TWSE／TPEx 呼叫。
-6. **FinMind 先查額度**：先看 `crawl_status(lookback_minutes=60)`。FinMind 系 seed 的 `rows_inserted` 合計超過 200 時，延後這題的 FinMind 補爬。
+6. **FinMind 先查額度**：`crawl_status` 只算 cron（`crawl_runs`），**手動 `crawl_insert_filtered` 不會算進去**（第 11 輪：Q013 剛補爬 17 列 FinMind，`crawl_status` 仍是 0）。改數 `http_log` 裡打 FinMind 系 endpoint 的真實請求，加上 `crawl_status` 的 cron 列數，合計超過 200 時延後這題的 FinMind 補爬：
+   ```sql
+   SELECT count(*) FROM job_control.http_log
+   WHERE started_at > now() - INTERVAL '60 minutes'
+     AND url ~ '/revenue(\?|$)|/dividend(/history)?(\?|$)|/news/finmind|/financials(\?|$)'
+   ```
 7. **不動排程**：除非 issue 的修復步驟需要，不呼叫 `crawl_set_schedule`／`crawl_pause`。
 
 ## 9. 診斷手冊

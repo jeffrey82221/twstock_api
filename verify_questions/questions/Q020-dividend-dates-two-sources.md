@@ -2,7 +2,7 @@
 id: Q020
 title: 2454、6488、3045 近 4 年每次配息從公告到除息、除息到發放各隔多久？FinMind 和 yfinance 的除息日與金額一致嗎？
 strategy: income             # §5.1 股利
-status: draft
+status: passing
 stocks: ["2454", "6488", "3045"]
 window: {since: 2023-01-01, until: 2026-11-27}
 pop_tables: [dividend, dividend_yfinance]
@@ -21,12 +21,13 @@ crawl:                       # 出題時（2026-11-27）三檔在兩張股利表
     since: 2023-01-01
     budget: 19               # yfinance；2454 7、6488 8、3045 4
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
-股利再投入要算資金卡住多久：「公告 → 除息」平均 > 120 天、或「除息 → 發放」平均 > 45 天 → 現金回流慢，不適合當短期現金流部位；
-兩者都較短 → 適合。C2 FAIL 時金額不可信，C3、C4 FAIL 時天數不可信。
+「除息 → 發放」平均 > 45 天 → 除息後現金回流慢，不適合當短期現金流部位；≤ 45 天 → 適合。
+「公告 → 除息」平均 < 10 天 → 除息前可反應的時間太短（要參與除息得提早布局）。C2 FAIL 時金額不可信，C3、C4 FAIL 時天數不可信。
+（2026-11-27 第 11 輪改寫：原本把「公告 → 除息」當成資金卡住的天數，但 `announcement_date` 是除權息公告日，不是董事會決議日，見已知限制。）
 
 ## 決策 SQL
 ```sql
@@ -99,6 +100,7 @@ JOIN (SELECT DISTINCT stk_code, reference_date FROM pop.dividend_yfinance WHERE 
 ```
 
 ## 已知限制
+- `announcement_date` 是 FinMind 的「公告日期」＝除權息交易日的公告，通常在除息前 2–3 週（2454 七次都是 14–19 天），**不是董事會決議配息的日期**（2454「114年後半年度」的股利在 2026 年初就已決議）。第一版決策把它當成資金卡住的起點，屬 L7，已改寫決策情境。
 - C1、C2 只看現金股利 > 0 的事件：FinMind 會把增資／減資除權存成金額全 0 的事件（I024），yfinance 沒有這類事件，不算缺。
 - 6488 是上櫃、3045 與 2454 是上市；三檔 2023 年起配息頻率不同（季配、半年配、年配），C5 的 30 天規則對季配息也成立（間隔約 3 個月）。
 - 補爬時 FinMind 剛好用滿 §8.3 的 20 列上限，先看 `crawl_status(lookback_minutes=60)`。
@@ -106,3 +108,4 @@ JOIN (SELECT DISTINCT stk_code, reference_date FROM pop.dividend_yfinance WHERE 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（5／5） | [run](../runs/2026-11-27_Q020.md) | 補爬 FinMind 20、yfinance 16；決策情境依欄位語意改寫（L7）；三檔現金回流都 ≤ 45 天 |
