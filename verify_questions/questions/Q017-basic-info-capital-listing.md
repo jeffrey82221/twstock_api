@@ -2,7 +2,7 @@
 id: Q017
 title: 2330、2454、6488、7769、2317 掛牌多久、資本多大、屬於哪些產業鏈？基本資料的實收資本額和外資持股表的發行股數對得上嗎？
 strategy: industry           # §5.1 產業
-status: draft
+status: passing
 stocks: ["2330", "2454", "6488", "7769", "2317"]
 window: {since: 2025-11-01, until: 2026-11-27}
 pop_tables: [company_basic_info_list, chain_info_list, foreign_ownership, ohlcv_daily]
@@ -18,7 +18,7 @@ crawl:                       # 出題時（2026-11-27）7769 沒有外資持股�
     since: 2025-11-01
     budget: 13               # TWSE STOCK_DAY；掛牌月 2025-11 起（C5 檢查掛牌前沒有價格）
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -106,3 +106,4 @@ WHERE b.stk_code IN ('2330','2454','6488','7769','2317')
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（5／5） | [run](../runs/2026-11-27_Q017.md) | 補爬 7769 14 列；7769 歷史不足、6488／7769 中小型 |
