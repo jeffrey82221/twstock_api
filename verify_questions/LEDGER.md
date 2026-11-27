@@ -13,7 +13,7 @@
 | [Q005](questions/Q005-income-dividend-consistency.md) | 股利 | 2330、2317、2882、1101 連 5 年配息與殖利率 | failing（C1 刻意保留） | 2026-11-26 | I003（使用者決定保留 FAIL 作提醒） |
 | [Q006](questions/Q006-market-per-percentile.md) | 市場 | 上市大盤本益比在近 5 年第幾百分位 | passing | 2026-11-27 | — |
 | [Q007](questions/Q007-quarterly-eps-yfinance-vs-mops.md) | 成長 | 2330、2454、6488、2882、7769 近四季 EPS 年增；yfinance vs MOPS 季 EPS | draft | — | I016 |
-| [Q008](questions/Q008-product-revenue-concentration.md) | 產業 | 1402、2308、3045、2882、1519 產品營收集中度；產品營收 vs 月營收 | draft | — | — |
+| [Q008](questions/Q008-product-revenue-concentration.md) | 產業 | 1402、2308、3045、2882、1519 產品營收集中度；產品營收 vs 月營收 | failing | 2026-11-27 | I022 |
 | [Q009](questions/Q009-sbl-fee-pressure.md) | 籌碼 | 2330、2317、6488 近 3 個月借券費率是否明顯上升 | draft | — | — |
 | [Q010](questions/Q010-financial-holding-valuation.md) | 估值 | 金控 2882、2891、2886 PER 是否低於近 3 年中位數 | draft | — | I019、I020 |
 | [Q011](questions/Q011-technical-ma60-volatility.md) | 技術 | 2330、2317、6488 是否站上 60 日均線、20 日波動度 | draft | — | I021 |
@@ -43,16 +43,18 @@
 | [I019](issues/I019-financial-q3-frozen-as-previous-quarter.md) | S2 | 唯一性／及時性 | L1（＋待確認 L3） | 金融股 Q3 期限當天拿不到 Q3，回上一季並凍結 | diagnosed | 指令 1 剖析、Q010 | — |
 | [I020](issues/I020-2882-twse-per-eps-vs-mops.md) | S2 | 一致性 | 待確認 L0／L7 | 2882 TWSE 隱含 EPS 比 MOPS 近四季低 6–7% | diagnosed（假說待確認） | README §12.1、Q010 | — |
 | [I021](issues/I021-ohlcv-current-month-frozen.md) | S3 | 及時性 | L3＋流程 | 日 K 當月那一列 insert 當天就凍結 | diagnosed（待使用者決定） | Q011 | — |
+| [I022](issues/I022-product-revenue-negative-items-dropped.md) | S2 | 完整性 | L1 | MOPS 產品營收的負數項目被 adapter 丟掉，產品合計大於營收淨額（21／180 組） | diagnosed | Q008 | — |
+| [I023](issues/I023-mops-revenue-page-truncated.md) | S1 | 完整性 | L0＋L1 | MOPS t21sc03 月營收頁被截斷仍當成完整頁，截斷點後的公司缺 9 月、TTM 跨 13 個月（6 列） | diagnosed（等上游恢復） | Q008 | — |
 
 ## 維度矩陣（pop 表 × DAMA 維度）
 
-格子寫最近一次的斷言結果與出處（README §6.4）。`(d)` 是 draft 出題時的試跑結果；`剖析` 是只有 §7.5 剖析涵蓋；推導欄位互推不算（Q001 C3 只算範圍部分、Q005 C3 不算）。**準確一欄全部是空的**：還沒有任何 `accuracy` 斷言，是下一輪出題的第一優先。
+格子寫最近一次的斷言結果與出處（README §6.4）。`(d)` 是 draft 出題時的試跑結果；`剖析` 是只有 §7.5 剖析涵蓋；推導欄位互推不算（Q001 C3 只算範圍部分、Q005 C3 不算）。**準確一欄沒有任何 `accuracy` 斷言**（只有 Q008 的官網抽查），是下一輪出題的第一優先。
 
 | pop 表 | 策略 | 完整 | 唯一 | 及時 | 有效 | 準確 | 一致 | 精確 | 可取得 | 合理 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `company_valuation` | 估值 | Q001-C1 ✓ | 剖析 | Q001-C5 ✓ | Q001-C3（範圍）✓ | — | Q001-C4 ✓；Q010-C2 ✗(d, I020) | — | Q001-C2 ✓ | — |
 | `market_valuation_summary` | 市場 | Q006-C1、C2 ✓ | 剖析 | Q006-C5 ✓ | Q006-C3 ✓ | — | Q006-C4 ✓（只驗量級） | — | 剖析 | — |
-| `monthly_revenue_twse` | 成長 | Q002-C1 ✓ | 剖析 | Q002-C3 ✓ | — | — | Q002-C5、C6 ✓ | — | Q002-C2 ✓ | — |
+| `monthly_revenue_twse` | 成長 | Q002-C1 ✓ | 剖析 ✗（I023，3 組） | Q002-C3 ✓ | — | — | Q002-C5、C6 ✓ | — | Q002-C2 ✓ | — |
 | `monthly_revenue` | 成長 | 剖析 | 剖析 | 剖析 | — | — | — | — | 剖析 | — |
 | `mops_quarterly_financials` | 成長 | Q007-C1 ✗(d) | Q010-C3 ✗(d, I019) | Q002-C4 ✓ | Q007-C5 ✓(d) | — | Q002-C5、Q003-C4 ✓ | — | 剖析 | — |
 | `financial_quarterly_yfinance` | 成長 | Q007-C2 ✗(d, I016) | 剖析 | Q007-C4 ✓(d) | — | — | Q007-C3 ✓(d) | — | 剖析 | — |
@@ -65,10 +67,10 @@
 | `foreign_ownership` | 籌碼 | Q004-C3 ✓ | 剖析 | Q004-C4 ✓ | Q004-C4 ✓ | — | — | — | 剖析 | — |
 | `sbl_history` | 籌碼 | Q009-C3 ✓(d) | Q009-C1 ✓(d，I017 修正後) | 剖析 | Q009-C5 ✓(d) | — | Q009-C2 ✓(d) | — | Q004-C5 ✓ | Q009-C6 ✓(d) |
 | `ohlcv_daily` | 技術 | Q011-C1 ✓(d) | Q011-C2 ✓(d) | Q011-C6 ✗(d, I021) | — | — | Q001-C4 ✓；Q011-C5 ✓(d) | Q011-C3 ✓(d) | 剖析 | Q011-C4 ✓(d) |
-| `chain_info_list` | 產業 | — | — | — | — | — | — | — | Q008-C4 ✗(d) | — |
+| `chain_info_list` | 產業 | — | — | — | — | — | — | — | Q008-C4 ✓ | — |
 | `company_basic_info_list` | 產業 | — | — | — | — | — | — | — | 依賴鏈 | — |
-| `company_business_items` | 產業 | 剖析 | 剖析（上游重複，合法） | — | — | — | — | — | Q008-C4 ✗(d) | — |
-| `product_revenue` | 產業 | 剖析 | Q008-C5 ✓(d) | 剖析 | Q008-C2 ✗(d) | — | Q008-C1 ✗(d)；C3 INCONCLUSIVE | — | 剖析 | — |
+| `company_business_items` | 產業 | 剖析 | 剖析（上游重複，合法） | — | — | — | — | — | Q008-C4 ✓ | — |
+| `product_revenue` | 產業 | 剖析 | Q008-C5 ✓ | 剖析 | Q008-C2 ✓ | Q008 抽查 ✓（非斷言） | Q008-C1 ✗（I022）；C3 ✓ | — | 剖析 | — |
 | `finmind_news` | 事件 | 剖析 | 剖析 ✗（I018） | 剖析 | — | — | — | — | 剖析 | — |
 
 ## 剖析基線（§7.5，2026-11-27 建立）
@@ -112,8 +114,18 @@
 | 2026-11-26（I015 後） | 96.0 | `raw_finmind_news` 72.6（404，無新聞）、`raw_sbl_history` 77.0（404，無借券）、`raw_company_info` 82.3（187 檔興櫃／下市代號，判定上市櫃的那一步，保留） | — | — | 開並關閉 I015：`raw_dividend_history_yfinance` 85.4 → 100（seed 改 `company_basic_info_list`）。FinMind 那條路依使用者決定也只留上市櫃（514 → 423 列，移除 70 家非上市櫃公司的股利歷史） |
 | 2026-11-26（指令 7） | 96.0 | `raw_finmind_news` 72.6、`raw_sbl_history` 77.0、`raw_company_info` 82.3（皆為已知的合法無資料） | — | — | 執行 Q005（補爬 FinMind 9 個事件，C1 新增 1 筆 2882 L0 違規，非退化）；出 Q006–Q008；開 I016（S2，diagnosed）。注意：`raw_*_financials_yfinance` 的 100% 是假象（found=true 空結果，I016） |
 | 2026-11-27（指令 7，第一次維度剖析） | 96.0 | `raw_finmind_news` 72.6、`raw_sbl_history` 77.0、`raw_company_info` 82.3（皆為已知的合法無資料） | 13（8 個 I016、5 個結構性） | 997（缺陷：`finmind_news` 431、`sbl_history` 跨 as_of 302、`mops_quarterly_financials` 1；合法：`company_business_items` 263。另有借券同 as_of 445 列未計入，列為合法） | 執行 Q006（passing）；出 Q009–Q011；開 I017–I021（全部 diagnosed） |
+| 2026-11-27（第 1 輪指令 7） | 96.0 | `raw_finmind_news` 72.6、`raw_sbl_history` 77.0、`raw_company_info` 82.3（皆為已知的合法無資料） | 13（不變） | 698（`sbl_history` 跨 as_of 302 → 0，I017 修好；本輪補爬後 `monthly_revenue_twse` 新增 3 組，下一輪剖析會報） | 執行 Q008（failing）；開 I022（S2）、I023（S1），都已 diagnosed |
 
-## 最新盤點發現（2026-11-27 指令 7，`snapshots/2026-11-27.json`，第一份含 §7.5 剖析）
+## 最新盤點發現（2026-11-27 18:15 第 1 輪指令 7，`snapshots/2026-11-27.json`）
+
+- **和 00:04 那份比**：只有 `sbl_history` −296 列、跨 as_of 重複 302 → 0（I017 修復）；沒有新的全空欄位，raw 平均 usable 96.0% 不變，24 小時內 API 請求 9 次、5xx 0 次。
+- **工具修正**：`snapshot.py` 同一天重跑時原本和前一天的 snapshot 比，會把今天稍早的變化重報一次，也看不到這一輪的變化；改成一律和最近一份比（讀進記憶體後才覆寫）。`retry_failed.py` 的 `raw_dividend_history_yfinance` seed 還寫 `company_list`（I015 前的上游），`--apply` 會刪錯 seed；改成 `company_basic_info_list`。
+- **挑題**：執行 Q008（最舊的 draft）。跳過 Q005（只剩使用者決定保留的 C1）、Q007（依賴 I016）、Q010（依賴 I019、I020，C2、C3 必定 FAIL）。Q009、Q011 留給下一輪。
+- **新 issue**：I022（S2，L1）產品營收負數列被丟掉；I023（S1，L0＋L1）MOPS 9 月月營收頁在台北 17:59 被截斷，adapter 當成完整頁，本輪補爬的 2308、2882、3045 有 6 列缺 9 月。I023 是從 Q008 C3 的可比對列數 12 < 預期 15 追到的。
+- **出題**：draft 有 Q007、Q009、Q010、Q011 四題，不需要補。
+- **建議修復順序（§7.4）**：I023（S1 完整性；先確認上游恢復）→ I019（S2 唯一性／及時性）→ I022（S2 完整性）→ I020（S2 一致性，假說待確認）→ I016（S2 完整性，方案待決定）→ I021、I018（S3，待使用者決定）。
+
+## 前次盤點發現（2026-11-27 00:04 指令 7，第一份含 §7.5 剖析）
 
 - **raw 平均 usable 96.0%**，與前次相同；只多了 Q005 補爬的 9 個股利事件。
 - **第一次維度剖析**：13 個全空欄位（8 個 I016、5 個結構性），4 組實體重複（2 個缺陷 I017、I018，2 個合法），2 組部分空值待查（法人 27 列、月營收 YoY）。分類見「剖析基線」。

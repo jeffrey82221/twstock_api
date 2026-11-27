@@ -203,13 +203,13 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-save", action="store_true")
     args = ap.parse_args()
+    # 一律和「最近一次」盤點比（同一天重跑時就是今天稍早那份，讀進記憶體後才覆寫）。
+    # 一天跑多輪指令 7 時，和前一天比會把今天稍早的變化重複報告一次，也看不出這一輪的變化。
     previous = sorted(glob.glob(os.path.join(SNAP_DIR, "*.json")))
     prev = json.load(open(previous[-1], encoding="utf-8")) if previous else None
     cur = take()
     if not args.no_save:
         path = os.path.join(SNAP_DIR, f"{dt.date.today().isoformat()}.json")
-        if prev is not None and previous[-1] == path:  # re-run on the same day: compare to the one before
-            prev = json.load(open(previous[-2], encoding="utf-8")) if len(previous) > 1 else None
         with open(path, "w", encoding="utf-8") as f:
             json.dump(cur, f, ensure_ascii=False, indent=1, default=str)
         print(f"saved {os.path.relpath(path)}")

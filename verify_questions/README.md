@@ -90,8 +90,10 @@ verify_questions/
 │   └── I001-sbl-history-pre2015-404.md
 ├── checks/                     # 可重用的斷言模板（Jinja 參數，同 db/poc 的 {{ schema }} 慣例）
 │   └── ohlcv_daily/ohlc_consistency.sql
-├── snapshot.py                 # 指令 1 盤點：四個 MCP 呼叫＋維度剖析（§7.5）
+├── snapshot.py                 # 指令 1 盤點：四個 MCP 呼叫＋維度剖析（§7.5），和最近一份 snapshot 比較
+├── crawl_card.py               # 指令 3 補爬：依問題卡的 crawl 區塊 dry run → 分批 insert（§8.3 的 row_cnt 上限）
 ├── run_checks.py               # 執行問題卡的決策 SQL 與斷言
+├── upstream_peek.py            # 繞過 adapter 直接看上游原始頁面（準確性抽查、§9.1 診斷）
 ├── retry_failed.py             # 重爬被凍結的上游失敗列（§10.5）
 └── snapshots/                  # 每次盤點的 MCP 原始輸出與剖析
     └── 2026-11-24.json
@@ -104,9 +106,9 @@ verify_questions/
 
 | 步驟 | 做什麼 | 用到的 MCP tool | 產出 |
 | --- | --- | --- | --- |
-| 1 盤點 | 拍下資料庫現況，和上一份比較（`.venv/bin/python verify_questions/snapshot.py` 一次做完四個呼叫與 §7.5 維度剖析，並印出比較） | `crawl_pop_tables`、`pop_raw_quality`、`crawl_status(1440)`、`http_stats(1440)`、`select` | `snapshots/<日期>.json`、LEDGER 品質趨勢、維度矩陣、剖析基線 |
+| 1 盤點 | 拍下資料庫現況，和最近一份比較（`.venv/bin/python verify_questions/snapshot.py` 一次做完四個呼叫與 §7.5 維度剖析，並印出比較；同一天重跑時比的是今天稍早那份，檔案會被覆寫，所以要和 git 裡的版本比時用 `git show HEAD:verify_questions/snapshots/<日期>.json`） | `crawl_pop_tables`、`pop_raw_quality`、`crawl_status(1440)`、`http_stats(1440)`、`select` | `snapshots/<日期>.json`、LEDGER 品質趨勢、維度矩陣、剖析基線 |
 | 2 出題 | 依維度矩陣的空格、覆蓋缺口與策略維度（§5）寫問題卡 | `describe_table`、`select`（確認欄位與現有資料） | `questions/Q###.md`（`status: draft`） |
-| 3 補爬 | 依問題卡的 `crawl` 區塊補資料（規則見 §8） | `select` 看現有 → `crawl_insert_filtered` dry run → 實際寫入 | run 紀錄的「補爬」表 |
+| 3 補爬 | 依問題卡的 `crawl` 區塊補資料（規則見 §8；`.venv/bin/python verify_questions/crawl_card.py Q001 --dry-run` 先看 pending，再拿掉 `--dry-run` 執行） | `select` 看現有 → `crawl_insert_filtered` dry run → 實際寫入 | run 紀錄的「補爬」表 |
 | 4 取數 | 執行問題卡的決策 SQL | `select` | run 紀錄的「決策資料」與結論 |
 | 5 驗證 | 逐一執行斷言，判定 PASS / FAIL / INCONCLUSIVE（`.venv/bin/python verify_questions/run_checks.py Q001 --decision` 一次跑完決策 SQL 與所有斷言，每個斷言旁印出它的 DAMA 維度；印成 `[?]` 代表標籤不在 §7.1，要改），再依維度彙整 | `select` | run 紀錄的「斷言結果」與「維度結論」；失敗依 §7.3 分流 |
 | 6 診斷修復 | 根因分析（§9），修程式並閉環（§10） | `select`（含 `job_control.*`、`hidden.*`）、`poc_rebuild_views`、`pop_check_definitions`、`pop_update_mat_views`、`crawl_delete_rows`、`http_cache_evict`、`crawl_insert_filtered` | `issues/I###.md` 更新、程式 diff、測試結果 |
@@ -458,7 +460,7 @@ WHERE f.eps IS NULL OR abs(f.eps - g.eps) > 0.005
 - 送進 `select` 前去掉 `--` 註解：`select` 會把 SQL 包成子查詢，結尾的註解會吃掉外層的 `) LIMIT`。`checks/` 模板的說明寫在註解裡，代入參數後要先去掉。
 - 回傳的欄位要足以直接診斷：主鍵、日期，以及出問題的值本身，不要只回 `count(*)`。
 - 標題寫成 `### Cn <標籤> — <說明>`，標籤取自 §7.1。
-- 比對類斷言（`internal`、`cross-source`、`temporal`、`unit`、`accuracy`）都要另附「可比對列數」查詢。可比對列數為 0 時，結果是 **INCONCLUSIVE**，不是 PASS。
+- 比對類斷言（`internal`、`cross-source`、`temporal`、`unit`、`accuracy`）都要另附「可比對列數」查詢。可比對列數為 0 時，結果是 **INCONCLUSIVE**，不是 PASS。可比對列數能事先算出來時（檔數 × 期數），寫在問題卡；實際少於預期時，PASS 也要追少掉的是哪幾組，因為缺的那幾組正是沒被驗到的地方（例：Q008 C3 預期 15、實際 12，追到 I023 的截斷頁）。
 - **兩邊要獨立**：比對類斷言的兩邊，不能有一邊是同一段程式由另一邊算出來的，否則必定成立。寫之前查 §9.4 的程式與 adapter 原始碼。已知的推導欄位：`company_valuation` 的 `eps_ttm`＝收盤價 ÷ PER、`bvps`＝收盤價 ÷ PBR、`dps`＝收盤價 × 殖利率；`market_valuation_summary` 的 `market_per`、`market_pbr`、`market_dividend_yield_pct` 由同表的加總欄位算出（都在 `app/valuation_source.py`）。這類比對只是算術檢查，不算任何維度的證據，也不填進維度矩陣。
 - 斷言只讀 `pop`，不讀 `poc`。`poc` view 每次查詢都會打 HTTP，結果不穩定，也會消耗額度。
 - **日期用台北時間**：DB 時區是 UTC，台北時間 00:00–08:00 的 `CURRENT_DATE` 還是前一天。freshness、PIT 這類跟「今天」比的斷言，用 `(now() AT TIME ZONE 'Asia/Taipei')::date`（例：Q011 C6）。只是畫格點上限的 `CURRENT_DATE` 差一天沒有影響，可以不改。
@@ -574,7 +576,7 @@ seed 的 INSERT 要求**所有欄位 NOT NULL**（[`pipeline.py` `_build_seed_in
 1. **先看現有**：先用 `select` 查 `pop` 已有的列，能不爬就不爬。
 2. **dry run 再寫入**：看 `pending_matching` 和產生的 SQL，確認在預算內才以 `dry_run=false` 執行。
 3. **分批**：`row_cnt` 不超過上表，`timeout_seconds=300`。逾時會整批 rollback，此時把 `row_cnt` 減半重試。
-4. **爬完立刻驗可得性**：只看本次 insert 的列的 raw 可用率，不必等整體的 `pop_raw_quality`。
+4. **爬完立刻驗可得性**：只看本次 insert 的列的 raw 可用率，不必等整體的 `pop_raw_quality`。`found=true` 不代表內容完整：上游回 200 但頁面被截斷時，adapter 可能把缺的部分當成「沒資料」（I023）。所以再看一眼本次列的實體鍵有沒有重複（§7.5 的 `ENTITY_KEYS`，例：同一個營收月出現在兩個 as_of）。
 5. **當月的日 K 要重爬才會更新**：`ohlcv_monthly_list` 一列是一整個月，insert 當天就凍結（I021）。題目要用最近幾天的日 K 時，先用 `crawl_delete_rows` 刪掉當月那一列（先 dry run），再 `crawl_insert_filtered` 重爬，每檔 1 次 TWSE／TPEx 呼叫。
 6. **FinMind 先查額度**：先看 `crawl_status(lookback_minutes=60)`。FinMind 系 seed 的 `rows_inserted` 合計超過 200 時，延後這題的 FinMind 補爬。
 7. **不動排程**：除非 issue 的修復步驟需要，不呼叫 `crawl_set_schedule`／`crawl_pause`。
@@ -593,6 +595,8 @@ seed 的 INSERT 要求**所有欄位 NOT NULL**（[`pipeline.py` `_build_seed_in
 | 時間序列有洞 | `hidden.<seed>` 有沒有產生該格點。有 → 爬取失敗；沒有 → seed 邊界 | L6／L3 |
 | 跨來源不一致 | 找第三方（官網）判定誰對；檢查單位與日期對齊（除息日 vs 基準日、as_of vs data_date） | L1／L5／L7 |
 | 同一 URL 重複請求多 | `http_stats` 的 `repeated_requests` | L4／L6（S4） |
+| 同一實體出現在兩個 as_of、可比對列數少於預期 | 直接打 API 看是不是 API 就回舊的一期；是的話用 `upstream_peek.py` 看上游頁面是否完整（大小、結尾、列數和相鄰期比） | L0＋L1（I023）／L3（I019） |
+| 合計對不上、而且全部偏同一個方向 | `upstream_peek.py` 看上游原始儲存格：adapter 是否丟掉了負數、空白或特殊列 | L1（I022） |
 
 ### 9.2 根因層級
 
@@ -812,7 +816,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 依 verify_questions/README.md §4 步驟 3–5 執行 <Q###>：
 先 select 現有資料 → 依 §8 補爬（先 dry run，遵守 §8.1 依賴鏈與 §8.3 預算）→ 跑決策 SQL → 跑全部斷言。
 寫 runs/<今天>_<Q###>.md（格式 §6.2），含維度結論：九個維度各是 PASS、FAIL 或未驗證。
-決策結論會觸發動作時（例：列入觀察），對觸發結論的 1–2 個關鍵值做準確性抽查：查官網或公司公告，
+補爬用 crawl_card.py（先 --dry-run）。決策結論會觸發動作時（例：列入觀察），對觸發結論的 1–2 個關鍵值做準確性抽查：查官網或公司公告（MOPS 可用 upstream_peek.py），
 算進 §8.3 預算，上游封鎖時記 INCONCLUSIVE。更新問題卡的 status、last_run、歷次結果，以及 LEDGER（含維度矩陣）。
 斷言失敗依 §7.3 分流，需要時開 issue（格式 §6.3，填 dimension）。不要修改程式。
 ```

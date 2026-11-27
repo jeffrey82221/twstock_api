@@ -1,5 +1,5 @@
 {
- "taken_at": "2026-11-27T00:04:36+08:00",
+ "taken_at": "2026-11-27T18:15:38+08:00",
  "crawl_pop_tables": [
   {
    "table_name": "chain_info_list",
@@ -309,7 +309,7 @@
   {
    "table_name": "sbl_history",
    "kind": "immv",
-   "rows": 27058
+   "rows": 26762
   }
  ],
  "pop_raw_quality": [
@@ -1045,229 +1045,20 @@
   "minutes": 1440,
   "endpoints": [
    {
-    "endpoint": "/api/company-valuation",
-    "requests": 1690,
-    "distinct_urls": 1684,
-    "repeated_requests": 6,
-    "ok_2xx": 1684,
-    "not_found_404": 6,
-    "server_5xx": 0,
-    "avg_seconds": 0.09,
-    "max_seconds": 5.1
-   },
-   {
-    "endpoint": "/api/ohlcv",
-    "requests": 1583,
-    "distinct_urls": 1129,
-    "repeated_requests": 454,
-    "ok_2xx": 1583,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.35,
-    "max_seconds": 2.4
-   },
-   {
-    "endpoint": "/api/company/{id}/financials/yfinance",
-    "requests": 1339,
-    "distinct_urls": 1331,
-    "repeated_requests": 8,
-    "ok_2xx": 1339,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.23,
-    "max_seconds": 11.5
-   },
-   {
-    "endpoint": "/api/institutional-net-buy-sell",
-    "requests": 1297,
-    "distinct_urls": 538,
-    "repeated_requests": 759,
-    "ok_2xx": 1066,
-    "not_found_404": 0,
-    "server_5xx": 231,
-    "avg_seconds": 0.56,
-    "max_seconds": 21.2
-   },
-   {
-    "endpoint": "/api/company/{id}/business-items",
-    "requests": 1170,
-    "distinct_urls": 992,
-    "repeated_requests": 178,
-    "ok_2xx": 1170,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.4,
-    "max_seconds": 5.0
-   },
-   {
-    "endpoint": "/api/company/{id}/basic",
-    "requests": 1170,
-    "distinct_urls": 992,
-    "repeated_requests": 178,
-    "ok_2xx": 1170,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.01,
-    "max_seconds": 2.1
-   },
-   {
-    "endpoint": "/api/company/{id}/dividend/history/yfinance",
-    "requests": 1169,
-    "distinct_urls": 991,
-    "repeated_requests": 178,
-    "ok_2xx": 1169,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.52,
-    "max_seconds": 12.1
-   },
-   {
-    "endpoint": "/api/company/{id}/dividend/history",
-    "requests": 723,
-    "distinct_urls": 514,
-    "repeated_requests": 209,
-    "ok_2xx": 723,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.92,
-    "max_seconds": 3.5
-   },
-   {
-    "endpoint": "/api/company/{id}/revenue/twse",
-    "requests": 595,
-    "distinct_urls": 484,
-    "repeated_requests": 111,
-    "ok_2xx": 595,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.26,
-    "max_seconds": 9.4
-   },
-   {
-    "endpoint": "/api/company/{id}/sbl-history",
-    "requests": 497,
-    "distinct_urls": 370,
-    "repeated_requests": 127,
-    "ok_2xx": 285,
-    "not_found_404": 160,
-    "server_5xx": 52,
-    "avg_seconds": 0.21,
-    "max_seconds": 5.1
-   },
-   {
-    "endpoint": "/api/company/{id}/dividend/yfinance",
-    "requests": 460,
-    "distinct_urls": 460,
-    "repeated_requests": 0,
-    "ok_2xx": 460,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.34,
-    "max_seconds": 0.9
-   },
-   {
-    "endpoint": "/api/company/{id}/quarterly-financials",
-    "requests": 357,
-    "distinct_urls": 356,
-    "repeated_requests": 1,
-    "ok_2xx": 355,
-    "not_found_404": 2,
-    "server_5xx": 0,
-    "avg_seconds": 0.01,
-    "max_seconds": 0.0
-   },
-   {
-    "endpoint": "/api/v1/fundamentals/financial-analysis",
-    "requests": 303,
-    "distinct_urls": 288,
-    "repeated_requests": 15,
-    "ok_2xx": 273,
-    "not_found_404": 30,
-    "server_5xx": 0,
-    "avg_seconds": 0.04,
-    "max_seconds": 4.2
-   },
-   {
-    "endpoint": "/api/company/{id}/news/finmind",
-    "requests": 285,
-    "distinct_urls": 95,
-    "repeated_requests": 190,
-    "ok_2xx": 69,
-    "not_found_404": 26,
-    "server_5xx": 190,
-    "avg_seconds": 0.34,
-    "max_seconds": 33.0
-   },
-   {
-    "endpoint": "/api/company/{id}/financials",
-    "requests": 200,
-    "distinct_urls": 100,
-    "repeated_requests": 100,
-    "ok_2xx": 200,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 1.36,
-    "max_seconds": 2.7
-   },
-   {
     "endpoint": "/api/company/{id}/dividend",
-    "requests": 197,
-    "distinct_urls": 60,
-    "repeated_requests": 137,
-    "ok_2xx": 197,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 1.47,
-    "max_seconds": 13.7
-   },
-   {
-    "endpoint": "/api/company/{id}/foreign-ownership",
-    "requests": 88,
-    "distinct_urls": 88,
+    "requests": 9,
+    "distinct_urls": 9,
     "repeated_requests": 0,
-    "ok_2xx": 88,
+    "ok_2xx": 9,
     "not_found_404": 0,
     "server_5xx": 0,
-    "avg_seconds": 1.91,
-    "max_seconds": 9.7
-   },
-   {
-    "endpoint": "/api/company/{id}/product-revenue",
-    "requests": 27,
-    "distinct_urls": 23,
-    "repeated_requests": 4,
-    "ok_2xx": 27,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 1.74,
-    "max_seconds": 13.4
-   },
-   {
-    "endpoint": "/api/company/{id}/revenue",
-    "requests": 3,
-    "distinct_urls": 1,
-    "repeated_requests": 2,
-    "ok_2xx": 3,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 1.76,
-    "max_seconds": 2.5
-   },
-   {
-    "endpoint": "/api/chains",
-    "requests": 1,
-    "distinct_urls": 1,
-    "repeated_requests": 0,
-    "ok_2xx": 1,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.01,
-    "max_seconds": 0.0
+    "avg_seconds": 0.3,
+    "max_seconds": 0.4
    }
   ],
   "cache": {
-   "entries": 7873,
-   "ok_entries": 7771
+   "entries": 7503,
+   "ok_entries": 7486
   }
  },
  "profile": {
@@ -1550,20 +1341,20 @@
     }
    },
    "sbl_history": {
-    "rows": 27058,
+    "rows": 26762,
     "non_null": {
-     "stk_code": 27058,
-     "as_of": 27058,
-     "stock_id": 27058,
-     "data_date": 27058,
-     "transaction_date": 27058,
-     "stock_name": 27058,
-     "transaction_type": 27058,
-     "quantity_lots": 27058,
-     "fee_rate_pct": 27058,
-     "completion_close_price": 24927,
-     "completion_date": 27058,
-     "lending_days": 27058
+     "stk_code": 26762,
+     "as_of": 26762,
+     "stock_id": 26762,
+     "data_date": 26762,
+     "transaction_date": 26762,
+     "stock_name": 26762,
+     "transaction_type": 26762,
+     "quantity_lots": 26762,
+     "fee_rate_pct": 26762,
+     "completion_close_price": 24645,
+     "completion_date": 26762,
+     "lending_days": 26762
     }
    }
   },
@@ -1655,8 +1446,8 @@
    "sbl_history": {
     "key": "stk_code, transaction_date, transaction_type, quantity_lots, fee_rate_pct, completion_date, lending_days",
     "across_as_of": true,
-    "keys": 290,
-    "extra_rows": 302
+    "keys": 0,
+    "extra_rows": 0
    }
   },
   "latest": {
