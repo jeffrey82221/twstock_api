@@ -122,3 +122,77 @@ def test_get_ohlcv_reports_upstream_error(fake_http, monkeypatch):
     monkeypatch.setattr(ohlcv, "_resolve_market", fake_market)
     out = _run(ohlcv.get_ohlcv("2330", date(2020, 3, 1), date(2020, 3, 31)))
     assert out["found"] is False and out["reason"] == "upstream_error" and out["rows"] == []
+
+
+# ---- per-day-market path (short ranges / TWSE before 2010): failure ≠ market closed ----
+class _FakeResp:
+    def __init__(self, body: bytes):
+        self.content = body
+
+    def raise_for_status(self):
+        pass
+
+
+def _fake_httpx(monkeypatch, body=None, exc=None):
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            if exc is not None:
+                raise exc
+            return _FakeResp(body)
+
+    monkeypatch.setattr(ohlcv.httpx, "AsyncClient", _Client)
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(ohlcv.asyncio, "sleep", lambda *_: real_sleep(0))
+
+
+def test_mi_index_download_failure_raises(fake_http, monkeypatch):
+    from app.sources import UpstreamFetchError
+
+    _fake_httpx(monkeypatch, exc=RuntimeError("boom"))
+    with pytest.raises(UpstreamFetchError):
+        _run(ohlcv._fetch_twse_mi_index_day(date(2008, 3, 3)))
+
+
+def test_mi_index_error_page_raises_and_is_not_cached(fake_http, monkeypatch):
+    from app.sources import UpstreamFetchError
+
+    _fake_httpx(monkeypatch, body="<html>請稍後再試</html>".encode("ms950"))
+    with pytest.raises(UpstreamFetchError):
+        _run(ohlcv._fetch_twse_mi_index_day(date(2008, 3, 3)))
+    assert not ohlcv._cache_path("twse", date(2008, 3, 3)).exists()
+
+
+def test_mi_index_empty_body_is_market_closed(fake_http, monkeypatch):
+    _fake_httpx(monkeypatch, body=b"")
+    assert _run(ohlcv._fetch_twse_mi_index_day(date(2008, 3, 2))) == {}
+
+
+def test_tpex_daily_quotes_failure_raises(fake_http):
+    from app.sources import UpstreamFetchError
+
+    calls, responses = fake_http
+    responses["dailyQuotes"] = {"stat": "error"}
+    with pytest.raises(UpstreamFetchError):
+        _run(ohlcv._fetch_tpex_daily_quotes(date(2020, 3, 2)))
+
+
+def test_get_ohlcv_per_day_failure_reports_upstream_error(fake_http, monkeypatch):
+    calls, responses = fake_http
+    responses["dailyQuotes"] = {"stat": "error"}
+
+    async def fake_market(code):
+        return "上櫃"
+
+    monkeypatch.setattr(ohlcv, "_resolve_market", fake_market)
+    out = _run(ohlcv.get_ohlcv("5483", date(2020, 3, 2), date(2020, 3, 4)))
+    assert out["found"] is False and out["reason"] == "upstream_error"
+    assert out["strategy"] == "per_day_market"

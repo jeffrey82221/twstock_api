@@ -2,7 +2,7 @@
 id: Q001
 title: 2330、2317、6488 目前本益比在自身近 3 年的第幾百分位？
 strategy: valuation
-status: failing
+status: passing
 stocks: ["2330", "2317", "6488"]
 window: {since: 2023-11-01, until: 2026-11-25}
 pop_tables: [company_valuation, ohlcv_daily]
@@ -16,7 +16,7 @@ crawl:
     order_by: ["month_start_date"]
     budget: 36               # TWSE／TPEx；近 12 個月
 issues: [I005]
-last_run: 2026-11-25
+last_run: 2026-11-26
 ---
 
 ## 決策情境
