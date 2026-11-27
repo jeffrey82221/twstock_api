@@ -159,6 +159,17 @@ def _parse_num(s: Any) -> Optional[float]:
 TWSE_STOCK_DAY_URL = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
 
 
+def _record_unparsed(source: str, url: str, raw_count: int) -> None:
+    """上游回 OK 且有資料列、卻一列都解析不出來：欄位或日期格式變了，不是「無交易」。
+
+    這種回應不可快取成空結果（I010：完成月份／歷史日期會被永久凍結成資料空洞）。
+    """
+    _record_source_error(SourceError(
+        source=source, url=url, status_code=None,
+        message=f"{raw_count} raw rows but none parsed (layout changed?)",
+    ))
+
+
 async def _fetch_twse_stock_day(stk_code: str, month_start: date) -> list[dict]:
     """回傳指定股票、指定月份的日 K 陣列（原始 payload rows，未 filter 日期範圍）。"""
     cache_key = f"twse_stock_day/{stk_code}"
@@ -181,7 +192,11 @@ async def _fetch_twse_stock_day(stk_code: str, month_start: date) -> list[dict]:
         raise UpstreamFetchError(f"TWSE STOCK_DAY unexpected payload for {stk_code} {month_start:%Y-%m}")
     if state == "no_data":          # 該月無交易（尚未上市 / 已下市 / 停止交易）
         return []
-    rows = _normalize_twse_stock_day_rows(data.get("data") or [], stk_code)
+    raw = data.get("data") or []
+    rows = _normalize_twse_stock_day_rows(raw, stk_code)
+    if raw and not rows:
+        _record_unparsed("TWSE", url, len(raw))
+        raise UpstreamFetchError(f"TWSE STOCK_DAY unparsed rows for {stk_code} {month_start:%Y-%m}")
     if cacheable:
         _cache_write(cache_key, month_start, rows)
     return rows
@@ -349,6 +364,9 @@ async def _fetch_tpex_trading_stock(stk_code: str, month_start: date) -> list[di
     tables = data.get("tables") or []
     rows = tables[0].get("data") if tables else []
     out = _normalize_tpex_trading_stock_rows(rows or [], stk_code)
+    if rows and not out:
+        _record_unparsed("TPEx", url, len(rows))
+        raise UpstreamFetchError(f"TPEx tradingStock unparsed rows for {stk_code} {month_start:%Y-%m}")
     if cacheable:
         _cache_write(cache_key, month_start, out)
     return out
@@ -417,6 +435,11 @@ async def fetch_tpex_daily_quotes_checked(d: date) -> Optional[dict[str, dict]]:
         return None
 
     parsed = _parse_tpex_daily_quotes(data, d)  # 非交易日：stat ok + 空表 → {}
+    tables = data.get("tables") or []
+    raw_rows = (tables[0].get("data") or []) if tables else []
+    if raw_rows and not parsed:                 # 主表有資料卻解析不出來 ≠ 休市，不 cache
+        _record_unparsed("TPEx", url, len(raw_rows))
+        return None
     if parsed or d < date.today():
         _cache_write("tpex", d, parsed)
     return parsed

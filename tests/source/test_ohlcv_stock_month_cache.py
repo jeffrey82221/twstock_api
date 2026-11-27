@@ -196,3 +196,39 @@ def test_get_ohlcv_per_day_failure_reports_upstream_error(fake_http, monkeypatch
     out = _run(ohlcv.get_ohlcv("5483", date(2020, 3, 2), date(2020, 3, 4)))
     assert out["found"] is False and out["reason"] == "upstream_error"
     assert out["strategy"] == "per_day_market"
+
+
+# ---- stat OK but rows unparseable (layout change) ≠ no trading: raise, never cache ----
+def test_twse_stock_day_unparsed_rows_raise_and_are_not_cached(fake_http):
+    from app.sources import UpstreamFetchError
+
+    calls, responses = fake_http
+    responses["STOCK_DAY"] = {"stat": "OK", "data": [["2024-01-02", "1,000"]]}   # 欄位不足
+    with pytest.raises(UpstreamFetchError):
+        _run(ohlcv._fetch_twse_stock_day("2330", date(2020, 3, 1)))
+    assert not ohlcv._cache_path("twse_stock_day/2330", date(2020, 3, 1)).exists()
+
+
+def test_tpex_trading_stock_unparsed_rows_raise_and_are_not_cached(fake_http):
+    from app.sources import UpstreamFetchError
+
+    calls, responses = fake_http
+    responses["tradingStock"] = {"stat": "ok", "tables": [{"data": [["bad-date", "1", "50", "50", "51", "49", "50", "0", "10"]]}]}
+    with pytest.raises(UpstreamFetchError):
+        _run(ohlcv._fetch_tpex_trading_stock("5483", date(2020, 3, 1)))
+    assert not ohlcv._cache_path("tpex_trading_stock/5483", date(2020, 3, 1)).exists()
+
+
+def test_tpex_daily_quotes_unparsed_table_is_failure_not_holiday(fake_http):
+    calls, responses = fake_http
+    d = date(2020, 3, 2)
+    responses["dailyQuotes"] = {"stat": "ok", "date": "20200302", "tables": [{"data": [["5483", "中美晶", "50"]]}]}
+    assert _run(ohlcv.fetch_tpex_daily_quotes_checked(d)) is None
+    assert not ohlcv._cache_path("tpex", d).exists()
+
+
+def test_tpex_daily_quotes_empty_table_is_holiday(fake_http):
+    calls, responses = fake_http
+    d = date(2020, 3, 1)
+    responses["dailyQuotes"] = {"stat": "ok", "date": "20200301", "tables": [{"data": []}]}
+    assert _run(ohlcv.fetch_tpex_daily_quotes_checked(d)) == {}
