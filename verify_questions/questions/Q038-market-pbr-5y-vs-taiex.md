@@ -2,13 +2,13 @@
 id: Q038
 title: 上市大盤股價淨值比在近 5 年第幾百分位？5 年來估算總市值的每月變動都和加權指數一致嗎？
 strategy: market             # §5.1 市場
-status: draft
+status: passing
 stocks: []                   # 市場層級
 window: {since: 2021-11-05, until: 2026-11-27}
 pop_tables: [market_valuation_summary]
 crawl: []                    # 2017-05 起每月都已在 pop（Q006 C1）
 issues: []
-last_run: null
+last_run: 2026-11-28
 ---
 
 ## 決策情境
@@ -196,3 +196,4 @@ WHERE data_date >= DATE '2021-11-01' AND (market_pbr NOT BETWEEN 0.5 AND 10 OR m
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-28 | passing（3／3） | [run](../runs/2026-11-28_Q038.md) | 大盤 PBR 近 5 年第 90.2 百分位 → 減碼一成；PBR 本身準確性 INCONCLUSIVE |
