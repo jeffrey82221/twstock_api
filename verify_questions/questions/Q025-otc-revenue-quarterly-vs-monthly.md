@@ -2,7 +2,7 @@
 id: Q025
 title: 上櫃 5483、3105、3264、6488 月營收年增率是否連 3 個月 > 20%？上櫃的季營收和三個月月營收合計對得上嗎？
 strategy: growth             # §5.1 成長（上櫃邊界）
-status: draft
+status: passing
 stocks: ["5483", "3105", "3264", "6488"]
 window: {since: 2025-10-01, until: 2026-11-27}
 pop_tables: [monthly_revenue_twse, mops_quarterly_financials]
@@ -18,7 +18,7 @@ crawl:                       # 出題時（2026-11-27）6488 已由 Q002 補過�
     since: 2025-12-31
     budget: 12               # MOPS t163sb06；3 檔 × 2025Q4–2026Q3（兩個 seed 合計 51，§8.3 MOPS 上限 60）
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -124,3 +124,4 @@ WHERE stk_code IN ('5483','3105','3264','6488') AND latest_month_value % 1000 <>
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（5／5） | [run](../runs/2026-11-27_Q025.md) | 補爬 MOPS 51 列；3105、3264 成長動能強；3264 營收抽查一致 |

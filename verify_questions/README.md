@@ -907,7 +907,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 4. 等這次 push 觸發的 CI 跑完（`gh pr checks <PR> --watch`），確認所有 check 都通過。
 5. 有 check 失敗就補救：用 `gh run view <run-id> --log-failed` 找出原因。
    - 程式或測試造成的（包括測試裡寫死、已和新邏輯不一致的值）：修好 → 回到第 1 步，再 commit、push、等 CI。
-   - 上游環境造成的（例如 TWSE／MOPS 對 CI runner 回 307 WAF 封鎖頁、`rate_limited=True`、FinMind 402）：
+   - 上游環境造成的（例如 TWSE／MOPS 對 CI runner 回 307 WAF 封鎖頁、`rate_limited=True`、FinMind 402；或 `test-live-sql` 某個 poc view `Operation timed out after 45001 milliseconds with 0 bytes received`，同一段 log 還有其他 endpoint 的 504——2026-11-27 出現兩次，`c1606a3` 與 `270af87`，都只改了 `verify_questions/`，rerun 後通過）：
      附上 log 證據，用 `gh run rerun <run-id> --failed` 重跑一次；重跑仍失敗才當成程式問題處理。
    重複直到所有 check 都通過。
 6. 把 commit hash、PR 連結、CI 結果（含補救過程）寫回對應的 issue 與 LEDGER。

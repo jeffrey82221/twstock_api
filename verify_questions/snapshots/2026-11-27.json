@@ -1,5 +1,5 @@
 {
- "taken_at": "2026-11-27T19:56:29+08:00",
+ "taken_at": "2026-11-27T20:05:14+08:00",
  "crawl_pop_tables": [
   {
    "table_name": "chain_info_list",
@@ -29,7 +29,7 @@
   {
    "table_name": "company_valuation_monthly_list",
    "kind": "seed",
-   "rows": 1726
+   "rows": 1762
   },
   {
    "table_name": "dividend_event_list",
@@ -99,7 +99,7 @@
   {
    "table_name": "ohlcv_monthly_list",
    "kind": "seed",
-   "rows": 1196
+   "rows": 1232
   },
   {
    "table_name": "product_revenue_filer_list",
@@ -124,7 +124,7 @@
   {
    "table_name": "company_valuation",
    "kind": "immv",
-   "rows": 1726
+   "rows": 1762
   },
   {
    "table_name": "dividend",
@@ -189,7 +189,7 @@
   {
    "table_name": "ohlcv_daily",
    "kind": "immv",
-   "rows": 24407
+   "rows": 25127
   },
   {
    "table_name": "product_revenue",
@@ -209,7 +209,7 @@
   {
    "table_name": "raw_company_valuation",
    "kind": "immv",
-   "rows": 1726
+   "rows": 1762
   },
   {
    "table_name": "raw_dividend",
@@ -274,7 +274,7 @@
   {
    "table_name": "raw_ohlcv_monthly",
    "kind": "immv",
-   "rows": 1196
+   "rows": 1232
   },
   {
    "table_name": "raw_product_revenue",
@@ -354,12 +354,12 @@
   {
    "raw_view": "raw_company_valuation",
    "json_column": "company_valuation",
-   "total_rows": 1726,
+   "total_rows": 1762,
    "null_rows": 0,
    "found_false_rows": 0,
-   "usable_rows": 1726,
+   "usable_rows": 1762,
    "sources": {
-    "TPEx peQryDate + dailyQuotes (per-day)": 211,
+    "TPEx peQryDate + dailyQuotes (per-day)": 247,
     "TWSE BWIBBU_d (per-day)": 1515
    },
    "usable_pct": 100.0
@@ -518,12 +518,12 @@
   {
    "raw_view": "raw_ohlcv_monthly",
    "json_column": "ohlcv",
-   "total_rows": 1196,
+   "total_rows": 1232,
    "null_rows": 0,
    "found_false_rows": 0,
-   "usable_rows": 1196,
+   "usable_rows": 1232,
    "sources": {
-    "TPEx tradingStock (per-stock-per-month)": 35,
+    "TPEx tradingStock (per-stock-per-month)": 71,
     "TWSE STOCK_DAY (per-stock-per-month)": 1161
    },
    "usable_pct": 100.0
@@ -714,7 +714,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 1726,
+   "pop_rows": 1762,
    "rows_per_hour": 0.0
   },
   {
@@ -980,7 +980,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 1196,
+   "pop_rows": 1232,
    "rows_per_hour": 0.0
   },
   {
@@ -1046,21 +1046,21 @@
   "endpoints": [
    {
     "endpoint": "/api/ohlcv",
-    "requests": 70,
-    "distinct_urls": 70,
+    "requests": 106,
+    "distinct_urls": 106,
     "repeated_requests": 0,
-    "ok_2xx": 70,
+    "ok_2xx": 106,
     "not_found_404": 0,
     "server_5xx": 0,
-    "avg_seconds": 0.19,
+    "avg_seconds": 0.21,
     "max_seconds": 0.5
    },
    {
     "endpoint": "/api/company-valuation",
-    "requests": 42,
-    "distinct_urls": 42,
+    "requests": 78,
+    "distinct_urls": 78,
     "repeated_requests": 0,
-    "ok_2xx": 42,
+    "ok_2xx": 78,
     "not_found_404": 0,
     "server_5xx": 0,
     "avg_seconds": 0.01,
@@ -1211,8 +1211,8 @@
    }
   ],
   "cache": {
-   "entries": 7815,
-   "ok_entries": 7798
+   "entries": 7887,
+   "ok_entries": 7870
   }
  },
  "profile": {
@@ -1226,24 +1226,24 @@
     }
    },
    "company_valuation": {
-    "rows": 1726,
+    "rows": 1762,
     "non_null": {
-     "stk_code": 1726,
-     "as_of": 1726,
-     "data_date": 1726,
-     "stock_id": 1726,
+     "stk_code": 1762,
+     "as_of": 1762,
+     "data_date": 1762,
+     "stock_id": 1762,
      "reason": 0,
-     "calculation_method": 1726,
-     "stock_name": 1726,
-     "close_price": 1726,
-     "per": 1562,
-     "pbr": 1726,
-     "dividend_yield_pct": 1726,
-     "estimated_shares": 1726,
-     "market_cap": 1726,
-     "eps_ttm": 1562,
-     "bvps": 1726,
-     "dps": 1726
+     "calculation_method": 1762,
+     "stock_name": 1762,
+     "close_price": 1762,
+     "per": 1598,
+     "pbr": 1762,
+     "dividend_yield_pct": 1762,
+     "estimated_shares": 1762,
+     "market_cap": 1762,
+     "eps_ttm": 1598,
+     "bvps": 1762,
+     "dps": 1762
     }
    },
    "dividend": {
@@ -1464,18 +1464,18 @@
     }
    },
    "ohlcv_daily": {
-    "rows": 24407,
+    "rows": 25127,
     "non_null": {
-     "trade_date": 24407,
-     "stk_code": 24407,
-     "open": 24393,
-     "high": 24393,
-     "low": 24393,
-     "close": 24393,
-     "volume": 24407,
-     "trade_value": 24407,
-     "transaction_count": 24407,
-     "change": 24284
+     "trade_date": 25127,
+     "stk_code": 25127,
+     "open": 25113,
+     "high": 25113,
+     "low": 25113,
+     "close": 25113,
+     "volume": 25127,
+     "trade_value": 25127,
+     "transaction_count": 25127,
+     "change": 25000
     }
    },
    "product_revenue": {
