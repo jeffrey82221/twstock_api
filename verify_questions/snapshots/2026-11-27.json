@@ -1,5 +1,5 @@
 {
- "taken_at": "2026-11-27T20:24:13+08:00",
+ "taken_at": "2026-11-27T20:32:50+08:00",
  "crawl_pop_tables": [
   {
    "table_name": "chain_info_list",
@@ -19,7 +19,7 @@
   {
    "table_name": "company_finmind_list",
    "kind": "seed",
-   "rows": 424
+   "rows": 425
   },
   {
    "table_name": "company_list",
@@ -34,12 +34,12 @@
   {
    "table_name": "dividend_event_list",
    "kind": "seed",
-   "rows": 79
+   "rows": 94
   },
   {
    "table_name": "dividend_event_yfinance_list",
    "kind": "seed",
-   "rows": 476
+   "rows": 487
   },
   {
    "table_name": "financial_analysis_year_list",
@@ -129,12 +129,12 @@
   {
    "table_name": "dividend",
    "kind": "immv",
-   "rows": 79
+   "rows": 94
   },
   {
    "table_name": "dividend_yfinance",
    "kind": "immv",
-   "rows": 476
+   "rows": 487
   },
   {
    "table_name": "financial_analysis",
@@ -214,12 +214,12 @@
   {
    "table_name": "raw_dividend",
    "kind": "immv",
-   "rows": 79
+   "rows": 94
   },
   {
    "table_name": "raw_dividend_history",
    "kind": "immv",
-   "rows": 424
+   "rows": 425
   },
   {
    "table_name": "raw_dividend_history_yfinance",
@@ -229,7 +229,7 @@
   {
    "table_name": "raw_dividend_yfinance",
    "kind": "immv",
-   "rows": 476
+   "rows": 487
   },
   {
    "table_name": "raw_financial_analysis",
@@ -367,24 +367,24 @@
   {
    "raw_view": "raw_dividend",
    "json_column": "dividend",
-   "total_rows": 79,
+   "total_rows": 94,
    "null_rows": 0,
    "found_false_rows": 0,
-   "usable_rows": 79,
+   "usable_rows": 94,
    "sources": {
-    "FinMind v4 TaiwanStockDividend": 79
+    "FinMind v4 TaiwanStockDividend": 94
    },
    "usable_pct": 100.0
   },
   {
    "raw_view": "raw_dividend_history",
    "json_column": "dividend_history",
-   "total_rows": 424,
+   "total_rows": 425,
    "null_rows": 0,
    "found_false_rows": 0,
-   "usable_rows": 424,
+   "usable_rows": 425,
    "sources": {
-    "FinMind v4 TaiwanStockDividend": 424
+    "FinMind v4 TaiwanStockDividend": 425
    },
    "usable_pct": 100.0
   },
@@ -403,12 +403,12 @@
   {
    "raw_view": "raw_dividend_yfinance",
    "json_column": "dividend",
-   "total_rows": 476,
+   "total_rows": 487,
    "null_rows": 0,
    "found_false_rows": 0,
-   "usable_rows": 476,
+   "usable_rows": 487,
    "sources": {
-    "yfinance Ticker.dividends": 476
+    "yfinance Ticker.dividends": 487
    },
    "usable_pct": 100.0
   },
@@ -676,7 +676,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 424,
+   "pop_rows": 425,
    "rows_per_hour": 0.0
   },
   {
@@ -733,7 +733,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 79,
+   "pop_rows": 94,
    "rows_per_hour": 0.0
   },
   {
@@ -752,7 +752,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 476,
+   "pop_rows": 487,
    "rows_per_hour": 0.0
   },
   {
@@ -1100,6 +1100,17 @@
     "max_seconds": 11.9
    },
    {
+    "endpoint": "/api/company/{id}/dividend",
+    "requests": 43,
+    "distinct_urls": 43,
+    "repeated_requests": 0,
+    "ok_2xx": 43,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.28,
+    "max_seconds": 0.5
+   },
+   {
     "endpoint": "/api/company/{id}/sbl-history",
     "requests": 36,
     "distinct_urls": 36,
@@ -1122,15 +1133,15 @@
     "max_seconds": 0.1
    },
    {
-    "endpoint": "/api/company/{id}/dividend",
-    "requests": 28,
-    "distinct_urls": 28,
+    "endpoint": "/api/company/{id}/dividend/yfinance",
+    "requests": 27,
+    "distinct_urls": 27,
     "repeated_requests": 0,
-    "ok_2xx": 28,
+    "ok_2xx": 27,
     "not_found_404": 0,
     "server_5xx": 0,
-    "avg_seconds": 0.28,
-    "max_seconds": 0.5
+    "avg_seconds": 0.17,
+    "max_seconds": 2.0
    },
    {
     "endpoint": "/api/company/{id}/revenue",
@@ -1142,17 +1153,6 @@
     "server_5xx": 0,
     "avg_seconds": 0.27,
     "max_seconds": 0.4
-   },
-   {
-    "endpoint": "/api/company/{id}/dividend/yfinance",
-    "requests": 16,
-    "distinct_urls": 16,
-    "repeated_requests": 0,
-    "ok_2xx": 16,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.18,
-    "max_seconds": 2.0
    },
    {
     "endpoint": "/api/company/{id}/product-revenue",
@@ -1188,6 +1188,17 @@
     "max_seconds": 1.9
    },
    {
+    "endpoint": "/api/company/{id}/dividend/history",
+    "requests": 2,
+    "distinct_urls": 2,
+    "repeated_requests": 0,
+    "ok_2xx": 2,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.35,
+    "max_seconds": 0.4
+   },
+   {
     "endpoint": "/api/company/{id}/business-items",
     "requests": 2,
     "distinct_urls": 2,
@@ -1208,22 +1219,11 @@
     "server_5xx": 0,
     "avg_seconds": 1.17,
     "max_seconds": 2.3
-   },
-   {
-    "endpoint": "/api/company/{id}/dividend/history",
-    "requests": 1,
-    "distinct_urls": 1,
-    "repeated_requests": 0,
-    "ok_2xx": 1,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.33,
-    "max_seconds": 0.3
    }
   ],
   "cache": {
-   "entries": 8046,
-   "ok_entries": 8029
+   "entries": 8073,
+   "ok_entries": 8056
   }
  },
  "profile": {
@@ -1258,32 +1258,32 @@
     }
    },
    "dividend": {
-    "rows": 79,
+    "rows": 94,
     "non_null": {
-     "stk_code": 79,
-     "as_of": 79,
-     "stock_id": 79,
-     "dividend_year": 79,
-     "reference_date": 79,
-     "cash_dividend": 79,
-     "stock_dividend": 79,
-     "cash_ex_dividend_date": 78,
-     "cash_payment_date": 71,
+     "stk_code": 94,
+     "as_of": 94,
+     "stock_id": 94,
+     "dividend_year": 94,
+     "reference_date": 94,
+     "cash_dividend": 94,
+     "stock_dividend": 94,
+     "cash_ex_dividend_date": 93,
+     "cash_payment_date": 86,
      "stock_ex_dividend_date": 4,
-     "announcement_date": 79
+     "announcement_date": 94
     }
    },
    "dividend_yfinance": {
-    "rows": 476,
+    "rows": 487,
     "non_null": {
-     "stk_code": 476,
-     "as_of": 476,
-     "stock_id": 476,
-     "dividend_year": 476,
-     "reference_date": 476,
-     "cash_dividend": 476,
-     "stock_dividend": 476,
-     "cash_ex_dividend_date": 476,
+     "stk_code": 487,
+     "as_of": 487,
+     "stock_id": 487,
+     "dividend_year": 487,
+     "reference_date": 487,
+     "cash_dividend": 487,
+     "stock_dividend": 487,
+     "cash_ex_dividend_date": 487,
      "cash_payment_date": 0,
      "stock_ex_dividend_date": 0,
      "announcement_date": 0

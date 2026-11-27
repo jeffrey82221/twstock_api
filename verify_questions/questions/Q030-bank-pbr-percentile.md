@@ -2,7 +2,7 @@
 id: Q030
 title: 銀行股 5880、2886、2892 目前股價淨值比在近 12 個月的第幾百分位？估值收盤價和日 K 對得上嗎？
 strategy: valuation          # §5.1 估值（金融股邊界）
-status: draft
+status: passing
 stocks: ["5880", "2886", "2892"]
 window: {since: 2025-12-05, until: 2026-11-27}
 pop_tables: [company_valuation, ohlcv_daily]
@@ -18,7 +18,7 @@ crawl:                       # 出題時（2026-11-27）2892 只有 2 列估值�
     since: 2025-12-01
     budget: 36               # TWSE STOCK_DAY；3 檔 × 12 個月（合計 72，§8.3 上限 120）
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -103,3 +103,4 @@ WHERE stk_code IN ('5880','2886','2892') AND (data_date > as_of OR data_date < a
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（5／5） | [run](../runs/2026-11-27_Q030.md) | 補爬 TWSE 72 列；三檔 PBR 第 100 百分位 → 不追價；官網抽查一致 |
