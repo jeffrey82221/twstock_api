@@ -2,13 +2,13 @@
 id: Q021
 title: 2330 2026 年 1–10 月每個月營收都比去年同月高嗎？DB 的月營收與累計營收和台積電公告的一樣嗎？
 strategy: growth             # §5.1 成長
-status: draft
+status: passing
 stocks: ["2330"]
 window: {since: 2026-01-01, until: 2026-10-31}
 pop_tables: [monthly_revenue_twse]
 crawl: []                    # 出題時（2026-11-27）2330 2026/01–10 每月都已在 pop（as_of 2026-02-10 ～ 11-10）
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -102,3 +102,4 @@ WHERE stk_code = '2330' AND latest_month_value IS NOT NULL
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（5／5） | [run](../runs/2026-11-27_Q021.md) | 不需補爬；10 個月都年增 → 全年成長確立 |
