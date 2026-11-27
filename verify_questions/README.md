@@ -451,7 +451,13 @@ WHERE change IS NOT NULL AND close - change > 0
   AND abs(change) > (CASE WHEN trade_date >= DATE '2015-06-01' THEN 0.10 ELSE 0.07 END) * (close - change) + 0.01
 ```
 
-**accuracy**（骨架，不能直接執行）：golden 值由出題的 AI 從管線以外的權威來源取得，每列在註解寫出處與取得日期。不可從 `pop` 抄，否則只是拿自己比自己：
+**accuracy**（骨架，不能直接執行）：golden 值由出題的 AI 從管線以外的權威來源取得，每列在註解寫出處與取得日期。不可從 `pop` 抄，否則只是拿自己比自己。來源優先順序：
+
+1. 交易所／主管機關的結果表，而且和管線用的不是同一個 endpoint（例：TWSE 除權除息計算結果表 `rwd/zh/exRight/TWT49U`，Q014）。
+2. 公司年報、財報新聞稿（Q012 的台積電）。
+3. 新聞轉載的公司公告，至少兩家一致，並在已知限制寫明。
+
+先確認 golden 和 DB 欄位的**定義相同**：董事會公告的整數股利 ≠ 調整流通股數後的實際配發率（2317 2026 年 7.2 vs 7.171792）；法說會的稀釋 EPS ≠ MOPS 的基本 EPS（2330 2025 年 66.25 vs 66.26）。定義不同時不放進 golden，寫進已知限制。
 
 ```sql
 WITH golden(stk_code, year, eps) AS (VALUES
@@ -874,6 +880,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 - `failing` 但所有 FAIL 都是使用者決定保留的（寫在問題卡的已知限制，例：Q005 C1）。重跑只會得到同樣結果，視同 `passing`，由指令 6 回歸處理。
 - 決策或斷言依賴一個還沒修好的 issue 的 draft（`issues` 欄有未 closed 的 issue，而且該 issue 讓題目一定 FAIL，例：Q007 依賴 I016）。等 issue 修好再跑，那次執行就是 issue 的驗證。
 - 補爬會打到工作目錄有未 commit 改動的 endpoint 的題目（§2）。
+- 補爬依賴的上游正在出錯、會把錯的回應凍結進 pop 的題目（例：I023 的 MOPS 截斷頁還沒恢復時的 Q013）。先用 `upstream_peek.py` 確認恢復。
 
 跳過的題與理由寫進 LEDGER「最新盤點發現」。
 

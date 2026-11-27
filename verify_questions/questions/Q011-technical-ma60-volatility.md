@@ -2,7 +2,7 @@
 id: Q011
 title: 2330、2317、6488 是否站上 60 日均線？近 20 日年化波動度多少？
 strategy: technical
-status: draft
+status: passing
 stocks: ["2330", "2317", "6488"]
 window: {since: 2026-05-31, until: 2026-11-27}   # 最近 180 天
 pop_tables: [ohlcv_daily, sbl_history]
@@ -10,9 +10,10 @@ crawl:                       # 出題時三檔近 180 天各 121 個交易日；
   - seed: ohlcv_monthly_list
     filters: {stk_code: ["2330", "2317", "6488"]}
     order_by: ["month_start_date"]
+    since: 2026-05-01        # 只補窗口內的月份
     budget: 6
 issues: [I021]
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -115,3 +116,4 @@ HAVING max(o.trade_date) < exp.expected
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（6／6） | [run](../runs/2026-11-27_Q011.md) | 先刪當月再重爬（I021）；三檔都跌破 MA60 → 不加碼；官網抽查 2 筆一致 |
