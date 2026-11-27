@@ -2,7 +2,7 @@
 id: Q035
 title: 2330、2317、2454 年初時點的近四季 EPS 是否比一年前高？FinMind 年度財報的 TTM EPS 和 MOPS 四季加總一樣嗎？
 strategy: quality            # §5.1 體質
-status: draft
+status: passing
 stocks: ["2330", "2317", "2454"]
 window: {since: 2025-01-01, until: 2026-01-01}
 pop_tables: [raw_yearly_financials, mops_quarterly_financials]
@@ -13,7 +13,7 @@ crawl:                       # 出題時（2026-11-27）raw_yearly_financials �
     since: 2025-01-01
     budget: 6                # FinMind；3 檔 × 2025-01-01、2026-01-01
 issues: []
-last_run: null
+last_run: 2026-11-28
 ---
 
 ## 決策情境
@@ -106,3 +106,4 @@ SELECT stk_code, as_of, q, q[1] - q[4] AS span_days FROM r WHERE q[1] - q[4] NOT
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-28 | passing（5／5） | [run](../runs/2026-11-28_Q035.md) | 補爬 FinMind 4 列；2317、2330 獲利向上，2454 向下 |

@@ -40,7 +40,8 @@
 | [Q032](questions/Q032-otc-basic-info-capital.md) | 產業 | 上櫃 5483、3105、3264、6488 掛牌年數、資本額；資本額 vs TPEx 發行股數 | passing | 2026-11-27 | — |
 | [Q033](questions/Q033-otc-3264-revenue-accuracy.md) | 成長 | 上櫃 3264 2026 年每月營收是否都年增；月營收與累計營收對照公司公告 | passing | 2026-11-27 | — |
 | [Q034](questions/Q034-tsmc-quarterly-accuracy.md) | 成長 | 2330 近 4 季營收年增；季營收與季 EPS 對照台積電財報新聞稿 | passing | 2026-11-28 | — |
-| [Q035](questions/Q035-finmind-ttm-eps-vs-mops.md) | 體質 | 2330、2317、2454 年初 TTM EPS 是否改善；FinMind 年度財報 TTM vs MOPS 四季加總 | draft | — | — |
+| [Q035](questions/Q035-finmind-ttm-eps-vs-mops.md) | 體質 | 2330、2317、2454 年初 TTM EPS 是否改善；FinMind 年度財報 TTM vs MOPS 四季加總 | passing | 2026-11-28 | — |
+| [Q036](questions/Q036-tsmc-news-heat.md) | 事件 | 2330 近 3 個月新聞熱度（link 去重）；新聞連結、標題、日期有效 | draft | — | — |
 
 ## Issues
 
@@ -88,7 +89,7 @@
 | `financial_quarterly_yfinance` | 成長 | Q007-C2 ✗(d, I016) | 剖析 | Q007-C4 ✓(d) | — | — | Q007-C3 ✓(d) | — | 剖析 | — |
 | `financial_yearly_yfinance` | 體質 | Q007-C2 ✗(d, I016) | — | 剖析 | — | — | — | — | 剖析 | — |
 | `financial_analysis` | 體質 | Q003-C1 ✓；Q012-C3 ✓ | 剖析 | Q019-C5 ✓ | Q003-C3 ✓；Q019-C4 ✓ | Q012-C1 ✓（9 列）；Q019 抽查 ✓ | Q003-C4 ✓；Q019-C3 ✓ | Q012-C5 ✓ | Q003-C2 ✓ | Q019-C2 ✓ |
-| `raw_yearly_financials`（FinMind，無正規化表） | 體質 | Q035-C1（d，未補爬） | — | Q035-C3 ✓(d) | — | — | Q035-C2 ✓(d)；全表 ✗（I027，2 列） | — | Q035-C4 ✓(d) | — |
+| `raw_yearly_financials`（FinMind，無正規化表） | 體質 | Q035-C1 ✓ | — | Q035-C3 ✓ | — | — | Q035-C2、C5 ✓；全表 ✗（I027，2 列） | — | Q035-C4 ✓ | — |
 | `dividend` | 股利 | Q005-C2 ✓；Q020-C1 ✓；Q014-C3、C6 ✓(d) | Q020-C5 ✓；Q014-C4 ✓(d) | Q020-C3 ✓ | Q014-C5 ✗(d, I024) | Q014-C1 ✓(d，27 列) | Q005-C1 ✗（使用者決定保留，I003） | — | Q005-C4 ✓ | — |
 | `dividend_yfinance` | 股利 | Q014-C3 ✓(d)；Q029-C1 ✗（I026，缺 1 筆） | Q014-C4 ✓(d)；Q029-C5 ✓ | 剖析 | — | Q014-C2 ✓(d，上市 27 列)；上櫃 ✗（I026，TPEx 判定 2 筆錯） | Q005-C1 ✗（I003 殘留）；Q029-C2 ✗（I026） | — | 剖析 | — |
 | `institutional_net_buy_sell` | 籌碼 | Q004-C1 ✓；Q015-C1 ✓ | 剖析；Q015-C4 ✓ | Q015-C5 ✓ | Q018-C4 ✓ | — | Q004-C2 ✓ | Q015-C6 ✓ | 剖析 | Q018-C2 ✓ |
@@ -99,7 +100,7 @@
 | `company_basic_info_list` | 產業 | Q017-C1 ✓ | — | — | Q017-C4 ✓ | Q017 抽查 ✓（非斷言） | Q017-C2 ✓（5 列） | — | 依賴鏈 | Q017-C5 ✓ |
 | `company_business_items` | 產業 | 剖析 | 剖析（上游重複，合法） | — | — | — | — | — | Q008-C4 ✓ | — |
 | `product_revenue` | 產業 | 剖析 | Q008-C5 ✓ | 剖析 | Q008-C2 ✓ | Q008 抽查 ✓（非斷言） | Q008-C1 ✗（I022）；C3 ✓ | — | 剖析 | — |
-| `finmind_news` | 事件 | 剖析 | 剖析 ✗（I018） | 剖析 | — | — | — | — | 剖析 | — |
+| `finmind_news` | 事件 | Q036-C1 ✓(d) | 剖析 ✗（I018） | Q036-C3 ✓(d) | Q036-C2 ✓(d) | — | — | — | 剖析 | — |
 
 ## 剖析基線（§7.5，2026-11-27 建立）
 
@@ -168,8 +169,17 @@
 | 2026-11-27（第 23 輪指令 7） | 96.1 | 同上 | 13（不變） | 701（不變） | 執行 Q032（passing）；出 Q033；沒有新 issue |
 | 2026-11-27（第 24 輪指令 7） | 96.1 | 同上 | 13（不變） | 701（不變） | 執行 Q033（passing）；出 Q034；沒有新 issue |
 | 2026-11-28（第 25 輪指令 7） | 96.1 | 同上 | 13（不變） | 701（不變） | 執行 Q034（passing）；出 Q035；開 I027（S1） |
+| 2026-11-28（第 26 輪指令 7） | 96.1 | 同上 | 13（不變） | 701（不變） | 執行 Q035（passing）；出 Q036；沒有新 issue |
 
-## 最新盤點發現（2026-11-28 04:20 第 25 輪指令 7，`snapshots/2026-11-27.json`）
+## 最新盤點發現（2026-11-28 04:30 第 26 輪指令 7，`snapshots/2026-11-28.json`）
+
+- **和第 25 輪比**：沒有任何變化（新的一天第一份 snapshot）。
+- **第 25 輪提交**：`3c9e455`，本機 pytest 510 passed；PR #82 `test-upstream`、`test-live-sql` 都失敗，原因都是經濟部 GCIS API（`data.gcis.nat.gov.tw`）回 504（台北 04:19；`company_business_items` 的 poc view 也因此逾時）。本機同時打也是 504，所以不立刻 rerun，改成背景每 2 分鐘探一次，恢復後 `gh run rerun 46062729913 --failed`（結果記在下一輪）。
+- **挑題**：執行 Q035（唯一可跑的 draft），補爬 FinMind 4 列；5／5 PASS（FinMind TTM vs MOPS 16 列一致）。2317、2330 獲利向上，2454 向下。
+- **出題（指令 2）**：補 1 題 **Q036**（事件）：2330 新聞熱度（以 link 去重避開 I018）、新聞欄位有效性與日期；`finmind_news` 第一次有斷言。試跑 4／4 PASS。
+- **建議修復順序**：同第 25 輪。
+
+## 前次盤點發現（2026-11-28 04:20 第 25 輪指令 7，`snapshots/2026-11-27.json`）
 
 - **和第 24 輪比**：沒有任何變化。
 - **第 24 輪提交**：`06edc08`，本機 pytest 510 passed；PR #82 第一次 `test-live-sql` 失敗（`raw_market_valuation_summary` 45 秒逾時，第三次出現同一模式），rerun 後 8 個全過。
@@ -177,14 +187,6 @@
 - **挑題**：執行 Q034（唯一可跑的 draft，不需補爬），5／5 PASS。
 - **出題（指令 2）**：補 1 題 **Q035**：`raw_yearly_financials`（FinMind，唯一沒有斷言的 raw）的 TTM EPS vs MOPS 四季加總。出題時發現 **I027**：`app/service.py` 的 TTM 取「最近 N 個有資料的期」不檢查連續，FinMind 缺 2000Q1 時 1103、2330 2001-01-01 的 TTM 跨 5 季；同一寫法也在兩個月營收 TTM（其中 TWSE 那個就是 I023 的錯值機制）。
 - **建議修復順序（§7.4）**：I023、I026、I027（S1）→ I019 → I022 → I020 → I016（S2）→ I025 → I024 → I021、I018。I023 與 I027 一起修最省（同一段 TTM 程式）。
-
-## 前次盤點發現（2026-11-27 22:05 第 24 輪指令 7，`snapshots/2026-11-27.json`）
-
-- **和第 23 輪比**：沒有任何變化。
-- **第 23 輪提交**：`89c2e89`，本機 pytest（pipefail）510 passed；PR #82 第一次 `test-upstream` 失敗：TPEx OpenAPI `mopsfin_t187ap03_O` 回 525（第 21 輪是 403），本機同一 URL 回 200。`gh run rerun 46008524673 --failed` 後 8 個全過。README 指令 8 把這個模式列進「上游環境」例子。
-- **挑題**：執行 Q033（唯一可跑的 draft，不需補爬），4／4 PASS；3264 10 個月都年增。
-- **出題（指令 2）**：補 1 題 **Q034**（2330 季營收、季 EPS accuracy）：季營收 3 筆、上半年累計 1 筆、季 EPS 4 筆。發現台積電新聞稿的 EPS 是**稀釋**、MOPS 是**基本**，2025Q4、2026Q3 各差 0.01（與年度 2025 的 66.25 vs 66.26 同一件事），C3 容許 0.015 並寫明理由。試跑 5／5 PASS。
-- **建議修復順序**：同第 20 輪。
 
 ## 重爬紀錄（crawl_delete_rows → crawl_insert_filtered）
 
