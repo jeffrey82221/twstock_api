@@ -2,6 +2,20 @@
 
 > LEDGER.md 只保留最近兩輪的盤點發現；更早的依時間由新到舊附在這裡（README §6.4）。
 
+## 前次盤點發現（2026-11-27 18:29 第 2 輪指令 7，`snapshots/2026-11-27.json`）
+
+- **和 18:15（第 1 輪）比**：列數變化全部來自第 1 輪的 Q008 補爬；§7.5 剖析報出 `monthly_revenue_twse` 3 組新的實體重複，就是 I023（剖析能抓到這個失效模式，確認有報警）。24 小時內 API 請求 44 次、5xx 0 次。
+- **I023 上游還沒恢復**：`upstream_peek.py t21sc03 sii:115:9` 18:29 仍是 133,276 bytes、284 家、Last-Modified 09:59:23 GMT。
+- **第 1 輪提交**：`2f54762`，[PR #82](https://github.com/jeffrey82221/twstock_api/pull/82) 8 個 check 全過（test-db-demo、endpoint、live-sql、pg-tool、pipeline、source、sql、upstream），沒有補救。
+- **挑題**：執行 Q009（最舊的可跑 draft）。跳過 Q005、Q007、Q010（理由同第 1 輪）。
+- **工具**：`crawl_card.py` 新增 `since`：`crawl_insert_filtered` 的 filters 只有 = 與 IN，Q009 的 360 列 pending 全在窗口外，照 DESC 補會白爬 6 列。Q008、Q009 的 crawl 步驟補上 `since`。
+- **LEDGER 結構**：「前次盤點發現」只留最近一輪，更早的搬到 [`LEDGER_HISTORY.md`](LEDGER_HISTORY.md)（README §6.4）。
+- **出題（指令 2）**：draft 剩 Q007、Q010、Q011，但 Q007、Q010 被 issue 擋住，可跑的只有 Q011。指令 7 原文「draft 少於 3 題」沒扣掉被擋住的題，改成「可跑的 draft 少於 3 題」（README 指令 7），本輪補 2 題：
+  - **Q012**（體質）2330、2317、2454 年度 EPS 連續成長：**第一個 `accuracy` 斷言**，golden 值 8 筆（年報、法說會），C1 年度、C2 四季合計，加完整、唯一、精確。預估補爬 MOPS 29 列。2330 2025 的 66.25（法說稀釋 EPS）vs DB 66.26 定義不同，先不放。
+  - **Q013**（成長）2330、2317、1402 月營收年增率：`monthly_revenue`（FinMind）第一次有斷言（完整、唯一、及時、一致、精確），預估補爬 FinMind 17、TWSE 9 列。**補爬前要先確認 MOPS 115/09 頁恢復**（2317 在截斷點之後，I023）。
+  - 兩題的 SQL 都已執行過；C1／C2／C3 的 FAIL 是還沒補爬的列，已有的 2330 列全部通過。
+- **建議修復順序**：同第 1 輪（I023 → I019 → I022 → I020 → I016 → I021、I018）。
+
 ## 前次盤點發現（2026-11-27 18:15 第 1 輪指令 7，`snapshots/2026-11-27.json`）
 
 - **和 00:04 那份比**：只有 `sbl_history` −296 列、跨 as_of 重複 302 → 0（I017 修復）；沒有新的全空欄位，raw 平均 usable 96.0% 不變，24 小時內 API 請求 9 次、5xx 0 次。

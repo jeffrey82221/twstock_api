@@ -2,7 +2,7 @@
 id: Q012
 title: 2330、2317、2454 年度 EPS 是否連續成長？DB 的年度與季度 EPS 和公司公布的數字一樣嗎？
 strategy: quality            # §5.1 體質
-status: draft
+status: passing
 stocks: ["2330", "2317", "2454"]
 window: {since: 2022-01-01, until: 2025-12-31}
 pop_tables: [financial_analysis, mops_quarterly_financials]
@@ -18,7 +18,7 @@ crawl:                       # 出題時（2026-11-27）2330 已齊；2317 全�
     since: 2023-03-31
     budget: 24               # MOPS t163sb06／04；2317 2023Q1–2026Q3 共 15 季、2454 缺的約 9 季（DESC 會先補 2026 的季度）
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -47,6 +47,7 @@ WITH golden(stk_code, year, eps) AS (VALUES
   ('2330', 2022, 39.20),   -- 出處：台積電 2023 年報第 6 章財務概況（investor.tsmc.com/static/annualReports/2023/english/pdf/2023_tsmc_ar_e_ch6.pdf），取得於 2026-11-27
   ('2330', 2023, 32.34),   -- 出處：同上
   ('2330', 2024, 45.25),   -- 出處：台積電 2024Q4 財報新聞稿（pr.tsmc.com/english/news/3201），取得於 2026-11-27
+  ('2317', 2022, 10.21),   -- 出處：鴻海 2023 股東會通過的 2022 年財報（旺得富 wantrich.chinatimes.com/news/20230531900472-420101、TVBS news.tvbs.com.tw/money/2138851），取得於 2026-11-27
   ('2317', 2023, 10.25),   -- 出處：鴻海 2023 年度股東報告書（財訊 moneyweekly.com.tw 轉載），取得於 2026-11-27
   ('2317', 2024, 11.01),   -- 出處：鴻海 2024 年度法說會（科技新報 finance.technews.tw/2025/03/14/hh-ai-server-3/），取得於 2026-11-27
   ('2317', 2025, 13.61),   -- 出處：鴻海 2025 年度財報公告（自由時報 ec.ltn.com.tw/article/breakingnews/5371923），取得於 2026-11-27
@@ -57,9 +58,9 @@ SELECT g.stk_code, g.year, g.eps AS golden_eps, f.eps AS db_eps
 FROM golden g LEFT JOIN pop.financial_analysis f ON f.stk_code = g.stk_code AND f.year = g.year
 WHERE f.eps IS NULL OR abs(f.eps - g.eps) > 0.005
 ```
-可比對列數（必須 > 0，否則 INCONCLUSIVE；預期 8）：
+可比對列數（必須 > 0，否則 INCONCLUSIVE；預期 9）：
 ```sql
-WITH golden(stk_code, year) AS (VALUES ('2330', 2022), ('2330', 2023), ('2330', 2024), ('2317', 2023),
+WITH golden(stk_code, year) AS (VALUES ('2330', 2022), ('2330', 2023), ('2330', 2024), ('2317', 2022), ('2317', 2023),
                                        ('2317', 2024), ('2317', 2025), ('2454', 2023), ('2454', 2024))
 SELECT count(*) FROM golden g JOIN pop.financial_analysis f ON f.stk_code = g.stk_code AND f.year = g.year
 WHERE f.eps IS NOT NULL
@@ -70,7 +71,7 @@ WHERE f.eps IS NOT NULL
 ```sql
 WITH golden(stk_code, year, eps) AS (VALUES
   ('2330', 2022, 39.20), ('2330', 2023, 32.34), ('2330', 2024, 45.25),
-  ('2317', 2023, 10.25), ('2317', 2024, 11.01), ('2317', 2025, 13.61),
+  ('2317', 2023, 10.25), ('2317', 2024, 11.01), ('2317', 2025, 13.61),   -- 季報窗口從 2023 起，2317 2022 只在 C1
   ('2454', 2023, 48.51), ('2454', 2024, 66.92)
 ), q AS (
   SELECT stk_code, fiscal_year, count(*) AS n_q, sum(eps) AS eps_4q
@@ -82,7 +83,7 @@ SELECT g.stk_code, g.year, g.eps AS golden_eps, q.n_q, q.eps_4q
 FROM golden g LEFT JOIN q ON q.stk_code = g.stk_code AND q.fiscal_year = g.year
 WHERE q.n_q IS DISTINCT FROM 4 OR abs(q.eps_4q - g.eps) > 0.03
 ```
-可比對列數（預期 8）：
+可比對列數（預期 8：2317 2022 的季報不在窗口內，四季不齊不算）：
 ```sql
 WITH golden(stk_code, year) AS (VALUES ('2330', 2022), ('2330', 2023), ('2330', 2024), ('2317', 2023),
                                        ('2317', 2024), ('2317', 2025), ('2454', 2023), ('2454', 2024))
@@ -136,3 +137,4 @@ WHERE stk_code IN ('2330','2317','2454') AND eps * 100 <> round(eps * 100)
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（5／5） | [run](../runs/2026-11-27_Q012.md) | 補爬 MOPS 29 列；第一個 accuracy 斷言通過（9＋8 列）；2317 列入獲利成長股 |

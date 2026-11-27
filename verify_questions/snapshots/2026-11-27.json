@@ -1,5 +1,5 @@
 {
- "taken_at": "2026-11-27T18:42:30+08:00",
+ "taken_at": "2026-11-27T18:53:06+08:00",
  "crawl_pop_tables": [
   {
    "table_name": "chain_info_list",
@@ -189,7 +189,7 @@
   {
    "table_name": "ohlcv_daily",
    "kind": "immv",
-   "rows": 23061
+   "rows": 23067
   },
   {
    "table_name": "product_revenue",
@@ -1078,15 +1078,26 @@
     "max_seconds": 0.4
    },
    {
-    "endpoint": "/api/company/{id}/basic",
+    "endpoint": "/api/ohlcv",
+    "requests": 3,
+    "distinct_urls": 3,
+    "repeated_requests": 0,
+    "ok_2xx": 3,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.27,
+    "max_seconds": 0.3
+   },
+   {
+    "endpoint": "/api/company/{id}/dividend/history/yfinance",
     "requests": 2,
     "distinct_urls": 2,
     "repeated_requests": 0,
     "ok_2xx": 2,
     "not_found_404": 0,
     "server_5xx": 0,
-    "avg_seconds": 1.17,
-    "max_seconds": 2.3
+    "avg_seconds": 1.15,
+    "max_seconds": 1.9
    },
    {
     "endpoint": "/api/company/{id}/business-items",
@@ -1100,15 +1111,15 @@
     "max_seconds": 0.2
    },
    {
-    "endpoint": "/api/company/{id}/dividend/history/yfinance",
+    "endpoint": "/api/company/{id}/basic",
     "requests": 2,
     "distinct_urls": 2,
     "repeated_requests": 0,
     "ok_2xx": 2,
     "not_found_404": 0,
     "server_5xx": 0,
-    "avg_seconds": 1.15,
-    "max_seconds": 1.9
+    "avg_seconds": 1.17,
+    "max_seconds": 2.3
    }
   ],
   "cache": {
@@ -1365,18 +1376,18 @@
     }
    },
    "ohlcv_daily": {
-    "rows": 23061,
+    "rows": 23067,
     "non_null": {
-     "trade_date": 23061,
-     "stk_code": 23061,
-     "open": 23048,
-     "high": 23048,
-     "low": 23048,
-     "close": 23048,
-     "volume": 23061,
-     "trade_value": 23061,
-     "transaction_count": 23061,
-     "change": 22948
+     "trade_date": 23067,
+     "stk_code": 23067,
+     "open": 23054,
+     "high": 23054,
+     "low": 23054,
+     "close": 23054,
+     "volume": 23067,
+     "trade_value": 23067,
+     "transaction_count": 23067,
+     "change": 22954
     }
    },
    "product_revenue": {
@@ -1506,7 +1517,7 @@
    }
   },
   "latest": {
-   "ohlcv_daily": "2026-11-25",
+   "ohlcv_daily": "2026-11-27",
    "company_valuation": "2026-11-05",
    "market_valuation_summary": "2026-11-05",
    "institutional_net_buy_sell": "2026-11-05",

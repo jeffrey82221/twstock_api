@@ -871,7 +871,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 ```text
 依 verify_questions/README.md 跑一輪：
 §2 前置條件 → 指令 1 → 挑一題（優先順序：failing > 最久未跑的 draft > 最久未跑的 passing；跳過的題見下方）執行指令 3 →
-對新開的 issue 執行指令 4 → 可跑的 draft（扣掉下方「挑題時跳過」的）少於 3 題時執行指令 2，補到 3 題（優先填維度矩陣的空格）。補爬遵守 §8.3。
+對新開的 issue 執行指令 4 → 可跑的 draft（扣掉下方「挑題時跳過」的）少於 3 題時執行指令 2，補到 3 題，但每輪最多 2 題（指令 7 不修 issue，被擋住的 draft 會越積越多，不設上限的話出題會吃掉整輪；優先填維度矩陣的空格）。補爬遵守 §8.3。
 不要執行指令 5，把建議修復的 issue 依 §7.4 嚴重度排好（附維度）列給我。最後執行指令 8（commit、push、確認 PR check 全過）。
 ```
 
