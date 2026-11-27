@@ -2,7 +2,7 @@
 id: Q031
 title: 上櫃 5483、3105、3264、6488 近 4 年現金股利是否逐年提高？FinMind 的上櫃股利和櫃買中心除息結果一樣嗎？
 strategy: income             # §5.1 股利（上櫃邊界）
-status: draft
+status: passing
 stocks: ["5483", "3105", "3264", "6488"]
 window: {since: 2023-01-01, until: 2026-11-27}
 pop_tables: [dividend]
@@ -13,7 +13,7 @@ crawl:                       # 出題時（2026-11-27）5483、3105、3264 由 Q
     since: 2023-01-01
     budget: 4                # FinMind；只補缺的
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -159,3 +159,4 @@ WHERE stk_code IN ('5483','3105','3264','6488') AND reference_date >= DATE '2023
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（4／4） | [run](../runs/2026-11-27_Q031.md) | 不需補爬；FinMind 對 TPEx 23／23 一致；無股利成長股 |

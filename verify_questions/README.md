@@ -898,7 +898,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 
 ```text
 依 verify_questions/README.md 指令 8 提交這次的改動：
-1. 跑該層的必跑測試（至少 `pytest -q` 全綠）。這次改到 db/poc/*.sql 或 db/setting.sql 時，確認 issue 的「db/poc 規則檢查」
+1. 跑該層的必跑測試（至少 `pytest -q` 全綠）。用 `| tail` 看結果時先 `set -o pipefail`，否則 `&&` 串的 commit 看的是 tail 的結束碼（第 21 輪就因此在 234 個 error 時照樣 commit）。本機記憶體不足時 pgserver 會被 macOS 以 SIGKILL 砍掉（`initdb: program "postgres" is needed` 或 `pg_ctl ... died with SIGKILL`），等記憶體恢復重跑，不要當成程式錯誤。這次改到 db/poc/*.sql 或 db/setting.sql 時，確認 issue 的「db/poc 規則檢查」
    已逐條填好（§10.1），而且 `pytest tests/sql/ -q` 全綠。
    只 stage 這次指令產生的檔案；工作目錄裡不屬於這次的改動（例如使用者進行中的 app/ 修改）不要一起 commit。
 2. git commit（訊息以 `robot:` 開頭，寫明 issue 編號、根因、修法、實測數字），然後 git push 到目前的 feature branch。
