@@ -2,13 +2,13 @@
 id: Q037
 title: 2317 鴻海 2026 年前三季 EPS 是否比去年同期成長 20% 以上？DB 的季營收、季 EPS 和法說會公布的一樣嗎？
 strategy: growth             # §5.1 成長
-status: draft
+status: passing
 stocks: ["2317"]
 window: {since: 2025-01-01, until: 2026-09-30}
 pop_tables: [mops_quarterly_financials]
 crawl: []                    # 出題時（2026-11-28）2317 2023Q1–2026Q3 由 Q012 補過
 issues: []
-last_run: null
+last_run: 2026-11-28
 ---
 
 ## 決策情境
@@ -78,3 +78,4 @@ GROUP BY 1, 2 HAVING count(*) > 1
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-28 | passing（4／4） | [run](../runs/2026-11-28_Q037.md) | 不需補爬；前三季 EPS 年增 28.6% → 成長加速 |

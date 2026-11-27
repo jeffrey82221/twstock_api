@@ -2,6 +2,14 @@
 
 > LEDGER.md 只保留最近兩輪的盤點發現；更早的依時間由新到舊附在這裡（README §6.4）。
 
+## 前次盤點發現（2026-11-28 04:30 第 26 輪指令 7，`snapshots/2026-11-28.json`）
+
+- **和第 25 輪比**：沒有任何變化（新的一天第一份 snapshot）。
+- **第 25 輪提交**：`3c9e455`，本機 pytest 510 passed；PR #82 `test-upstream`、`test-live-sql` 都失敗，原因都是經濟部 GCIS API（`data.gcis.nat.gov.tw`）回 504（台北 04:19；`company_business_items` 的 poc view 也因此逾時）。本機同時打也是 504，所以不立刻 rerun，改成背景每 2 分鐘探一次，恢復後 `gh run rerun 46062729913 --failed`（結果記在下一輪）。
+- **挑題**：執行 Q035（唯一可跑的 draft），補爬 FinMind 4 列；5／5 PASS（FinMind TTM vs MOPS 16 列一致）。2317、2330 獲利向上，2454 向下。
+- **出題（指令 2）**：補 1 題 **Q036**（事件）：2330 新聞熱度（以 link 去重避開 I018）、新聞欄位有效性與日期；`finmind_news` 第一次有斷言。試跑 4／4 PASS。
+- **建議修復順序**：同第 25 輪。
+
 ## 前次盤點發現（2026-11-28 04:20 第 25 輪指令 7，`snapshots/2026-11-27.json`）
 
 - **和第 24 輪比**：沒有任何變化。

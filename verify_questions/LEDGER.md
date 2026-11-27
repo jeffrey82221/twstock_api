@@ -42,7 +42,8 @@
 | [Q034](questions/Q034-tsmc-quarterly-accuracy.md) | 成長 | 2330 近 4 季營收年增；季營收與季 EPS 對照台積電財報新聞稿 | passing | 2026-11-28 | — |
 | [Q035](questions/Q035-finmind-ttm-eps-vs-mops.md) | 體質 | 2330、2317、2454 年初 TTM EPS 是否改善；FinMind 年度財報 TTM vs MOPS 四季加總 | passing | 2026-11-28 | — |
 | [Q036](questions/Q036-tsmc-news-heat.md) | 事件 | 2330 近 3 個月新聞熱度（link 去重）；新聞連結、標題、日期有效 | passing | 2026-11-28 | — |
-| [Q037](questions/Q037-foxconn-ytd-eps-accuracy.md) | 成長 | 2317 前三季 EPS 年增；季營收、季 EPS、前三季累計對照法說會 | draft | — | — |
+| [Q037](questions/Q037-foxconn-ytd-eps-accuracy.md) | 成長 | 2317 前三季 EPS 年增；季營收、季 EPS、前三季累計對照法說會 | passing | 2026-11-28 | — |
+| [Q038](questions/Q038-market-pbr-5y-vs-taiex.md) | 市場 | 大盤 PBR 近 5 年百分位；5 年估算總市值月變動 vs 加權指數 | draft | — | — |
 
 ## Issues
 
@@ -172,21 +173,22 @@
 | 2026-11-28（第 25 輪指令 7） | 96.1 | 同上 | 13（不變） | 701（不變） | 執行 Q034（passing）；出 Q035；開 I027（S1） |
 | 2026-11-28（第 26 輪指令 7） | 96.1 | 同上 | 13（不變） | 701（不變） | 執行 Q035（passing）；出 Q036；沒有新 issue |
 | 2026-11-28（第 27 輪指令 7） | 96.1 | 同上 | 13（不變） | 701（不變） | 執行 Q036（passing）；出 Q037；沒有新 issue |
+| 2026-11-28（第 28 輪指令 7） | 96.1 | 同上 | 13（不變） | 701（不變） | 執行 Q037（passing）；出 Q038；沒有新 issue |
 
-## 最新盤點發現（2026-11-28 05:35 第 27 輪指令 7，`snapshots/2026-11-28.json`）
+## 最新盤點發現（2026-11-28 05:50 第 28 輪指令 7，`snapshots/2026-11-28.json`）
+
+- **和第 27 輪比**：沒有任何變化。
+- **第 27 輪提交**：`c1a8709`，本機 pytest 510 passed；PR #82 `test-upstream`、`test-live-sql` 仍是經濟部 GCIS 504（05:4x 本機仍 504），背景等待中。
+- **挑題**：執行 Q037（唯一可跑的 draft，不需補爬），4／4 PASS；2317 前三季 EPS 年增 28.6% → 成長加速。
+- **出題（指令 2）**：補 1 題 **Q038**（市場）：把 Q023 的「估算總市值月變動 vs 加權指數」延伸到 5 年（61 個取樣日的加權指數 golden），60 個月比值 0.9844–1.0143；給 Q006 的窗口補上外部防線。試跑 3／3 PASS，大盤 PBR 在近 5 年第 90.2 百分位。
+- **建議修復順序**：同第 25 輪。
+
+## 前次盤點發現（2026-11-28 05:35 第 27 輪指令 7，`snapshots/2026-11-28.json`）
 
 - **和第 26 輪比**：只有 Q035 補爬的 `raw_yearly_financials` +4。
 - **第 26 輪提交**：`5d27acd`，本機 pytest 510 passed；PR #82 `test-upstream`、`test-live-sql` 仍因經濟部 GCIS API 504 失敗（04:19 起，05:22 仍未恢復，本機同樣 504）。背景每 2 分鐘探一次（最多 3 小時），恢復就 rerun 最新一次 run 的失敗 job。
 - **挑題**：執行 Q036（唯一可跑的 draft，不需補爬），4／4 PASS；2330 新聞熱度 1.14 倍，無訊號。
 - **出題（指令 2）**：補 1 題 **Q037**（2317 季報 accuracy）：Q3 營收／EPS 與前三季累計 EPS 13.35 對照法說會，試跑 4／4 PASS；前三季 EPS 年增 28.6%、Q3 營收年增 46.5%。
-- **建議修復順序**：同第 25 輪。
-
-## 前次盤點發現（2026-11-28 04:30 第 26 輪指令 7，`snapshots/2026-11-28.json`）
-
-- **和第 25 輪比**：沒有任何變化（新的一天第一份 snapshot）。
-- **第 25 輪提交**：`3c9e455`，本機 pytest 510 passed；PR #82 `test-upstream`、`test-live-sql` 都失敗，原因都是經濟部 GCIS API（`data.gcis.nat.gov.tw`）回 504（台北 04:19；`company_business_items` 的 poc view 也因此逾時）。本機同時打也是 504，所以不立刻 rerun，改成背景每 2 分鐘探一次，恢復後 `gh run rerun 46062729913 --failed`（結果記在下一輪）。
-- **挑題**：執行 Q035（唯一可跑的 draft），補爬 FinMind 4 列；5／5 PASS（FinMind TTM vs MOPS 16 列一致）。2317、2330 獲利向上，2454 向下。
-- **出題（指令 2）**：補 1 題 **Q036**（事件）：2330 新聞熱度（以 link 去重避開 I018）、新聞欄位有效性與日期；`finmind_news` 第一次有斷言。試跑 4／4 PASS。
 - **建議修復順序**：同第 25 輪。
 
 ## 重爬紀錄（crawl_delete_rows → crawl_insert_filtered）
