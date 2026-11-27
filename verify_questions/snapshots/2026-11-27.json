@@ -1,5 +1,5 @@
 {
- "taken_at": "2026-11-27T20:05:14+08:00",
+ "taken_at": "2026-11-27T20:09:59+08:00",
  "crawl_pop_tables": [
   {
    "table_name": "chain_info_list",
@@ -54,7 +54,7 @@
   {
    "table_name": "financial_month_twse_list",
    "kind": "seed",
-   "rows": 508
+   "rows": 547
   },
   {
    "table_name": "financial_quarter_yfinance_list",
@@ -94,7 +94,7 @@
   {
    "table_name": "mops_quarterly_financials_quarter_list",
    "kind": "seed",
-   "rows": 377
+   "rows": 389
   },
   {
    "table_name": "ohlcv_monthly_list",
@@ -179,12 +179,12 @@
   {
    "table_name": "monthly_revenue_twse",
    "kind": "immv",
-   "rows": 508
+   "rows": 547
   },
   {
    "table_name": "mops_quarterly_financials",
    "kind": "immv",
-   "rows": 377
+   "rows": 389
   },
   {
    "table_name": "ohlcv_daily",
@@ -264,12 +264,12 @@
   {
    "table_name": "raw_monthly_revenue_twse",
    "kind": "immv",
-   "rows": 508
+   "rows": 547
   },
   {
    "table_name": "raw_mops_quarterly_financials",
    "kind": "immv",
-   "rows": 377
+   "rows": 389
   },
   {
    "table_name": "raw_ohlcv_monthly",
@@ -491,26 +491,26 @@
   {
    "raw_view": "raw_monthly_revenue_twse",
    "json_column": "revenue",
-   "total_rows": 508,
+   "total_rows": 547,
    "null_rows": 0,
    "found_false_rows": 0,
-   "usable_rows": 508,
+   "usable_rows": 547,
    "sources": {
-    "TPEx OpenAPI t187ap05_O + MOPS t21sc03 (history)": 1,
+    "TPEx OpenAPI t187ap05_O + MOPS t21sc03 (history)": 4,
     "TWSE OpenAPI t187ap05_L + MOPS t21sc03 (history)": 9,
-    "MOPS t21sc03 (history)": 498
+    "MOPS t21sc03 (history)": 534
    },
    "usable_pct": 100.0
   },
   {
    "raw_view": "raw_mops_quarterly_financials",
    "json_column": "quarterly_financials",
-   "total_rows": 377,
+   "total_rows": 389,
    "null_rows": 1,
    "found_false_rows": 0,
-   "usable_rows": 376,
+   "usable_rows": 388,
    "sources": {
-    "MOPS t163sb06 + t163sb04": 376,
+    "MOPS t163sb06 + t163sb04": 388,
     "(none)": 1
    },
    "usable_pct": 99.7
@@ -809,7 +809,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 508,
+   "pop_rows": 547,
    "rows_per_hour": 0.0
   },
   {
@@ -961,7 +961,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 377,
+   "pop_rows": 389,
    "rows_per_hour": 0.0
   },
   {
@@ -1067,6 +1067,17 @@
     "max_seconds": 0.0
    },
    {
+    "endpoint": "/api/company/{id}/revenue/twse",
+    "requests": 63,
+    "distinct_urls": 63,
+    "repeated_requests": 0,
+    "ok_2xx": 63,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.63,
+    "max_seconds": 11.9
+   },
+   {
     "endpoint": "/api/company/{id}/foreign-ownership",
     "requests": 37,
     "distinct_urls": 37,
@@ -1089,6 +1100,17 @@
     "max_seconds": 0.0
    },
    {
+    "endpoint": "/api/company/{id}/quarterly-financials",
+    "requests": 33,
+    "distinct_urls": 33,
+    "repeated_requests": 0,
+    "ok_2xx": 33,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.01,
+    "max_seconds": 0.1
+   },
+   {
     "endpoint": "/api/company/{id}/dividend",
     "requests": 28,
     "distinct_urls": 28,
@@ -1098,28 +1120,6 @@
     "server_5xx": 0,
     "avg_seconds": 0.28,
     "max_seconds": 0.5
-   },
-   {
-    "endpoint": "/api/company/{id}/revenue/twse",
-    "requests": 24,
-    "distinct_urls": 24,
-    "repeated_requests": 0,
-    "ok_2xx": 24,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.55,
-    "max_seconds": 9.2
-   },
-   {
-    "endpoint": "/api/company/{id}/quarterly-financials",
-    "requests": 21,
-    "distinct_urls": 21,
-    "repeated_requests": 0,
-    "ok_2xx": 21,
-    "not_found_404": 0,
-    "server_5xx": 0,
-    "avg_seconds": 0.01,
-    "max_seconds": 0.1
    },
    {
     "endpoint": "/api/company/{id}/revenue",
@@ -1211,8 +1211,8 @@
    }
   ],
   "cache": {
-   "entries": 7887,
-   "ok_entries": 7870
+   "entries": 7938,
+   "ok_entries": 7921
   }
  },
  "profile": {
@@ -1429,38 +1429,38 @@
     }
    },
    "monthly_revenue_twse": {
-    "rows": 508,
+    "rows": 547,
     "non_null": {
-     "stk_code": 508,
-     "as_of": 508,
-     "stock_id": 508,
-     "latest_month_label": 508,
-     "data_date": 508,
-     "available_date": 508,
-     "latest_month_value": 508,
-     "latest_month_yoy_pct": 436,
-     "ttm_value": 442,
-     "ttm_yoy_pct": 370
+     "stk_code": 547,
+     "as_of": 547,
+     "stock_id": 547,
+     "latest_month_label": 547,
+     "data_date": 547,
+     "available_date": 547,
+     "latest_month_value": 547,
+     "latest_month_yoy_pct": 475,
+     "ttm_value": 481,
+     "ttm_yoy_pct": 409
     }
    },
    "mops_quarterly_financials": {
-    "rows": 377,
+    "rows": 389,
     "non_null": {
-     "stk_code": 377,
-     "as_of": 377,
-     "stock_id": 376,
-     "company_name": 376,
-     "market": 376,
-     "data_date": 376,
-     "available_date": 376,
-     "fiscal_year": 376,
-     "quarter": 376,
-     "revenue_millions": 364,
-     "gross_margin_pct": 364,
-     "operating_margin_pct": 364,
-     "pretax_margin_pct": 364,
-     "net_margin_pct": 364,
-     "eps": 376
+     "stk_code": 389,
+     "as_of": 389,
+     "stock_id": 388,
+     "company_name": 388,
+     "market": 388,
+     "data_date": 388,
+     "available_date": 388,
+     "fiscal_year": 388,
+     "quarter": 388,
+     "revenue_millions": 376,
+     "gross_margin_pct": 376,
+     "operating_margin_pct": 376,
+     "pretax_margin_pct": 376,
+     "net_margin_pct": 376,
+     "eps": 388
     }
    },
    "ohlcv_daily": {
