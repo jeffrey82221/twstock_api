@@ -37,7 +37,8 @@
 | [Q029](questions/Q029-otc-dividend-two-sources.md) | 股利 | 上櫃 5483、3105、3264 除息到發放天數；FinMind vs yfinance（上櫃） | failing | 2026-11-27 | I026 |
 | [Q030](questions/Q030-bank-pbr-percentile.md) | 估值 | 銀行股 5880、2886、2892 PBR 近 12 個月百分位；估值收盤 vs 日 K | passing | 2026-11-27 | — |
 | [Q031](questions/Q031-otc-dividend-accuracy-tpex.md) | 股利 | 上櫃 5483、3105、3264、6488 現金股利是否逐年提高；FinMind 對照櫃買中心除息結果 | passing | 2026-11-27 | — |
-| [Q032](questions/Q032-otc-basic-info-capital.md) | 產業 | 上櫃 5483、3105、3264、6488 掛牌年數、資本額；資本額 vs TPEx 發行股數 | draft | — | — |
+| [Q032](questions/Q032-otc-basic-info-capital.md) | 產業 | 上櫃 5483、3105、3264、6488 掛牌年數、資本額；資本額 vs TPEx 發行股數 | passing | 2026-11-27 | — |
+| [Q033](questions/Q033-otc-3264-revenue-accuracy.md) | 成長 | 上櫃 3264 2026 年每月營收是否都年增；月營收與累計營收對照公司公告 | draft | — | — |
 
 ## Issues
 
@@ -161,23 +162,22 @@
 | 2026-11-27（第 20 輪指令 7） | 96.1 | `raw_finmind_news` 72.6、`raw_sbl_history` 79.1、`raw_company_info` 82.3 | 13（不變） | 701（不變） | 執行 Q029（failing）；開 I026（S1，L0）；出 Q031 |
 | 2026-11-27（第 21 輪指令 7） | 96.1 | 同上 | 13（不變） | 701（不變） | 執行 Q030（passing）；沒有新 issue；主機記憶體不足暫停 |
 | 2026-11-27（第 22 輪指令 7） | 96.1 | 同上 | 13（不變） | 701（不變） | 執行 Q031（passing）；出 Q032；沒有新 issue |
+| 2026-11-27（第 23 輪指令 7） | 96.1 | 同上 | 13（不變） | 701（不變） | 執行 Q032（passing）；出 Q033；沒有新 issue |
 
-## 最新盤點發現（2026-11-27 21:45 第 22 輪指令 7，`snapshots/2026-11-27.json`）
+## 最新盤點發現（2026-11-27 21:55 第 23 輪指令 7，`snapshots/2026-11-27.json`）
+
+- **和第 22 輪比**：沒有任何變化。
+- **第 22 輪提交**：`12cca5d`，本機 pytest（pipefail）510 passed；PR #82 8 個 check 全過，沒有補救。
+- **挑題**：執行 Q032（唯一可跑的 draft，不需補爬），5／5 PASS；四檔上櫃半導體實收資本額 42–64 億，都標記中小型。
+- **出題（指令 2）**：補 1 題 **Q033**（上櫃 3264 月營收 accuracy，Q021 的上櫃版）：3 個單月＋2 個累計公告值，試跑 4／4 PASS。
+- **建議修復順序**：同第 20 輪。
+
+## 前次盤點發現（2026-11-27 21:45 第 22 輪指令 7，`snapshots/2026-11-27.json`）
 
 - **和第 21 輪比**：列數變化全部來自 Q030 補爬（估值 +36、日 K +720）。
 - **第 21 輪提交**：`1c86c23`。**本機 `pytest -q` 其實不是全綠**（279 passed、234 errors：pgserver 的 `initdb`／`pg_ctl` 在記憶體不足時被 macOS SIGKILL），但 `pytest | tail -1 && git commit` 看的是 tail 的結束碼，commit 照樣送出——違反指令 8 第 1 步。記憶體恢復後重跑 510 passed、0 error，確認是環境問題。CI：`test-upstream` 第一次失敗（TPEx OpenAPI `mopsfin_t187ap03_O` 對 CI runner 回 403），`gh run rerun 46006102672 --failed` 後 8 個全過。README 指令 8 第 1 步補上 `set -o pipefail` 與 SIGKILL 的判斷方式。
 - **挑題**：執行 Q031（唯一可跑的 draft，不需補爬），4／4 PASS；FinMind 上櫃股利對 TPEx 除息結果 23／23 一致。四檔都不是股利成長股。
 - **出題（指令 2）**：可跑的 draft 為 0，補 1 題 **Q032**（上櫃基本資料：資本額 vs TPEx 發行股數），試跑 5／5 PASS。
-- **建議修復順序**：同第 20 輪。
-
-## 前次盤點發現（2026-11-27 20:35 第 21 輪指令 7，`snapshots/2026-11-27.json`）
-
-- **和第 20 輪比**：列數變化全部來自 Q029 補爬（股利 +15、yfinance 股利 +11、3105 股利歷史 +1）。
-- **第 20 輪提交**：`2789dd2`，PR #82 8 個 check 全過，沒有補救。
-- **挑題**：執行 Q030（最舊的可跑 draft），補爬 TWSE 72 列；5／5 PASS。三檔銀行股 PBR 都在近 12 個月最高 → 不追價，TWSE 官網抽查一致。
-- **出題**：本輪沒有出題（可跑的 draft 還有 Q031；主機記憶體不足，見下）。
-- **環境**：本輪後段主機 swap 用到 7.7／9.2 GB，`import server`（fastmcp、beartype 等）卡在讀 site-packages，CPU 只用 0.34 秒、牆鐘 100 秒以上。佔記憶體的是 Docker VM、VS Code、Heptabase、瀏覽器與其他 Claude session，不是本流程的程序。等記憶體壓力下降再繼續下一輪。
-- **LEDGER**：修正第 20 輪 `dividend_yfinance` 的矩陣格（C2 是一致性、C1 缺事件是完整性）。
 - **建議修復順序**：同第 20 輪。
 
 ## 重爬紀錄（crawl_delete_rows → crawl_insert_filtered）

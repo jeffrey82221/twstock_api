@@ -2,13 +2,13 @@
 id: Q032
 title: 上櫃 5483、3105、3264、6488 掛牌多久、資本多大？上櫃公司基本資料的實收資本額和 TPEx 外資持股表的發行股數對得上嗎？
 strategy: industry           # §5.1 產業（上櫃邊界）
-status: draft
+status: passing
 stocks: ["5483", "3105", "3264", "6488"]
 window: {since: null, until: 2026-11-27}
 pop_tables: [company_basic_info_list, chain_info_list, foreign_ownership, ohlcv_daily]
 crawl: []                    # 出題時（2026-11-27）外資持股由 Q026（6488 由 Q004）補過、日 K 由 Q024 補過
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -96,3 +96,4 @@ WHERE b.stk_code IN ('5483','3105','3264','6488')
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（5／5） | [run](../runs/2026-11-27_Q032.md) | 不需補爬；四檔都是中小型 |
