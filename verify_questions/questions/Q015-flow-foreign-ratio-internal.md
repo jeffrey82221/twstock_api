@@ -2,7 +2,7 @@
 id: Q015
 title: 2454、2882、1101 外資持股比近 3 個月是否上升、法人是否站在買方？外資持股的股數、比率、上限彼此對得上嗎？
 strategy: flow               # §5.1 籌碼
-status: draft
+status: passing
 stocks: ["2454", "2882", "1101"]
 window: {since: 2025-12-05, until: 2026-11-27}
 pop_tables: [foreign_ownership, institutional_net_buy_sell]
@@ -18,7 +18,7 @@ crawl:                       # 出題時（2026-11-27）三檔在兩張表都沒
     since: 2025-12-05
     budget: 36               # TWSE T86；3 檔 × 12 個月（兩個 seed 合計 72，§8.3 TWSE 上限 120）
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -143,3 +143,4 @@ WHERE stk_code IN ('2454','2882','1101')
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（6／6） | [run](../runs/2026-11-27_Q015.md) | 補爬 TWSE 72 列；三檔都沒有籌碼訊號 |

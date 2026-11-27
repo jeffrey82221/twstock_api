@@ -2,6 +2,16 @@
 
 > LEDGER.md 只保留最近兩輪的盤點發現；更早的依時間由新到舊附在這裡（README §6.4）。
 
+## 前次盤點發現（2026-11-27 18:40 第 3 輪指令 7，`snapshots/2026-11-27.json`）
+
+- **和 18:29（第 2 輪）比**：沒有任何變化（列數、usable%、剖析都一樣）。
+- **第 2 輪提交**：`c1606a3`，PR #82 第一次 `test-live-sql` 失敗：`poc.raw_market_valuation_summary` 45 秒逾時（0 bytes），同一段 log 還有 `/quarterly-financials`、`/financial-analysis` 的 504，屬上游環境（本 commit 只改 `verify_questions/`）。依指令 8 `gh run rerun 45983338681 --failed` 重跑一次，8 個 check 全過。
+- **I023 上游仍未恢復**：MOPS 115/09 頁 18:40 仍是 133,276 bytes、284 家。Q013 的 TWSE 補爬繼續延後。
+- **挑題**：執行 Q011（可跑的 draft 中最舊的）。依 §8.3 規則 5 先 `crawl_delete_rows` 當月 3 列（pin 3、0 次上游）再重爬（3 次 API），日 K 最新日從 11-25 變成 11-27。跳過 Q005、Q007、Q010（同前）、Q013（等 I023 上游）。
+- **出題（指令 2）**：可跑的 draft 剩 Q012、Q013，補 1 題 **Q014**（股利，第二個 `accuracy`）：golden 取自 TWSE 除權除息計算結果表（27 個事件），FinMind 與 yfinance 都分毫不差（調整後配息率，例：2317 2026 公告 7.2 元、實際 7.171792 元）。C5 抓到 I024。
+- **新 issue**：I024（S3＋S4）FinMind 股利把增資／減資除權當成金額全 0 的股利事件；`dividend` 只有 1 列，但 `raw_dividend_history` 裡還有 331 個（6.1%），cron 輪到時會白打 331 次 FinMind。
+- **建議修復順序（§7.4）**：I023（S1，等上游）→ I019 → I022 → I020 → I016（S2）→ I024（S3＋S4，方案 B 0 次上游呼叫，成本最低）→ I021、I018（S3，待使用者決定）。
+
 ## 前次盤點發現（2026-11-27 18:29 第 2 輪指令 7，`snapshots/2026-11-27.json`）
 
 - **和 18:15（第 1 輪）比**：列數變化全部來自第 1 輪的 Q008 補爬；§7.5 剖析報出 `monthly_revenue_twse` 3 組新的實體重複，就是 I023（剖析能抓到這個失效模式，確認有報警）。24 小時內 API 請求 44 次、5xx 0 次。

@@ -1,5 +1,5 @@
 {
- "taken_at": "2026-11-27T18:53:06+08:00",
+ "taken_at": "2026-11-27T19:00:01+08:00",
  "crawl_pop_tables": [
   {
    "table_name": "chain_info_list",
@@ -44,7 +44,7 @@
   {
    "table_name": "financial_analysis_year_list",
    "kind": "seed",
-   "rows": 288
+   "rows": 296
   },
   {
    "table_name": "financial_month_list",
@@ -94,7 +94,7 @@
   {
    "table_name": "mops_quarterly_financials_quarter_list",
    "kind": "seed",
-   "rows": 356
+   "rows": 377
   },
   {
    "table_name": "ohlcv_monthly_list",
@@ -139,7 +139,7 @@
   {
    "table_name": "financial_analysis",
    "kind": "immv",
-   "rows": 288
+   "rows": 296
   },
   {
    "table_name": "financial_quarterly_yfinance",
@@ -184,7 +184,7 @@
   {
    "table_name": "mops_quarterly_financials",
    "kind": "immv",
-   "rows": 356
+   "rows": 377
   },
   {
    "table_name": "ohlcv_daily",
@@ -234,7 +234,7 @@
   {
    "table_name": "raw_financial_analysis",
    "kind": "immv",
-   "rows": 288
+   "rows": 296
   },
   {
    "table_name": "raw_finmind_news",
@@ -269,7 +269,7 @@
   {
    "table_name": "raw_mops_quarterly_financials",
    "kind": "immv",
-   "rows": 356
+   "rows": 377
   },
   {
    "table_name": "raw_ohlcv_monthly",
@@ -415,15 +415,15 @@
   {
    "raw_view": "raw_financial_analysis",
    "json_column": "financial_analysis",
-   "total_rows": 288,
+   "total_rows": 296,
    "null_rows": 15,
    "found_false_rows": 0,
-   "usable_rows": 273,
+   "usable_rows": 281,
    "sources": {
     "(none)": 15,
-    "MOPS t51sb02 (https://mops.twse.com.tw/mops/web/t51sb02)": 273
+    "MOPS t51sb02 (https://mops.twse.com.tw/mops/web/t51sb02)": 281
    },
-   "usable_pct": 94.8
+   "usable_pct": 94.9
   },
   {
    "raw_view": "raw_finmind_news",
@@ -505,12 +505,12 @@
   {
    "raw_view": "raw_mops_quarterly_financials",
    "json_column": "quarterly_financials",
-   "total_rows": 356,
+   "total_rows": 377,
    "null_rows": 1,
    "found_false_rows": 0,
-   "usable_rows": 355,
+   "usable_rows": 376,
    "sources": {
-    "MOPS t163sb06 + t163sb04": 355,
+    "MOPS t163sb06 + t163sb04": 376,
     "(none)": 1
    },
    "usable_pct": 99.7
@@ -771,7 +771,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 288,
+   "pop_rows": 296,
    "rows_per_hour": 0.0
   },
   {
@@ -961,7 +961,7 @@
    "last_message": null,
    "last_error_at": null,
    "last_error": null,
-   "pop_rows": 356,
+   "pop_rows": 377,
    "rows_per_hour": 0.0
   },
   {
@@ -1045,6 +1045,17 @@
   "minutes": 1440,
   "endpoints": [
    {
+    "endpoint": "/api/company/{id}/quarterly-financials",
+    "requests": 21,
+    "distinct_urls": 21,
+    "repeated_requests": 0,
+    "ok_2xx": 21,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.01,
+    "max_seconds": 0.1
+   },
+   {
     "endpoint": "/api/company/{id}/revenue/twse",
     "requests": 15,
     "distinct_urls": 15,
@@ -1076,6 +1087,17 @@
     "server_5xx": 0,
     "avg_seconds": 0.3,
     "max_seconds": 0.4
+   },
+   {
+    "endpoint": "/api/v1/fundamentals/financial-analysis",
+    "requests": 8,
+    "distinct_urls": 8,
+    "repeated_requests": 0,
+    "ok_2xx": 8,
+    "not_found_404": 0,
+    "server_5xx": 0,
+    "avg_seconds": 0.01,
+    "max_seconds": 0.0
    },
    {
     "endpoint": "/api/ohlcv",
@@ -1123,8 +1145,8 @@
    }
   ],
   "cache": {
-   "entries": 7538,
-   "ok_entries": 7521
+   "entries": 7567,
+   "ok_entries": 7550
   }
  },
  "profile": {
@@ -1191,33 +1213,33 @@
     }
    },
    "financial_analysis": {
-    "rows": 288,
+    "rows": 296,
     "non_null": {
-     "stk_code": 288,
-     "year": 288,
-     "stock_id": 273,
+     "stk_code": 296,
+     "year": 296,
+     "stock_id": 281,
      "reason": 0,
-     "company_name": 273,
-     "market": 273,
-     "debt_ratio": 273,
-     "lt_fund_to_ppe_ratio": 265,
-     "current_ratio": 273,
-     "quick_ratio": 265,
-     "interest_coverage": 265,
-     "ar_turnover": 265,
-     "avg_collection_days": 265,
-     "inventory_turnover": 265,
-     "avg_sales_days": 264,
-     "fixed_asset_turnover": 273,
-     "total_asset_turnover": 273,
-     "roa": 273,
-     "roe": 273,
-     "pretax_profit_to_capital_ratio": 273,
-     "net_profit_margin": 273,
-     "eps": 273,
-     "cash_flow_ratio": 265,
-     "cash_flow_adequacy_ratio": 261,
-     "cash_reinvestment_ratio": 265
+     "company_name": 281,
+     "market": 281,
+     "debt_ratio": 281,
+     "lt_fund_to_ppe_ratio": 273,
+     "current_ratio": 281,
+     "quick_ratio": 273,
+     "interest_coverage": 273,
+     "ar_turnover": 273,
+     "avg_collection_days": 273,
+     "inventory_turnover": 273,
+     "avg_sales_days": 272,
+     "fixed_asset_turnover": 281,
+     "total_asset_turnover": 281,
+     "roa": 281,
+     "roe": 281,
+     "pretax_profit_to_capital_ratio": 281,
+     "net_profit_margin": 281,
+     "eps": 281,
+     "cash_flow_ratio": 273,
+     "cash_flow_adequacy_ratio": 269,
+     "cash_reinvestment_ratio": 273
     }
    },
    "financial_quarterly_yfinance": {
@@ -1356,23 +1378,23 @@
     }
    },
    "mops_quarterly_financials": {
-    "rows": 356,
+    "rows": 377,
     "non_null": {
-     "stk_code": 356,
-     "as_of": 356,
-     "stock_id": 355,
-     "company_name": 355,
-     "market": 355,
-     "data_date": 355,
-     "available_date": 355,
-     "fiscal_year": 355,
-     "quarter": 355,
-     "revenue_millions": 343,
-     "gross_margin_pct": 343,
-     "operating_margin_pct": 343,
-     "pretax_margin_pct": 343,
-     "net_margin_pct": 343,
-     "eps": 355
+     "stk_code": 377,
+     "as_of": 377,
+     "stock_id": 376,
+     "company_name": 376,
+     "market": 376,
+     "data_date": 376,
+     "available_date": 376,
+     "fiscal_year": 376,
+     "quarter": 376,
+     "revenue_millions": 364,
+     "gross_margin_pct": 364,
+     "operating_margin_pct": 364,
+     "pretax_margin_pct": 364,
+     "net_margin_pct": 364,
+     "eps": 376
     }
    },
    "ohlcv_daily": {
