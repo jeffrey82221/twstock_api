@@ -286,6 +286,68 @@ async def query_financials(stock_id: str, as_of_str: Optional[str] = None) -> di
     }
 
 
+# --- I016：yfinance TTM 必須從 as_of 當天應已公告的最新一季起算 ---------------------
+# Yahoo 只保留最近約 5 季。若照 `_ttm_value` 取「as_of 之前任意最近 4 季」，Yahoo 還沒更新
+# 最新一季時會拿較舊的 4 季冒充 TTM；as_of 早於 Yahoo 窗口時則回 found=true 的全空結果。
+YF_MISS_NOT_COVERED = "not_covered_by_yahoo"          # Yahoo 沒有這家公司的季報（I014）
+YF_MISS_NOT_YET_ON_YAHOO = "expected_quarter_not_on_yahoo_yet"
+YF_MISS_OUTSIDE_WINDOW = "outside_yahoo_window"       # as_of 需要的季度已滾出 Yahoo 窗口
+
+
+def _yf_expected_quarter(as_of: date) -> str:
+    """as_of 當天應已公告的最新一季季末日（ISO）。
+
+    與 `_is_quarter_before` 一致採金融業較長的 Q2 期限（financial=True），
+    否則 08-15～08-30 期間預期 Q2、但 Q2 又不被視為已公告，TTM 永遠算不出來。
+    """
+    year, quarter = pit.latest_available_quarter(as_of, financial=True)
+    return pit.quarter_end(year, quarter).isoformat()
+
+
+def _yf_quarter_chain(expected: str, n: int = 4) -> list[str]:
+    """從 expected 往回連續 n 季的季末日（ISO，新到舊）。"""
+    year, quarter = pit.quarter_of(date.fromisoformat(expected))
+    chain: list[str] = []
+    for _ in range(n):
+        chain.append(pit.quarter_end(year, quarter).isoformat())
+        year, quarter = pit.previous_quarter(year, quarter)
+    return chain
+
+
+def _yf_anchored_ttm(
+    quarter_map: dict[str, dict], as_of: date, field: str, expected: str
+) -> tuple[Optional[float], list[str]]:
+    """以 expected 為錨點的連續 4 季 TTM。
+
+    回傳 (TTM, 從錨點起連續存在的季度)。錨點那季不在、或中間缺季時 TTM 為 None；
+    季度清單只列錨點起「連續」有值的部分（下游 financial_quarter_yfinance_list 由它攤出 seed）。
+    """
+    quarters: list[str] = []
+    values: list[float] = []
+    for q in _yf_quarter_chain(expected):
+        vals = quarter_map.get(q)
+        if not vals or field not in vals or not _is_quarter_before(q, as_of):
+            break
+        quarters.append(q)
+        values.append(vals[field])
+    if len(values) < 4:
+        return None, quarters
+    return sum(values), quarters
+
+
+def _yf_financials_miss_reason(
+    quarter_map: dict[str, dict], expected: str, eps_ttm: Optional[float]
+) -> Optional[str]:
+    """EPS TTM 算不出來的原因；算得出來時回 None（found=true）。"""
+    if eps_ttm is not None:
+        return None
+    if not quarter_map:
+        return YF_MISS_NOT_COVERED
+    if expected > max(quarter_map):
+        return YF_MISS_NOT_YET_ON_YAHOO
+    return YF_MISS_OUTSIDE_WINDOW
+
+
 # =====================================================================
 # 3b) /api/company/{stock_id}/financials/yfinance — yfinance 季財報衍生
 # =====================================================================

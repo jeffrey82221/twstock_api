@@ -2,7 +2,7 @@
 id: Q004
 title: 2330、2317、6488 近 12 個月外資持股比是否上升、法人是否淨買超、借券是否增加？
 strategy: flow
-status: failing
+status: passing
 stocks: ["2330", "2317", "6488"]
 window: {since: 2025-12-05, until: 2026-11-25}
 pop_tables: [institutional_net_buy_sell, foreign_ownership, sbl_history]
@@ -20,12 +20,16 @@ crawl:
     order_by: ["month_start_date"]
     budget: 36               # TWSE t13sa870
 issues: [I006, I007, I010]
-last_run: 2026-11-25
+last_run: 2026-11-26
 ---
 
 ## 決策情境
-外資持股比 12 個月上升 > 1 個百分點、且取樣日外資淨買超為正的月份過半 → 籌碼面偏多；
-同期借券賣出量明顯上升 → 有放空壓力，降低部位。6488（上櫃）是邊界案例：MI_QFIIS 與 SBL 是否涵蓋上櫃股。
+外資持股比 12 個月上升 > 1 個百分點、且取樣日外資淨買超為正的月份過半 → 籌碼面偏多。
+6488（上櫃）是邊界案例：MI_QFIIS 與 SBL 是否涵蓋上櫃股。
+
+借券**不列入**減碼條件：`sbl_history` 來自 TWSE t13sa870，是「已完成還券」的合約紀錄，不是借券賣出量，
+也不是未還券餘額，無法衡量放空壓力（見「已知限制」）。決策 SQL 只把它當參考數字輸出，
+欄名標明是「按借券成交日分組的已完成還券合約量」。
 
 ## 決策 SQL
 ```sql
@@ -43,14 +47,16 @@ WITH fo AS (
   WHERE stk_code IN ('2330','2317','6488') AND as_of >= DATE '2025-12-05' GROUP BY 1
 ), sbl AS (
   SELECT stk_code,
-         sum(quantity_lots) FILTER (WHERE transaction_date >= DATE '2026-06-01') AS lots_recent_6m,
-         sum(quantity_lots) FILTER (WHERE transaction_date < DATE '2026-06-01') AS lots_prior
+         -- 已完成還券的合約，按「借券成交日」分組；不是借券賣出量或未還餘額
+         sum(quantity_lots) FILTER (WHERE transaction_date >= DATE '2026-06-01') AS returned_lots_borrowed_recent_6m,
+         sum(quantity_lots) FILTER (WHERE transaction_date < DATE '2026-06-01') AS returned_lots_borrowed_prior
   FROM pop.sbl_history
   WHERE stk_code IN ('2330','2317','6488') AND as_of >= DATE '2025-12-05' GROUP BY 1
 )
 SELECT s.stk_code, max(fo.first_ratio) AS ratio_start, max(fo.last_ratio) AS ratio_end,
        max(inst.buy_days) AS foreign_buy_days, max(inst.sampled_days) AS sampled_days,
-       max(sbl.lots_recent_6m) AS sbl_lots_recent_6m, max(sbl.lots_prior) AS sbl_lots_prior
+       max(sbl.returned_lots_borrowed_recent_6m) AS sbl_returned_lots_borrowed_recent_6m,
+       max(sbl.returned_lots_borrowed_prior) AS sbl_returned_lots_borrowed_prior
 FROM unnest(ARRAY['2330','2317','6488']) AS s(stk_code)
 LEFT JOIN fo ON fo.stk_code = s.stk_code
 LEFT JOIN inst ON inst.stk_code = s.stk_code
@@ -117,6 +123,11 @@ WHERE stk_code IN ('2330','2317','6488') AND as_of >= DATE '2025-12-05'
 
 ## 已知限制
 - 每月只取樣一天（5 日），法人買賣超是當日數字，不代表整月；決策只看方向與比例。
+- 借券：`sbl_history`（t13sa870）只有**已完成還券**的合約。尚未還券的部位看不到，借券後是否賣出也看不到，
+  所以加總 `quantity_lots` 不能當放空壓力。按 `transaction_date` 分組只反映這批已還券合約的借券成交日，
+  越近的月份越低估（還沒還的合約還不在表裡）。要判斷放空壓力，需要借券賣出／借券餘額來源
+  （例：TWSE TWT93U 信用額度總量管制餘額表），目前 pipeline 沒有。
+- 2026-11-25 run 紀錄的「借券 近 6 月／之前（張）」欄是上述已還券合約量，不是借券賣出量。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |

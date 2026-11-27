@@ -222,7 +222,11 @@ TWSE_MI_INDEX_URL = "https://www.twse.com.tw/exchangeReport/MI_INDEX"
 
 
 async def _fetch_twse_mi_index_day(d: date) -> dict[str, dict]:
-    """回傳 stk_code -> row dict（該日全上市股票）。cache miss 時打上游、寫磁碟 cache。"""
+    """回傳 stk_code -> row dict（該日全上市股票）。cache miss 時打上游、寫磁碟 cache。
+
+    只有明確休市（TWSE 回空 body）才回 `{}`；下載失敗或錯誤頁拋 `UpstreamFetchError`，
+    讓 `get_ohlcv` 回 502，不會把失敗日當成休市略過、回 200 的不完整資料（I010）。
+    """
     cached = _cache_read("twse", d)
     if cached is not None:
         return cached
@@ -251,7 +255,7 @@ async def _fetch_twse_mi_index_day(d: date) -> dict[str, dict]:
         _record_source_error(SourceError(
             source="TWSE", url=url, status_code=status, message=msg, is_rate_limited=rl,
         ))
-        return {}
+        raise UpstreamFetchError(f"TWSE MI_INDEX request failed for {d}: {msg}")
 
     if not text.strip():
         parsed: dict[str, dict] = {}       # 非交易日：TWSE 回空 body
@@ -259,7 +263,7 @@ async def _fetch_twse_mi_index_day(d: date) -> dict[str, dict]:
         parsed = _parse_twse_mi_index_csv(text, d)
         if not parsed:                     # 有內容卻解析不出個股區塊 = 封鎖頁 / 錯誤頁（I010）
             record_bad_payload("TWSE", url, {"stat": text[:80]})
-            return {}
+            raise UpstreamFetchError(f"TWSE MI_INDEX unexpected payload for {d}")
     if parsed or d < date.today():
         _cache_write("twse", d, parsed)
     return parsed
@@ -387,8 +391,11 @@ TPEX_DAILY_QUOTES_URL = "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuo
 
 
 async def _fetch_tpex_daily_quotes(d: date) -> dict[str, dict]:
-    """回傳 stk_code -> row dict（該日全上櫃股票）；上游失敗回 {}。"""
-    return await fetch_tpex_daily_quotes_checked(d) or {}
+    """回傳 stk_code -> row dict（該日全上櫃股票）；休市回 `{}`，上游失敗拋 `UpstreamFetchError`。"""
+    quotes = await fetch_tpex_daily_quotes_checked(d)
+    if quotes is None:
+        raise UpstreamFetchError(f"TPEx dailyQuotes failed for {d}")
+    return quotes
 
 
 async def fetch_tpex_daily_quotes_checked(d: date) -> Optional[dict[str, dict]]:

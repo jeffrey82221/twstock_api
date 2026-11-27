@@ -12,6 +12,7 @@
   若之後還有一個 ```sql 區塊（前面文字含「可比對列數」），它回傳一個數字，
   = 0 時結果為 INCONCLUSIVE。
 SQL 經 server.select 執行（與 MCP 同一個白名單與 LIMIT 包裝），執行前去掉 -- 註解。
+violations 是完整違規列數（超過取樣上限時另跑 COUNT(*)），sample 只是前幾列。
 """
 from __future__ import annotations
 
@@ -85,6 +86,18 @@ def parse_card(path: str) -> dict:
     return {"path": path, "meta": meta, "decision": decision, "checks": checks}
 
 
+# server.select 會在查詢外包 LIMIT：取樣只拿這麼多列，違規數另用 COUNT(*) 查完整數字。
+SAMPLE_LIMIT = 200
+
+
+def count_violations(srv, sql: str, sampled: int) -> int:
+    """完整違規列數。取樣未達上限時取樣數就是全部；達上限才另跑 COUNT(*)，避免數字卡在 200。"""
+    if sampled < SAMPLE_LIMIT:
+        return sampled
+    (row,) = srv.select(f"SELECT count(*) AS n FROM ({sql}) AS violations", limit=1)
+    return int(row["n"])
+
+
 def run_card(card: dict, with_decision: bool = False) -> dict:
     srv = _server()
     out = {"id": card["meta"].get("id"), "title": card["meta"].get("title"), "checks": []}
@@ -96,8 +109,9 @@ def run_card(card: dict, with_decision: bool = False) -> dict:
     for c in card["checks"]:
         r = {"id": c["id"], "title": c["title"], "dimension": dimension_of(c["title"])}
         try:
-            rows = srv.select(_clean(c["sql"]), limit=200)
-            r["violations"] = len(rows)
+            sql = _clean(c["sql"])
+            rows = srv.select(sql, limit=SAMPLE_LIMIT)
+            r["violations"] = count_violations(srv, sql, len(rows))
             r["sample"] = rows[:5]
             if c["comparable_sql"]:
                 first = srv.select(_clean(c["comparable_sql"]))[0]

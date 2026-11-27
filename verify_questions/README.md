@@ -126,7 +126,7 @@ verify_questions/
 | 成長 | 月營收 YoY 連 3 個月 > 20%？季毛利率連升？ | `monthly_revenue_twse`、`monthly_revenue`、`mops_quarterly_financials`、`financial_quarterly_yfinance` | TWSE／MOPS vs FinMind 月營收；MOPS vs yfinance 季 EPS；季營收量級 vs 三個月月營收合計 |
 | 體質 | ROE > 15% 且負債比 < 50% 連 3 年？ | `financial_analysis`、`financial_yearly_yfinance` | `financial_analysis.eps` vs MOPS 四季 EPS 合計 |
 | 股利 | 連續配息幾年？現金殖利率？除息後多久填息？ | `dividend`、`dividend_yfinance`、`company_valuation`、`ohlcv_daily` | FinMind vs yfinance 現金股利；`dps / close_price` vs `dividend_yield_pct` |
-| 籌碼 | 外資連續買超？外資持股比上升？借券賣出增加？ | `institutional_net_buy_sell`、`foreign_ownership`、`sbl_history` | 法人買賣超方向 vs 外資持股比變化方向 |
+| 籌碼 | 外資連續買超？外資持股比上升？（借券賣出／餘額目前沒有來源：`sbl_history` 是 t13sa870 的**已完成還券**合約，不能當放空壓力） | `institutional_net_buy_sell`、`foreign_ownership`、`sbl_history` | 法人買賣超方向 vs 外資持股比變化方向 |
 | 技術 | 站上 60 日均線？近 20 日波動度？ | `ohlcv_daily` | 日 K vs 估值收盤價；交易日曆 vs 法人資料的交易日 |
 | 產業 | 同產業鏈誰估值最低、成長最快？產品營收結構？ | `chain_info_list`、`company_basic_info_list`、`company_business_items`、`product_revenue` | `product_revenue.total_revenue` vs 月營收 |
 | 事件 | 重大新聞後股價反應？ | `finmind_news`、`ohlcv_daily` | 新聞日 vs 交易日對齊 |
