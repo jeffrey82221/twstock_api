@@ -2,13 +2,13 @@
 id: Q034
 title: 2330 近 4 季營收是否每季年增 > 30%？DB 的季營收與季 EPS 和台積電財報新聞稿一樣嗎？
 strategy: growth             # §5.1 成長
-status: draft
+status: passing
 stocks: ["2330"]
 window: {since: 2024-01-01, until: 2026-09-30}
 pop_tables: [mops_quarterly_financials]
 crawl: []                    # 出題時（2026-11-27）2330 2022Q1–2026Q3 都已在 pop
 issues: []
-last_run: null
+last_run: 2026-11-28
 ---
 
 ## 決策情境
@@ -107,3 +107,4 @@ GROUP BY 1, 2 HAVING count(*) > 1
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-28 | passing（5／5） | [run](../runs/2026-11-28_Q034.md) | 不需補爬；季營收／EPS 對照新聞稿一致；2025Q4 年增 20.5% 未達加速 |
