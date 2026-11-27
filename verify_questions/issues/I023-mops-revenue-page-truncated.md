@@ -71,6 +71,13 @@ GROUP BY stk_code, latest_month_label HAVING count(*) > 1
 
 不動 SQL，不適用。
 
+## 上游恢復（2026-11-27 第 6 輪）
+
+- 19:05 `upstream_peek.py t21sc03 sii:115:9`：456,350 bytes、997 家、33 個產業段、結尾完整，Last-Modified 10:58:31 GMT（台北 18:58，MOPS 下一次重新產生）。截斷持續約 1 小時。
+- API 的 `_mops_revenue_history_cache`（記憶體、24 小時）還留著截斷頁：重啟 uvicorn 後，`/api/company/2308/revenue/twse?as_of=2026-10-10` 回 **2026/09、65,399,563,000 元**（重啟前回 2026/08）。
+- pop 的 6 列仍是錯的（凍結），留給指令 5 和 adapter 修正一起重爬；重爬前不需要再等上游。
+- 教訓：上游恢復後，API 程序內的快取仍會讓錯誤延續最多 24 小時，cron 在這段時間爬的列一樣會錯。修 adapter 時「不完整頁不寫 cache」可以同時解決。
+
 ## 修復紀錄
 
 ## 重爬與驗證

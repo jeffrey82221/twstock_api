@@ -2,7 +2,7 @@
 id: Q016
 title: 2454、2882、1101 目前股價淨值比在近 18 個月的第幾百分位？估值收盤價和日 K 對得上嗎？
 strategy: valuation          # §5.1 估值
-status: draft
+status: passing
 stocks: ["2454", "2882", "1101"]
 window: {since: 2025-06-05, until: 2026-11-27}
 pop_tables: [company_valuation, ohlcv_daily]
@@ -18,7 +18,7 @@ crawl:                       # 出題時（2026-11-27）1101、2882 只有 2026-
     since: 2025-06-01
     budget: 54               # TWSE STOCK_DAY；3 檔 × 18 個月（兩個 seed 合計 96，§8.3 TWSE 上限 120）
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -103,3 +103,4 @@ WHERE stk_code IN ('2454','2882','1101') AND (data_date > as_of OR data_date < a
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（5／5） | [run](../runs/2026-11-27_Q016.md) | 補爬 TWSE 96 列；1101 PBR 第 100 百分位 → 不追價；官網抽查一致 |
