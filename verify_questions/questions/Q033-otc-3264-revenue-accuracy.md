@@ -2,13 +2,13 @@
 id: Q033
 title: 上櫃 3264 欣銓 2026 年 1–10 月每個月營收都比去年同月高嗎？DB 的月營收與累計營收和公司公布的一樣嗎？
 strategy: growth             # §5.1 成長（上櫃邊界）
-status: draft
+status: passing
 stocks: ["3264"]
 window: {since: 2025-10-01, until: 2026-10-31}
 pop_tables: [monthly_revenue_twse]
 crawl: []                    # 出題時（2026-11-27）由 Q025 補過 2025/10–2026/10
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -87,3 +87,4 @@ GROUP BY 1 HAVING count(*) > 1
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（4／4） | [run](../runs/2026-11-27_Q033.md) | 不需補爬；10 個月都年增 → 全年成長確立 |

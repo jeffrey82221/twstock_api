@@ -2,6 +2,14 @@
 
 > LEDGER.md 只保留最近兩輪的盤點發現；更早的依時間由新到舊附在這裡（README §6.4）。
 
+## 前次盤點發現（2026-11-27 21:45 第 22 輪指令 7，`snapshots/2026-11-27.json`）
+
+- **和第 21 輪比**：列數變化全部來自 Q030 補爬（估值 +36、日 K +720）。
+- **第 21 輪提交**：`1c86c23`。**本機 `pytest -q` 其實不是全綠**（279 passed、234 errors：pgserver 的 `initdb`／`pg_ctl` 在記憶體不足時被 macOS SIGKILL），但 `pytest | tail -1 && git commit` 看的是 tail 的結束碼，commit 照樣送出——違反指令 8 第 1 步。記憶體恢復後重跑 510 passed、0 error，確認是環境問題。CI：`test-upstream` 第一次失敗（TPEx OpenAPI `mopsfin_t187ap03_O` 對 CI runner 回 403），`gh run rerun 46006102672 --failed` 後 8 個全過。README 指令 8 第 1 步補上 `set -o pipefail` 與 SIGKILL 的判斷方式。
+- **挑題**：執行 Q031（唯一可跑的 draft，不需補爬），4／4 PASS；FinMind 上櫃股利對 TPEx 除息結果 23／23 一致。四檔都不是股利成長股。
+- **出題（指令 2）**：可跑的 draft 為 0，補 1 題 **Q032**（上櫃基本資料：資本額 vs TPEx 發行股數），試跑 5／5 PASS。
+- **建議修復順序**：同第 20 輪。
+
 ## 前次盤點發現（2026-11-27 20:35 第 21 輪指令 7，`snapshots/2026-11-27.json`）
 
 - **和第 20 輪比**：列數變化全部來自 Q029 補爬（股利 +15、yfinance 股利 +11、3105 股利歷史 +1）。

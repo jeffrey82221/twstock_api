@@ -38,7 +38,8 @@
 | [Q030](questions/Q030-bank-pbr-percentile.md) | 估值 | 銀行股 5880、2886、2892 PBR 近 12 個月百分位；估值收盤 vs 日 K | passing | 2026-11-27 | — |
 | [Q031](questions/Q031-otc-dividend-accuracy-tpex.md) | 股利 | 上櫃 5483、3105、3264、6488 現金股利是否逐年提高；FinMind 對照櫃買中心除息結果 | passing | 2026-11-27 | — |
 | [Q032](questions/Q032-otc-basic-info-capital.md) | 產業 | 上櫃 5483、3105、3264、6488 掛牌年數、資本額；資本額 vs TPEx 發行股數 | passing | 2026-11-27 | — |
-| [Q033](questions/Q033-otc-3264-revenue-accuracy.md) | 成長 | 上櫃 3264 2026 年每月營收是否都年增；月營收與累計營收對照公司公告 | draft | — | — |
+| [Q033](questions/Q033-otc-3264-revenue-accuracy.md) | 成長 | 上櫃 3264 2026 年每月營收是否都年增；月營收與累計營收對照公司公告 | passing | 2026-11-27 | — |
+| [Q034](questions/Q034-tsmc-quarterly-accuracy.md) | 成長 | 2330 近 4 季營收年增；季營收與季 EPS 對照台積電財報新聞稿 | draft | — | — |
 
 ## Issues
 
@@ -163,21 +164,22 @@
 | 2026-11-27（第 21 輪指令 7） | 96.1 | 同上 | 13（不變） | 701（不變） | 執行 Q030（passing）；沒有新 issue；主機記憶體不足暫停 |
 | 2026-11-27（第 22 輪指令 7） | 96.1 | 同上 | 13（不變） | 701（不變） | 執行 Q031（passing）；出 Q032；沒有新 issue |
 | 2026-11-27（第 23 輪指令 7） | 96.1 | 同上 | 13（不變） | 701（不變） | 執行 Q032（passing）；出 Q033；沒有新 issue |
+| 2026-11-27（第 24 輪指令 7） | 96.1 | 同上 | 13（不變） | 701（不變） | 執行 Q033（passing）；出 Q034；沒有新 issue |
 
-## 最新盤點發現（2026-11-27 21:55 第 23 輪指令 7，`snapshots/2026-11-27.json`）
+## 最新盤點發現（2026-11-27 22:05 第 24 輪指令 7，`snapshots/2026-11-27.json`）
+
+- **和第 23 輪比**：沒有任何變化。
+- **第 23 輪提交**：`89c2e89`，本機 pytest（pipefail）510 passed；PR #82 第一次 `test-upstream` 失敗：TPEx OpenAPI `mopsfin_t187ap03_O` 回 525（第 21 輪是 403），本機同一 URL 回 200。`gh run rerun 46008524673 --failed` 後 8 個全過。README 指令 8 把這個模式列進「上游環境」例子。
+- **挑題**：執行 Q033（唯一可跑的 draft，不需補爬），4／4 PASS；3264 10 個月都年增。
+- **出題（指令 2）**：補 1 題 **Q034**（2330 季營收、季 EPS accuracy）：季營收 3 筆、上半年累計 1 筆、季 EPS 4 筆。發現台積電新聞稿的 EPS 是**稀釋**、MOPS 是**基本**，2025Q4、2026Q3 各差 0.01（與年度 2025 的 66.25 vs 66.26 同一件事），C3 容許 0.015 並寫明理由。試跑 5／5 PASS。
+- **建議修復順序**：同第 20 輪。
+
+## 前次盤點發現（2026-11-27 21:55 第 23 輪指令 7，`snapshots/2026-11-27.json`）
 
 - **和第 22 輪比**：沒有任何變化。
 - **第 22 輪提交**：`12cca5d`，本機 pytest（pipefail）510 passed；PR #82 8 個 check 全過，沒有補救。
 - **挑題**：執行 Q032（唯一可跑的 draft，不需補爬），5／5 PASS；四檔上櫃半導體實收資本額 42–64 億，都標記中小型。
 - **出題（指令 2）**：補 1 題 **Q033**（上櫃 3264 月營收 accuracy，Q021 的上櫃版）：3 個單月＋2 個累計公告值，試跑 4／4 PASS。
-- **建議修復順序**：同第 20 輪。
-
-## 前次盤點發現（2026-11-27 21:45 第 22 輪指令 7，`snapshots/2026-11-27.json`）
-
-- **和第 21 輪比**：列數變化全部來自 Q030 補爬（估值 +36、日 K +720）。
-- **第 21 輪提交**：`1c86c23`。**本機 `pytest -q` 其實不是全綠**（279 passed、234 errors：pgserver 的 `initdb`／`pg_ctl` 在記憶體不足時被 macOS SIGKILL），但 `pytest | tail -1 && git commit` 看的是 tail 的結束碼，commit 照樣送出——違反指令 8 第 1 步。記憶體恢復後重跑 510 passed、0 error，確認是環境問題。CI：`test-upstream` 第一次失敗（TPEx OpenAPI `mopsfin_t187ap03_O` 對 CI runner 回 403），`gh run rerun 46006102672 --failed` 後 8 個全過。README 指令 8 第 1 步補上 `set -o pipefail` 與 SIGKILL 的判斷方式。
-- **挑題**：執行 Q031（唯一可跑的 draft，不需補爬），4／4 PASS；FinMind 上櫃股利對 TPEx 除息結果 23／23 一致。四檔都不是股利成長股。
-- **出題（指令 2）**：可跑的 draft 為 0，補 1 題 **Q032**（上櫃基本資料：資本額 vs TPEx 發行股數），試跑 5／5 PASS。
 - **建議修復順序**：同第 20 輪。
 
 ## 重爬紀錄（crawl_delete_rows → crawl_insert_filtered）
