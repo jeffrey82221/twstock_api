@@ -2,13 +2,13 @@
 id: Q022
 title: 半導體產業鏈上中下游各有幾家公司已進資料庫母體？產業鏈表的公司名稱與層級和基本資料一致嗎？
 strategy: industry           # §5.1 產業
-status: draft
+status: passing
 stocks: []                   # 產業鏈層級（ic_code D000），不是個股
 window: {since: null, until: 2026-11-27}
 pop_tables: [chain_info_list, company_basic_info_list]
 crawl: []                    # 只讀；母體覆蓋率是決策本身，不為了提高覆蓋率而補爬（company_list 每列打經濟部，§8.3）
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -66,3 +66,4 @@ WHERE stk_code !~ '^[0-9]{4}[0-9A-Z]{0,2}$' OR left(top_code, 1) <> left(ic_code
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（4／4） | [run](../runs/2026-11-27_Q022.md) | 三段覆蓋率 33–43%，還不能做段別比較 |
