@@ -2,13 +2,13 @@
 id: Q023
 title: 上市大盤股價淨值比在近 12 個月第幾百分位？資料庫估算的大盤市值走勢和加權指數一致嗎？
 strategy: market             # §5.1 市場
-status: draft
+status: passing
 stocks: []                   # 市場層級
 window: {since: 2025-11-05, until: 2026-11-27}
 pop_tables: [market_valuation_summary]
 crawl: []                    # 出題時（2026-11-27）2017-05 起每月都已在 pop（Q006 C1）
 issues: []
-last_run: null
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -112,3 +112,4 @@ WHERE data_date >= DATE '2025-11-01' AND (data_date > valuation_date OR data_dat
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | passing（4／4） | [run](../runs/2026-11-27_Q023.md) | 大盤 PBR 第 53.8 百分位 → 不調整；市值走勢與加權指數一致 |
