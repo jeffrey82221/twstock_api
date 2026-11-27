@@ -2,13 +2,13 @@
 id: Q039
 title: 2454 聯發科 2026Q3 營收與 EPS 是否比去年同季成長？DB 的季營收、季 EPS 和法說會公布的一樣嗎？
 strategy: growth             # §5.1 成長
-status: draft
+status: passing
 stocks: ["2454"]
 window: {since: 2025-01-01, until: 2026-09-30}
 pop_tables: [mops_quarterly_financials]
 crawl: []                    # 出題時（2026-11-28）2454 2023Q1–2026Q3 由 Q012 補過
 issues: []
-last_run: null
+last_run: 2026-11-28
 ---
 
 ## 決策情境
@@ -81,3 +81,4 @@ GROUP BY 1, 2 HAVING count(*) > 1
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-28 | passing（4／4） | [run](../runs/2026-11-28_Q039.md) | 不需補爬；Q3 營收年增 18.3%、EPS 年增 10.5% → 恢復成長 |
