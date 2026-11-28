@@ -1,6 +1,6 @@
 """重算 DATA_QUALITY_DIMENSIONS.md §4 的數字與出題分數。
 
-只讀 LEDGER.md 與 questions/，不連資料庫：
+只讀 LEDGER.md、questions/ 與 runs/，不連資料庫：
     python verify_questions/quality_summary.py
 """
 import collections
@@ -30,15 +30,56 @@ def section(text, start, end):
     return text.split(start, 1)[1].split(end, 1)[0]
 
 
+def latest_results(card, card_tags):
+    if re.search(r"^status:\s*draft\b", card, re.M):
+        return {}
+    if "## 歷次結果" not in card:
+        return {}
+    history = card.split("## 歷次結果", 1)[1]
+    entries = re.findall(r"^\| \d{4}-\d{2}-\d{2} \|.*$", history, re.M)
+    if not entries:
+        return {}
+    latest = entries[-1]
+    run = re.search(r"\]\(\.\./runs/([^/)]+\.md)\)", latest)
+    if not run:
+        # 沒有詳細 run 時，只採用明確記載全部斷言通過的回歸。
+        match = re.search(r"(\d+)\s*[／/]\s*(\d+)", latest)
+        if "PASS" in latest and match and int(match.group(1)) == int(match.group(2)) == len(card_tags):
+            return dict.fromkeys(card_tags, "PASS")
+        return {}
+
+    with open(os.path.join(HERE, "runs", run.group(1)), encoding="utf-8") as file:
+        text = file.read()
+    results = {}
+    for line in section(text, "## 斷言結果", "## ").splitlines():
+        cells = [c.strip().strip("*") for c in line.split("|")]
+        if len(cells) < 4:
+            continue
+        match = re.match(r"(C\d+)\b", cells[1])
+        if not match or match.group(1) not in card_tags:
+            continue
+        result = cells[3] if cells[2] in FULL.values() else cells[2]
+        if re.match(r"^(PASS|FAIL)(?:\b|（)", result):
+            results[match.group(1)] = "PASS" if result.startswith("PASS") else "FAIL"
+    return results
+
+
 def main():
     ledger = open(os.path.join(HERE, "LEDGER.md"), encoding="utf-8").read()
 
     assertions = collections.Counter()
     tags = collections.Counter()
+    ok, bad = collections.Counter(), collections.Counter()
     for f in glob.glob(os.path.join(HERE, "questions", "Q*.md")):
-        for m in re.finditer(r"^### C\d+ ([\w-]+)", open(f, encoding="utf-8").read(), re.M):
-            assertions[TAG_TO_DIM[m.group(1)]] += 1
-            tags[m.group(1)] += 1
+        card = open(f, encoding="utf-8").read()
+        card_tags = dict(re.findall(r"^### (C\d+) ([\w-]+)", card, re.M))
+        for tag in card_tags.values():
+            assertions[TAG_TO_DIM[tag]] += 1
+            tags[tag] += 1
+
+        for assertion, result in latest_results(card, card_tags).items():
+            dim = TAG_TO_DIM[card_tags[assertion]]
+            (ok if result == "PASS" else bad)[dim] += 1
 
     issues = collections.defaultdict(lambda: [0, 0, 0])  # 已修、未結、未結負擔
     ids = set()
@@ -54,7 +95,7 @@ def main():
                 if not closed:
                     issues[d][2] += SEV_BURDEN[c[2][:2]]
 
-    cover, applicable, ok, bad = (collections.Counter() for _ in range(4))
+    cover, applicable = (collections.Counter() for _ in range(2))
     rows = 0
     for r in section(ledger, "## 維度矩陣", "## 剖析基線").splitlines():
         if not r.startswith("| `"):
@@ -68,8 +109,6 @@ def main():
             applicable[d] += 1
             if re.search(r"Q\d+-C", cell):
                 cover[d] += 1
-            ok[d] += cell.count("✓")
-            bad[d] += cell.count("✗")
 
     total_yield = len(ids) / sum(assertions.values())
     avg_burden = sum(v[2] for v in issues.values()) / len(DIMS)

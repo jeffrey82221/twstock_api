@@ -80,30 +80,32 @@
 
 ## 維度矩陣（pop 表 × DAMA 維度）
 
-格子寫最近一次的斷言結果與出處（README §6.4）。`N/A` 是該維度對這張表不適用（例：沒有時間序列的主檔沒有及時性、文字欄位沒有精確性、沒有權威來源可比的內容沒有準確性），不計入 `DATA_QUALITY_DIMENSIONS.md` §4 的覆蓋率分母；判斷錯了就改回 `—`（盲區）。`(d)` 是 draft 出題時的試跑結果；`剖析` 是只有 §7.5 剖析涵蓋；推導欄位互推不算（[Q001](questions/Q001-valuation-per-percentile.md) C3 只算範圍部分、[Q005](questions/Q005-income-dividend-consistency.md) C3 不算）。**準確一欄**：`accuracy` 斷言：[Q012](questions/Q012-annual-eps-accuracy.md)（EPS，passing）、[Q014](questions/Q014-cash-dividend-accuracy.md)（現金股利，draft）；其餘只有官網抽查，是下一輪出題的第一優先。
+格子寫斷言結果與出處（README §6.4），同一格可列多個斷言，不保證列出所有斷言。`N/A` 是該維度對這張表不適用（例：沒有時間序列的主檔沒有及時性、文字欄位沒有精確性、沒有權威來源可比的內容沒有準確性），不計入 `DATA_QUALITY_DIMENSIONS.md` §4 的覆蓋率分母；判斷錯了就改回 `—`（盲區）。`(d)` 是 draft 出題時的試跑結果；`剖析` 與官網抽查不是斷言結果。推導欄位互推不算（Q001-C3 只含範圍部分、Q005-C3 不算）。全表調查結果另見 §7.5 剖析基線及 issue；不混入題目窗口內的結果。
 
 | pop 表 | 策略 | 完整 | 唯一 | 及時 | 有效 | 準確 | 一致 | 精確 | 可取得 | 合理 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `company_valuation` | 估值 | Q001-C1 ✓；Q016-C1 ✓ | Q016-C3 ✓ | Q001-C5 ✓ | Q001-C3（範圍）✓ | — | Q001-C4 ✓；Q010-C2 ✗(d, [I020](issues/I020-2882-twse-per-eps-vs-mops.md)) | — | Q001-C2 ✓ | — |
+| `company_valuation` | 估值 | Q001-C1 ✓；Q016-C1 ✓ | Q016-C3 ✓ | Q001-C5 ✓ | — | — | Q001-C4 ✓；Q010-C2 ✗(d, [I020](issues/I020-2882-twse-per-eps-vs-mops.md)) | — | Q001-C2 ✓ | — |
 | `market_valuation_summary` | 市場 | Q006-C1、C2 ✓ | 剖析；Q023-C3 ✓ | Q006-C5 ✓ | Q006-C3 ✓ | — | Q006-C4 ✓（只驗量級） | — | 剖析 | Q023-C2 ✓（對加權指數） |
-| `monthly_revenue_twse` | 成長 | Q002-C1 ✓ | 剖析 ✗（[I023](issues/I023-mops-revenue-page-truncated.md)，3 組）；Q013-C3 ✓ | Q002-C3 ✓；Q013-C4 ✓ | Q021-C5 ✓ | Q021-C1、C2 ✓ | Q002-C5、C6 ✓；Q013-C2 ✓ | Q013-C5 ✓ | Q002-C2 ✓ | — |
-| `monthly_revenue` | 成長 | Q013-C1 ✓ | Q013-C3 ✓ | Q013-C4 ✓ | — | [Q013](questions/Q013-monthly-revenue-two-sources.md) 抽查 ✓（非斷言） | Q013-C2 ✓（16 列） | Q013-C5 ✓ | 剖析 | — |
-| `mops_quarterly_financials` | 成長 | Q012-C3 ✓；Q007-C1 ✗(d) | Q012-C4 ✓；Q010-C3 ✗(d, [I019](issues/I019-financial-q3-frozen-as-previous-quarter.md)) | Q002-C4 ✓ | Q007-C5 ✓(d) | Q012-C2 ✓（8 列） | Q002-C5、Q003-C4 ✓ | Q012-C5 ✓ | 剖析 | — |
-| `financial_quarterly_yfinance` | 成長 | Q007-C2 ✗(d, [I016](issues/I016-yfinance-financials-ttm-always-null.md)) | 剖析 | Q007-C4 ✓(d) | — | — | Q007-C3 ✓(d) | — | 剖析 | — |
-| `financial_yearly_yfinance` | 體質 | Q007-C2 ✗(d, [I016](issues/I016-yfinance-financials-ttm-always-null.md)) | — | 剖析 | — | — | — | — | 剖析 | — |
-| `financial_analysis` | 體質 | Q003-C1 ✓；Q012-C3 ✓ | 剖析 | Q019-C5 ✓ | Q003-C3 ✓；Q019-C4 ✓ | Q012-C1 ✓（9 列）；[Q019](questions/Q019-liquidity-ratios-internal.md) 抽查 ✓ | Q003-C4 ✓；Q019-C3 ✓ | Q012-C5 ✓ | Q003-C2 ✓ | Q019-C2 ✓ |
-| `raw_yearly_financials`（FinMind，無正規化表） | 體質 | Q035-C1 ✓ | — | Q035-C3 ✓ | — | — | Q035-C2、C5 ✓；全表 ✗（[I027](issues/I027-ttm-without-contiguity-check.md)，2 列） | — | Q035-C4 ✓ | — |
-| `dividend` | 股利 | Q005-C2 ✓；Q020-C1 ✓；Q014-C3、C6 ✓(d) | Q020-C5 ✓；Q014-C4 ✓(d) | Q020-C3 ✓ | Q014-C5 ✗(d, [I024](issues/I024-dividend-rights-issue-as-event.md)) | Q014-C1 ✓(d，27 列) | Q005-C1 ✗（使用者決定保留，[I003](issues/I003-yfinance-dividend-adjusted.md)） | — | Q005-C4 ✓ | — |
-| `dividend_yfinance` | 股利 | Q014-C3 ✓(d)；Q029-C1 ✗（[I026](issues/I026-yfinance-otc-dividend-wrong-and-missing.md)，缺 1 筆） | Q014-C4 ✓(d)；Q029-C5 ✓ | 剖析 | — | Q014-C2 ✓(d，上市 27 列)；上櫃 ✗（[I026](issues/I026-yfinance-otc-dividend-wrong-and-missing.md)，TPEx 判定 2 筆錯） | Q005-C1 ✗（[I003](issues/I003-yfinance-dividend-adjusted.md) 殘留）；Q029-C2 ✗（[I026](issues/I026-yfinance-otc-dividend-wrong-and-missing.md)） | — | 剖析 | — |
+| `monthly_revenue_twse` | 成長 | Q002-C1 ✓ | Q013-C3 ✓ | Q002-C3 ✓；Q013-C4 ✓ | Q021-C5 ✓ | Q021-C1、C2 ✓；Q033-C1、C2 ✓ | Q002-C5、C6 ✓；Q013-C2 ✓ | Q013-C5 ✓ | Q002-C2 ✓ | — |
+| `monthly_revenue` | 成長 | Q013-C1 ✓ | Q013-C3 ✓ | Q013-C4 ✓ | — | — | Q013-C2 ✓（16 列） | Q013-C5 ✓ | 剖析 | — |
+| `mops_quarterly_financials` | 成長 | Q012-C3 ✓；Q007-C1 ✗(d)；Q034-C4 ✓；Q039-C3 ✓ | Q012-C4 ✓；Q010-C3 ✗(d, [I019](issues/I019-financial-q3-frozen-as-previous-quarter.md))；Q034-C5 ✓；Q039-C4 ✓ | Q002-C4 ✓ | Q007-C5 ✓(d) | Q012-C2 ✓（8 列）；Q034-C1、C2、C3 ✓；Q037-C1、C2 ✓；Q039-C1、C2 ✓ | Q002-C5、Q003-C4 ✓ | Q012-C5 ✓ | 剖析 | — |
+| `financial_quarterly_yfinance` | 成長 | 剖析 | 剖析 | Q007-C4 ✓(d) | — | — | Q007-C3 ✓(d) | — | Q007-C2 ✗(d, [I016](issues/I016-yfinance-financials-ttm-always-null.md)) | — |
+| `financial_yearly_yfinance` | 體質 | 剖析 | — | 剖析 | — | — | — | — | Q007-C2 ✗(d, [I016](issues/I016-yfinance-financials-ttm-always-null.md)) | — |
+| `financial_analysis` | 體質 | Q003-C1 ✓；Q012-C3 ✓ | 剖析 | Q019-C5 ✓ | Q003-C3 ✓；Q019-C4 ✓ | Q012-C1 ✓（9 列） | Q003-C4 ✓；Q019-C3 ✓ | Q012-C5 ✓ | Q003-C2 ✓ | Q019-C2 ✓ |
+| `raw_yearly_financials`（FinMind，無正規化表） | 體質 | Q035-C1 ✓ | — | Q035-C3 ✓ | — | — | Q035-C2、C5 ✓ | — | Q035-C4 ✓ | — |
+| `dividend` | 股利 | Q005-C2 ✓；Q020-C1 ✓；Q014-C3、C6 ✓(d)；Q031-C2 ✓ | Q020-C5 ✓；Q014-C4 ✓(d)；Q031-C3 ✓ | Q020-C3 ✓；Q031-C4 ✓ | Q014-C5 ✗(d, [I024](issues/I024-dividend-rights-issue-as-event.md)) | Q014-C1 ✓(d，27 列)；Q031-C1 ✓ | Q005-C1 ✗（使用者決定保留，[I003](issues/I003-yfinance-dividend-adjusted.md)） | — | Q005-C4 ✓ | — |
+| `dividend_yfinance` | 股利 | Q014-C3 ✓(d)；Q029-C1 ✗（[I026](issues/I026-yfinance-otc-dividend-wrong-and-missing.md)，缺 1 筆） | Q014-C4 ✓(d)；Q029-C5 ✓ | 剖析 | — | Q014-C2 ✓(d，上市 27 列) | Q005-C1 ✗（[I003](issues/I003-yfinance-dividend-adjusted.md) 殘留）；Q029-C2 ✗（[I026](issues/I026-yfinance-otc-dividend-wrong-and-missing.md)） | — | 剖析 | — |
 | `institutional_net_buy_sell` | 籌碼 | Q004-C1 ✓；Q015-C1 ✓ | 剖析；Q015-C4 ✓ | Q015-C5 ✓ | Q018-C4 ✓ | — | Q004-C2 ✓ | Q015-C6 ✓ | 剖析 | Q018-C2 ✓ |
-| `foreign_ownership` | 籌碼 | Q004-C3 ✓ | 剖析；Q015-C4 ✓ | Q004-C4 ✓；Q015-C5 ✓ | Q004-C4 ✓ | — | Q015-C2、C3 ✓ | Q015-C6 ✓ | 剖析 | — |
-| `sbl_history` | 籌碼 | Q009-C3 ✓ | Q009-C1 ✓ | 剖析 | Q009-C5 ✓ | [Q009](questions/Q009-sbl-fee-pressure.md) 抽查 ✓（非斷言） | Q009-C2 ✓ | — | Q009-C4 ✓ | Q009-C6 ✓ |
-| `ohlcv_daily` | 技術 | Q011-C1 ✓ | Q011-C2 ✓ | Q011-C6 ✓（重爬當月後） | Q018-C4 ✓ | [Q011](questions/Q011-technical-ma60-volatility.md) 抽查 ✓（非斷言） | Q001-C4 ✓；Q011-C5 ✓；Q018-C3 ✓ | Q011-C3 ✓ | 剖析 | Q011-C4 ✓ |
+| `foreign_ownership` | 籌碼 | Q004-C3 ✓ | 剖析；Q015-C4 ✓ | Q015-C5 ✓ | Q004-C4 ✓ | — | Q015-C2、C3 ✓ | Q015-C6 ✓ | 剖析 | — |
+| `sbl_history` | 籌碼 | Q009-C3 ✓ | Q009-C1 ✓ | 剖析 | Q009-C5 ✓ | — | Q009-C2 ✓ | — | Q009-C4 ✓ | Q009-C6 ✓ |
+| `ohlcv_daily` | 技術 | Q011-C1 ✓ | Q011-C2 ✓ | Q011-C6 ✓（重爬當月後） | Q018-C4 ✓ | — | Q001-C4 ✓；Q011-C5 ✓；Q018-C3 ✓ | Q011-C3 ✓ | 剖析 | Q011-C4 ✓ |
 | `chain_info_list` | 產業 | Q017-C1 ✓；Q022-C1 ✓ | Q017-C3 ✓；Q022-C3 ✓ | N/A | Q022-C4 ✓ | N/A | Q022-C2 ✓（872 家） | N/A | Q008-C4 ✓ | N/A |
-| `company_basic_info_list` | 產業 | Q017-C1 ✓ | — | N/A | Q017-C4 ✓ | [Q017](questions/Q017-basic-info-capital-listing.md) 抽查 ✓（非斷言） | Q017-C2 ✓（5 列） | N/A | 依賴鏈 | Q017-C5 ✓ |
+| `company_basic_info_list` | 產業 | Q017-C1 ✓ | — | N/A | Q017-C4 ✓ | — | Q017-C2 ✓（5 列） | N/A | 依賴鏈 | Q017-C5 ✓ |
 | `company_business_items` | 產業 | 剖析 | 剖析（上游重複，合法） | N/A | — | N/A | N/A | N/A | Q008-C4 ✓ | N/A |
-| `product_revenue` | 產業 | 剖析 | Q008-C5 ✓ | 剖析 | Q008-C2 ✓ | [Q008](questions/Q008-product-revenue-concentration.md) 抽查 ✓（非斷言） | Q008-C1 ✗（[I022](issues/I022-product-revenue-negative-items-dropped.md)）；C3 ✓ | — | 剖析 | — |
-| `finmind_news` | 事件 | Q036-C1 ✓ | 剖析 ✗（[I018](issues/I018-finmind-news-duplicates-single-day.md)） | Q036-C3 ✓ | Q036-C2 ✓ | N/A | N/A | N/A | 剖析 | N/A |
+| `product_revenue` | 產業 | 剖析 | Q008-C5 ✓ | 剖析 | Q008-C2 ✓ | — | Q008-C1 ✗（[I022](issues/I022-product-revenue-negative-items-dropped.md)）；C3 ✓ | — | 剖析 | — |
+| `finmind_news` | 事件 | Q036-C1 ✓ | 剖析 | Q036-C3 ✓ | Q036-C2 ✓ | N/A | N/A | N/A | 剖析 | N/A |
+
+其他範圍的觀察（不計入斷言通過率）：`raw_yearly_financials` 全表有 2 列 TTM 季度不連續（[I027](issues/I027-ttm-without-contiguity-check.md)），不在 Q035-C5 的窗口內；`dividend_yfinance` 上櫃 TPEx 抽查有 2 筆錯（[I026](issues/I026-yfinance-otc-dividend-wrong-and-missing.md)）。`monthly_revenue_twse` 的 3 組重複（I023）及 `finmind_news` 的重複（I018）見下方剖析基線。其他通過的官網抽查見 Q008、Q009、Q011、Q013、Q017、Q019 的 run。
 
 ## 剖析基線（§7.5，2026-11-27 建立）
 
