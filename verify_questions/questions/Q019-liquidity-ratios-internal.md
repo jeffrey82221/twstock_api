@@ -83,7 +83,7 @@ HAVING max(f.year) IS DISTINCT FROM extract(year FROM (now() AT TIME ZONE 'Asia/
 ```
 
 ## 已知限制
-- 2882 的流動比率是 1,655%（2025），速動比率、週轉率是 NULL：金融業的資產負債表沒有流動／非流動之分，MOPS 仍給出一個比率。只用來驗資料，不做決策（I009 同類）。
+- 2882 的流動比率是 1,655%（2025），速動比率、週轉率是 NULL：金融業的資產負債表沒有流動／非流動之分，MOPS 仍給出一個比率。只用來驗資料，不做決策（[I009](../issues/I009-mops-quarterly-financial-companies.md) 同類）。
 - C5 的「3 月底」用年度近似：4 月 1 日到 3 個月後（7 月 1 日）之間，期限已過但式子仍期待前一年，會少報不會誤報。
 
 ## 歷次結果

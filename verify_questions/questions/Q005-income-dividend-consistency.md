@@ -7,7 +7,7 @@ stocks: ["2330", "2317", "2882", "1101"]
 window: {since: 2021, until: 2026-11-25}
 pop_tables: [dividend, dividend_yfinance, company_valuation]
 crawl:
-  - seed: company_list                       # 1101 尚未進母體（Q003 會先補）
+  - seed: company_list                       # 1101 尚未進母體（[Q003](Q003-quality-roe-debt.md) 會先補）
     filters: {stk_code: "1101"}
     budget: 1
   - seed: company_finmind_list
@@ -108,13 +108,13 @@ WHERE stk_code IN ('2330','2317','2882','1101')
 ## 已知限制
 - 2330 自 2019 年起季配息，2317／2882／1101 為年配息；C2 只要求每年至少一筆。
 - yfinance 的 reference_date 是除息日，FinMind 的是基準日／除息日，C1 只比對兩者剛好同日的事件。
-- **C1 刻意維持 FAIL**（使用者 2026-11-25 決定，I003）：2882 的 yfinance 股利比實際多 1.0157 倍且 Yahoo 沒有 split 紀錄（L0），留著當作「yfinance 股利不可當實際配發金額」的提醒。回歸時只有 2882 與 2330 2007-06-08／2008-07-16（同日小額配股，L0，見 I003）以外的新違規才算退化；決策一律用 FinMind（`pop.dividend`）。
+- **C1 刻意維持 FAIL**（使用者 2026-11-25 決定，[I003](../issues/I003-yfinance-dividend-adjusted.md)）：2882 的 yfinance 股利比實際多 1.0157 倍且 Yahoo 沒有 split 紀錄（L0），留著當作「yfinance 股利不可當實際配發金額」的提醒。回歸時只有 2882 與 2330 2007-06-08／2008-07-16（同日小額配股，L0，見 [I003](../issues/I003-yfinance-dividend-adjusted.md)）以外的新違規才算退化；決策一律用 FinMind（`pop.dividend`）。
 - 2026-11-26 起決策 SQL 與 C2 改讀 `pop.dividend`（原本讀 `pop.dividend_yfinance`，與上一條矛盾）；yfinance 只出現在 C1 的跨來源比對。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
 | 2026-11-25 | FAIL（C1） | [run](../runs/2026-11-25_Q005.md) | yfinance 股利為還原值 |
-| 2026-11-25 | FAIL（C1） | — | 指令 5 後重跑：C1 違規 3 → 2（1101 修正；2882 為 L0 殘留，見 I003） |
-| 2026-11-26 | FAIL（C1） | — | C1 依使用者決定保留 FAIL（I003）；I012 修正後可比對 32 → 50，違規 3；C2–C4 PASS |
+| 2026-11-25 | FAIL（C1） | — | 指令 5 後重跑：C1 違規 3 → 2（1101 修正；2882 為 L0 殘留，見 [I003](../issues/I003-yfinance-dividend-adjusted.md)） |
+| 2026-11-26 | FAIL（C1） | — | C1 依使用者決定保留 FAIL（[I003](../issues/I003-yfinance-dividend-adjusted.md)）；[I012](../issues/I012-finmind-dividend-window-drops-event.md) 修正後可比對 32 → 50，違規 3；C2–C4 PASS |
 | 2026-11-26 | FAIL（C1，刻意保留） | [run](../runs/2026-11-26_Q005.md) | 指令 7：補爬 FinMind 9 個事件；決策 SQL 與 C2 改讀 FinMind；C1 可比對 59、違規 4（2882 ×2、2330 ×2，皆 L0）；C2–C4 PASS |

@@ -12,7 +12,7 @@ found_by: [Q008]
 
 ## 症狀（附可重現的 SQL）
 
-Q008 C1（各產品金額合計 − 銷貨退回 = 營收合計）在 5 檔中 10 組 (stk_code, ym) FAIL；全表 180 組中 21 組、13 檔違規，**全部是合計大於營收淨額**，沒有一組是不足：
+[Q008](../questions/Q008-product-revenue-concentration.md) C1（各產品金額合計 − 銷貨退回 = 營收合計）在 5 檔中 10 組 (stk_code, ym) FAIL；全表 180 組中 21 組、13 檔違規，**全部是合計大於營收淨額**，沒有一組是不足：
 
 ```sql
 SELECT stk_code, ym, sum(amount) AS s, max(sales_return) AS sr, max(total_revenue) AS tot,
@@ -47,7 +47,7 @@ if c2 and c3_amount is not None and c3_amount > 0:
 MOPS 的產品列可以是負數：一般公司是「產品別調整」（MOPS 備註原文），金融業是損失科目（金融資產評價損失、保險財務費用）。丟掉之後，剩下每一列的金額與占比本身仍然正確（占比分母是營收淨額＋銷貨退回），但：
 
 - 各列合計 ≠ 營收淨額，占比加總 > 100%（金融業可達 449%）；
-- 金融業「第一大產品占比」會超過 100%（2882 利息淨收益 127.54%），Q008 的集中度門檻對金融業失去意義；
+- 金融業「第一大產品占比」會超過 100%（2882 利息淨收益 127.54%），[Q008](../questions/Q008-product-revenue-concentration.md) 的集中度門檻對金融業失去意義；
 - 想用產品明細重建營收（例：某產品線年增）的決策會高估。
 
 正規化 SQL（`db/poc/product_revenue.sql`）沒有過濾，攤平全部 items，不是 L5。
@@ -70,8 +70,8 @@ MOPS 的產品列可以是負數：一般公司是「產品別調整」（MOPS �
 - **_v2 SQL**：不需要（只改 L1，欄位規格不變）。
 - **影響的既有列**：21 個 `product_revenue_filer_list` seed 列；raw 與正規化都是 1:1 對 seed 的 filing。
 - **重打 API 次數**：每列 2～3 次 MOPS（申報清單有 cache，明細 1 次），約 45 次，在 §8.3 MOPS 60 的預算內，分 3 批（`row_cnt ≤ 8`）。
-- **斷言**：Q008 C2 已改成不限制單項占比範圍（見 Q008 已知限制）；修好後 Q008 C1 應該 0 違規，它就是復發時的報警。
-- **決策面**：Q008 的「單一產品 > 70%」門檻要排除金融業，或改用「正數項目中的占比」。修好後由使用者決定。
+- **斷言**：[Q008](../questions/Q008-product-revenue-concentration.md) C2 已改成不限制單項占比範圍（見 [Q008](../questions/Q008-product-revenue-concentration.md) 已知限制）；修好後 [Q008](../questions/Q008-product-revenue-concentration.md) C1 應該 0 違規，它就是復發時的報警。
+- **決策面**：[Q008](../questions/Q008-product-revenue-concentration.md) 的「單一產品 > 70%」門檻要排除金融業，或改用「正數項目中的占比」。修好後由使用者決定。
 
 ## db/poc 規則檢查
 

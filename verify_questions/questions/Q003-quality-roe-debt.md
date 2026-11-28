@@ -98,6 +98,6 @@ JOIN (SELECT stk_code, fiscal_year::int AS y FROM pop.mops_quarterly_financials
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
 | 2026-11-25 | FAIL（C2、C4） | [run](../runs/2026-11-25_Q003.md) | financial_analysis 可信；當年度空列、季 EPS 累計 |
-| 2026-11-25 | PASS | — | 指令 5 後重跑：全部通過（I001、I008、I009 修正） |
+| 2026-11-25 | PASS | — | 指令 5 後重跑：全部通過（[I001](../issues/I001-mops-quarterly-financials-ytd.md)、[I008](../issues/I008-financial-analysis-current-year.md)、[I009](../issues/I009-mops-quarterly-financial-companies.md) 修正） |
 | 2026-11-25 | PASS | — | 指令 6 回歸（不補爬）：4／4 PASS |
 | 2026-11-26 | PASS | — | 資料庫重建後回歸：4／4 PASS |

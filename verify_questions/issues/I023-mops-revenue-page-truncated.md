@@ -12,7 +12,7 @@ found_by: [Q008]
 
 ## 症狀（附可重現的 SQL）
 
-Q008 C3 的可比對列數是 12，預期 15（5 檔 × 3 個月）。少掉的 3 組是 2308、2882、3045 的民國 115/09：`monthly_revenue_twse` 在 as_of 2026-10-10 回的是 **2026/08**，和 as_of 2026-09-10 同一個月：
+[Q008](../questions/Q008-product-revenue-concentration.md) C3 的可比對列數是 12，預期 15（5 檔 × 3 個月）。少掉的 3 組是 2308、2882、3045 的民國 115/09：`monthly_revenue_twse` 在 as_of 2026-10-10 回的是 **2026/08**，和 as_of 2026-09-10 同一個月：
 
 ```sql
 SELECT stk_code, latest_month_label, array_agg(as_of ORDER BY as_of) AS as_ofs
@@ -44,13 +44,13 @@ GROUP BY stk_code, latest_month_label HAVING count(*) > 1
 
 後果（截斷點之後約 713 家上市公司，任何 26 個月視窗包含 115/09 的 as_of）：
 
-- **缺月＋重複**：as_of 2026-10-10 回 2026/08（Q002 類 YoY 連續月數會重複算 8 月、漏掉 9 月）。
+- **缺月＋重複**：as_of 2026-10-10 回 2026/08（[Q002](../questions/Q002-growth-revenue-momentum.md) 類 YoY 連續月數會重複算 8 月、漏掉 9 月）。
 - **TTM 錯值**：`eligible[:12]` 少一個月就往前多拿一個月，as_of 2026-11-10 的 `ttm_value` 是 2025/10–2026/10 扣掉 2026/09 的 12 個月；`ttm_yoy_pct` 的兩段也都錯位。值看起來正常，是 S1。
 - 同一個 24 小時內的 API 呼叫（含 cron）全部吃到同一份截斷 cache。
 
 ## 同類掃描
 
-失效模式：「上游 HTTP 200 但內容不完整，被當成成功並快取／凍結」（I010 是同一家族：失敗被快取成空）。
+失效模式：「上游 HTTP 200 但內容不完整，被當成成功並快取／凍結」（[I010](I010-t86-failed-day-cached-as-empty.md) 是同一家族：失敗被快取成空）。
 
 | 範圍 | 結果 |
 | --- | --- |
@@ -65,7 +65,7 @@ GROUP BY stk_code, latest_month_label HAVING count(*) > 1
 - **_v2 SQL**：不需要。
 - **影響的既有列**：6 個 `financial_month_twse_list` seed 列（2308、2882、3045 × as_of 2026-10-10、2026-11-10）。
 - **重打 API 次數**：每列 1 次 t187ap05（有 cache）＋ 26 頁 MOPS（同一批共用 cache），約 30 次 MOPS GET。先確認 `t21sc03_115_9_0.html` 恢復完整再重爬，否則修好的 adapter 會回 source_errors，列一樣不可用。
-- **復發報警**：§7.5 剖析的 `monthly_revenue_twse` 實體鍵已經能抓到（下一輪指令 1 會報 3 組新重複）；指令 5 另在 Q002 加一個 `uniqueness` 斷言（同一檔同一營收月只有一列）。
+- **復發報警**：§7.5 剖析的 `monthly_revenue_twse` 實體鍵已經能抓到（下一輪指令 1 會報 3 組新重複）；指令 5 另在 [Q002](../questions/Q002-growth-revenue-momentum.md) 加一個 `uniqueness` 斷言（同一檔同一營收月只有一列）。
 
 ## db/poc 規則檢查
 

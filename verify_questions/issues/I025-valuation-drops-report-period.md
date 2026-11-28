@@ -1,7 +1,7 @@
 ---
 id: I025
 title: company_valuation 丟掉 BWIBBU 的「財報年/季」與「股利年度」，無法判斷 PER／PBR 用的是哪一季財報
-severity: S3                 # 值本身沒錯，但缺了解讀所需的欄位：PBR 換季時的跳動與 I020 的 EPS 基準都無法驗證
+severity: S3                 # 值本身沒錯，但缺了解讀所需的欄位：PBR 換季時的跳動與 [I020](I020-2882-twse-per-eps-vs-mops.md) 的 EPS 基準都無法驗證
 dimension: 完整性
 layer: L1
 status: diagnosed
@@ -12,7 +12,7 @@ found_by: [Q016（指令 2 出題）]
 
 ## 症狀（附可重現的 SQL）
 
-出 Q016 時想寫合理性斷言「同一份財報基準下，隱含每股淨值（收盤價 ÷ PBR）不變，只差 PBR 的捨入」。用公告期限（3/31、5/15、8/14、8/31、11/14）判斷換季，全表 1,065 組同基準的相鄰月份中有 49 組違規：
+出 [Q016](../questions/Q016-valuation-pbr-percentile.md) 時想寫合理性斷言「同一份財報基準下，隱含每股淨值（收盤價 ÷ PBR）不變，只差 PBR 的捨入」。用公告期限（3/31、5/15、8/14、8/31、11/14）判斷換季，全表 1,065 組同基準的相鄰月份中有 49 組違規：
 
 ```sql
 WITH v AS (
@@ -39,8 +39,8 @@ L1：adapter 解析了「財報年/季」與「股利年度」，但 `company_va
 
 影響：
 - PER／PBR 換季時的跳動無法和錯值區分（上表 49 組都可能是提早公告，也可能有解析錯）。
-- I020（2882 TWSE 隱含 EPS 比 MOPS 近四季低 6–7%）的假說「TWSE 用的 EPS 基準不同」需要這一欄才能確認。
-- `dividend_yield_pct` 用的是哪一年度的股利也無法對照 Q014 的除息資料。
+- [I020](I020-2882-twse-per-eps-vs-mops.md)（2882 TWSE 隱含 EPS 比 MOPS 近四季低 6–7%）的假說「TWSE 用的 EPS 基準不同」需要這一欄才能確認。
+- `dividend_yield_pct` 用的是哪一年度的股利也無法對照 [Q014](../questions/Q014-cash-dividend-accuracy.md) 的除息資料。
 
 ## 同類掃描
 
@@ -58,7 +58,7 @@ L1：adapter 解析了「財報年/季」與「股利年度」，但 `company_va
 - **影響的既有列**：`company_valuation` 全部 1,684 列（raw 存的回應沒有這兩欄，要重爬才有）。IMMV 重建等於對每個 seed 列重打 BWIBBU（同一天全市場一份，磁碟快取命中率高），先 `pop_update_mat_views(dry_run=true)` 看 `seed_upstreams`。
 - **重打 API 次數**：最多 1,684 次 API 請求；BWIBBU 以日期為單位快取，實際打 TWSE 的次數推估約等於不同交易日數（沒有實測）。
 - **db/poc 規則檢查**：動 SQL，指令 5 依 §10.1 填寫（rule 18 為重點）。
-- **復發報警**：Q016 補上「同一財報季內隱含每股淨值不變」的合理性斷言。
+- **復發報警**：[Q016](../questions/Q016-valuation-pbr-percentile.md) 補上「同一財報季內隱含每股淨值不變」的合理性斷言。
 
 ## db/poc 規則檢查
 

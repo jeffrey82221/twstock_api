@@ -96,7 +96,7 @@ WHERE stk_code IN ('2454','2882','1101') AND (data_date > as_of OR data_date < a
 ```
 
 ## 已知限制
-- **還沒有合理性斷言**：想寫「同一財報季內，隱含每股淨值（收盤價 ÷ PBR）只差捨入」，但 `company_valuation` 沒有 BWIBBU 的「財報年/季」欄（I025），用公告期限推換季日會誤判提早公告的公司（全表 49／1,065 組）。I025 修好後補上，`issues` 不列 I025，因為現有斷言不依賴它。
+- **還沒有合理性斷言**：想寫「同一財報季內，隱含每股淨值（收盤價 ÷ PBR）只差捨入」，但 `company_valuation` 沒有 BWIBBU 的「財報年/季」欄（[I025](../issues/I025-valuation-drops-report-period.md)），用公告期限推換季日會誤判提早公告的公司（全表 49／1,065 組）。[I025](../issues/I025-valuation-drops-report-period.md) 修好後補上，`issues` 不列 [I025](../issues/I025-valuation-drops-report-period.md)，因為現有斷言不依賴它。
 - PBR 換季時會跳動（2882 2026-08 → 09：2.01 → 1.66，財報基準 115/1 → 115/2，TWSE 原始資料如此），百分位反映的是「股價相對最新淨值」，不是純價格。
 - 18 個月窗口只有 18 個點，百分位粒度約 5.6 個百分點。
 

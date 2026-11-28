@@ -11,7 +11,7 @@ crawl:                       # 出題時（2026-11-27）三檔在兩張表都沒
     filters: {stk_code: ["5483", "3105", "3264"]}
     order_by: ["month_start_date"]
     since: 2025-12-05
-    budget: 36               # TPEx qfii（I006）；3 檔 × 12 個月
+    budget: 36               # TPEx qfii（[I006](../issues/I006-otc-foreign-ownership-missing.md)）；3 檔 × 12 個月
   - seed: institutional_monthly_list
     filters: {stk_code: ["5483", "3105", "3264"]}
     order_by: ["month_start_date"]
@@ -68,7 +68,7 @@ WHERE NOT EXISTS (SELECT 1 FROM pop.foreign_ownership f WHERE f.stk_code = e.stk
 ```
 
 ### C2 internal — 外資持股比率 = 持有股數 ÷ 發行股數，無條件捨去到 0.01%（上游三個欄位都是 TPEx qfii 直接給的，adapter 不推導）
-沿用 Q015 C2 的捨去規則（TWSE 是捨去）。TPEx 的捨入方式沒有另外確認：出題時全表有 TPEx 的 6488 15 列，用捨去規則 0 違規；本題三檔補爬後若違規，先查 TPEx 是否改成四捨五入（L7），不要直接開 issue。
+沿用 [Q015](Q015-flow-foreign-ratio-internal.md) C2 的捨去規則（TWSE 是捨去）。TPEx 的捨入方式沒有另外確認：出題時全表有 TPEx 的 6488 15 列，用捨去規則 0 違規；本題三檔補爬後若違規，先查 TPEx 是否改成四捨五入（L7），不要直接開 issue。
 ```sql
 SELECT stk_code, as_of, foreign_investment_shares, issued_shares, foreign_investment_ratio_pct,
        round(100.0 * foreign_investment_shares / issued_shares, 4) AS calc_pct
@@ -84,7 +84,7 @@ WHERE stk_code IN ('5483','3105','3264') AND as_of >= DATE '2025-12-05' AND issu
 ```
 
 ### C3 internal — 投資上限比率 = 持股比率 + 尚可投資比率（兩個都捨去到 0.01%，合計最多差 0.02）；比對範圍與 C2 不同
-上限比率為 0 的列排除（Q015 C3：TWSE 2004 年的 L0 怪值）。
+上限比率為 0 的列排除（[Q015](Q015-flow-foreign-ratio-internal.md) C3：TWSE 2004 年的 L0 怪值）。
 ```sql
 SELECT stk_code, as_of, foreign_investment_limit_ratio_pct AS lim, foreign_investment_ratio_pct AS held,
        foreign_investment_available_ratio_pct AS avail,
@@ -111,7 +111,7 @@ FROM pop.institutional_net_buy_sell WHERE stk_code IN ('5483','3105','3264') AND
 GROUP BY 2, 3 HAVING count(*) > 1
 ```
 
-### C5 timeliness — 實際交易日不晚於取樣日、也不早於取樣日 12 天以上（春節最長休市，同 Q001 C5）
+### C5 timeliness — 實際交易日不晚於取樣日、也不早於取樣日 12 天以上（春節最長休市，同 [Q001](Q001-valuation-per-percentile.md) C5）
 全表（外資 88 列、法人 506 列）0 違規（2026-11-27）。
 ```sql
 SELECT 'foreign' AS src, stk_code, as_of, data_date AS d FROM pop.foreign_ownership
@@ -138,7 +138,7 @@ WHERE stk_code IN ('5483','3105','3264')
 ## 已知限制
 - 法人買賣超只有取樣日（每月 5 日回溯到交易日）當天一筆，不是月合計；「3 個月內 2 次買超」是很粗的訊號。
 - TPEx qfii 沒有「陸資法令投資上限比率」欄（`app/foreign_ownership_source.py` 221 行設為 None），C2、C3 只用外資欄位。
-- 與 Q015 的差別只有市場：上櫃走 TPEx qfii（外資持股）與 TPEx 三大法人（`app/institutional_source.py`），兩個 adapter 都只有 6488 驗過。
+- 與 [Q015](Q015-flow-foreign-ratio-internal.md) 的差別只有市場：上櫃走 TPEx qfii（外資持股）與 TPEx 三大法人（`app/institutional_source.py`），兩個 adapter 都只有 6488 驗過。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |

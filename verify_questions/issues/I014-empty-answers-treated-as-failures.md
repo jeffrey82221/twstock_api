@@ -45,7 +45,7 @@ UNION ALL SELECT 'finmind_rev', count(*) FROM pop.raw_monthly_revenue WHERE reve
 - `raw_yearly_financials_yfinance`：2 → 0，6913、7772 改為 `found=false`、沒有 source error。
 - `raw_company_valuation`：NULL 3 → 0，1264 取前一交易日 2025-09-04 的收盤價。
 - `raw_monthly_revenue`：1 → 0。
-- raw 平均可用率 90.9% → 95.4%，`run_checks --all`：23 PASS，1 FAIL（Q005 C1，刻意保留）。
+- raw 平均可用率 90.9% → 95.4%，`run_checks --all`：23 PASS，1 FAIL（[Q005](../questions/Q005-income-dividend-consistency.md) C1，刻意保留）。
 
 ## 後續
 

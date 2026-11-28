@@ -12,7 +12,7 @@ found_by: [Q014]
 
 ## 症狀（附可重現的 SQL）
 
-Q014 C5（至少一項股利 > 0）出題試跑時 1 列違規；對全表跑也只有這 1 列（`dividend` 60 列）：
+[Q014](../questions/Q014-cash-dividend-accuracy.md) C5（至少一項股利 > 0）出題試跑時 1 列違規；對全表跑也只有這 1 列（`dividend` 60 列）：
 
 ```sql
 SELECT stk_code, reference_date, cash_dividend, stock_dividend, cash_ex_dividend_date, stock_ex_dividend_date, dividend_year
@@ -56,7 +56,7 @@ FROM pop.dividend WHERE coalesce(cash_dividend, 0) = 0 AND coalesce(stock_divide
   - B. 另在 `db/poc/dividend_event_list.sql` 加條件排除金額全 0 的事件（L3；需要依 §10.1 對照 rule 13「邊界寫進產生器」與 rule 16），0 次上游呼叫。建議 B＋A 的 L1 修正（新資料不再進來），由使用者決定。
   - 兩者都要用 `crawl_delete_rows` 刪掉 pop 的 2882 2022-12-05（pin，0 次上游呼叫）。
 - **重打 API 次數**：B 為 0；A 為 423 次 FinMind。
-- **復發報警**：Q014 C5。
+- **復發報警**：[Q014](../questions/Q014-cash-dividend-accuracy.md) C5。
 
 ## db/poc 規則檢查
 

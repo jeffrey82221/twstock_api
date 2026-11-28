@@ -78,7 +78,7 @@ WHERE NOT EXISTS (SELECT 1 FROM pop.monthly_revenue_twse m
                   WHERE m.stk_code = '2330' AND m.latest_month_label = to_char(g, 'YYYY/MM') AND m.latest_month_value IS NOT NULL)
 ```
 
-### C4 uniqueness — 同一營收月只出現在一個 as_of（I023 的失效模式）
+### C4 uniqueness — 同一營收月只出現在一個 as_of（[I023](../issues/I023-mops-revenue-page-truncated.md) 的失效模式）
 ```sql
 SELECT latest_month_label, array_agg(as_of ORDER BY as_of) AS as_ofs
 FROM pop.monthly_revenue_twse WHERE stk_code = '2330' AND latest_month_label IS NOT NULL
@@ -97,7 +97,7 @@ WHERE stk_code = '2330' AND latest_month_value IS NOT NULL
 ## 已知限制
 - golden 是新聞轉載的台積電月營收公告；4 月只找到摘要裡的「410,726 百萬元」，DB 是 410,725.118 百萬元，差 1 百萬元但來源不確定，沒有放進 golden。
 - 8 月只找到「5148 億」，容許 ±0.5 億，抓不到小錯，只抓量級與張冠李戴。
-- 只有一檔：golden 需要逐月找公告，先用台積電建立方法；其他公司的月營收由 Q013 C2（FinMind vs TWSE）做一致性。
+- 只有一檔：golden 需要逐月找公告，先用台積電建立方法；其他公司的月營收由 [Q013](Q013-monthly-revenue-two-sources.md) C2（FinMind vs TWSE）做一致性。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |

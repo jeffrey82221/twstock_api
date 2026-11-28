@@ -83,7 +83,7 @@ JOIN (SELECT DISTINCT stk_code, latest_month_label FROM pop.monthly_revenue_twse
       WHERE stk_code IN ('2330','2317','1402') AND latest_month_value IS NOT NULL) t USING (stk_code, latest_month_label)
 ```
 
-### C3 uniqueness — 兩個來源都是同一檔同一營收月只有一列（I023 的失效模式：截斷頁讓相鄰取樣日回同一個月）
+### C3 uniqueness — 兩個來源都是同一檔同一營收月只有一列（[I023](../issues/I023-mops-revenue-page-truncated.md) 的失效模式：截斷頁讓相鄰取樣日回同一個月）
 ```sql
 SELECT 'twse' AS src, stk_code, latest_month_label, array_agg(as_of ORDER BY as_of) AS as_ofs
 FROM pop.monthly_revenue_twse WHERE stk_code IN ('2330','2317','1402') AND latest_month_label IS NOT NULL
@@ -119,7 +119,7 @@ WHERE stk_code IN ('2330','2317','1402') AND latest_month_value % 1000 <> 0
 ```
 
 ## 已知限制
-- 股票刻意避開 I023 影響的 2308、2882、3045（MOPS 115/09 截斷頁之後的公司）；I023 修好後，C3 可以擴大到全表當回歸。2330、2317 也在截斷點之後：**本題補爬 TWSE 前先用 `upstream_peek.py t21sc03 sii:115:9` 確認頁面完整**，否則 2317 as_of 2026-10-10、11-10 會凍結成錯的列。2026-11-27 18:58 上游已恢復，第 6 輪重啟 API 清掉記憶體快取（I023）。
+- 股票刻意避開 [I023](../issues/I023-mops-revenue-page-truncated.md) 影響的 2308、2882、3045（MOPS 115/09 截斷頁之後的公司）；[I023](../issues/I023-mops-revenue-page-truncated.md) 修好後，C3 可以擴大到全表當回歸。2330、2317 也在截斷點之後：**本題補爬 TWSE 前先用 `upstream_peek.py t21sc03 sii:115:9` 確認頁面完整**，否則 2317 as_of 2026-10-10、11-10 會凍結成錯的列。2026-11-27 18:58 上游已恢復，第 6 輪重啟 API 清掉記憶體快取（[I023](../issues/I023-mops-revenue-page-truncated.md)）。
 - FinMind 與 TWSE 的取樣日不同（1 日 vs 10 日），C2 用營收月對齊，不用 as_of。
 - FinMind 額度與 cron 共用（§8.3 規則 6），補爬前先看 `crawl_status(lookback_minutes=60)`。
 

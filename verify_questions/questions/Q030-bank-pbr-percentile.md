@@ -96,8 +96,8 @@ WHERE stk_code IN ('5880','2886','2892') AND (data_date > as_of OR data_date < a
 ```
 
 ## 已知限制
-- 三檔都是以銀行為主的金控／銀行，避開壽險為主的 2882（I019 季報凍結、I020 EPS 基準），也不用 PER（I020 的假說是 TWSE 對金控的 EPS 基準不同）。
-- PBR 換季時會跳動（Q016 已知限制）；財報基準欄要等 I025。
+- 三檔都是以銀行為主的金控／銀行，避開壽險為主的 2882（[I019](../issues/I019-financial-q3-frozen-as-previous-quarter.md) 季報凍結、[I020](../issues/I020-2882-twse-per-eps-vs-mops.md) EPS 基準），也不用 PER（[I020](../issues/I020-2882-twse-per-eps-vs-mops.md) 的假說是 TWSE 對金控的 EPS 基準不同）。
+- PBR 換季時會跳動（[Q016](Q016-valuation-pbr-percentile.md) 已知限制）；財報基準欄要等 [I025](../issues/I025-valuation-drops-report-period.md)。
 - 12 個月窗口只有 12 個點，百分位粒度約 8.3 個百分點。
 
 ## 歷次結果

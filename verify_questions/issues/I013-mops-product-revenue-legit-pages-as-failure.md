@@ -26,7 +26,7 @@ WHERE product_revenue IS NULL OR product_revenue ? 'source_errors' OR product_re
 
 - 5206（坤悅，建商）的明細頁是合法申報：只有「(1) 營建」、金額空白，營收淨額 `0`。`_parse_mops_table` 用 `if items or total_revenue` 判斷，`0` 是 falsy，所以 `found=False`。
 - 2637（慧洋-KY）的單一公司頁與明細頁都只有一句「外國發行人免申報本項資訊」。MOPS 全市場申報名單（`ajax_t05st08_all`）照樣列出 KY 公司，所以它會進 seed。adapter 只認「該公司無申報」「無此資料」，其他一律當錯誤。
-- 同一路徑的 I010 類問題：`get_product_revenue` 把 redirectToOld 失敗、step 2 解析失敗都寫進 `_product_revenue_cache`，而 step 3 解析失敗時被當成「未申報」快取，`_get_last_filed_ym` 會因此誤以為這家公司從未申報。
+- 同一路徑的 [I010](I010-t86-failed-day-cached-as-empty.md) 類問題：`get_product_revenue` 把 redirectToOld 失敗、step 2 解析失敗都寫進 `_product_revenue_cache`，而 step 3 解析失敗時被當成「未申報」快取，`_get_last_filed_ym` 會因此誤以為這家公司從未申報。
 
 ## 根因
 

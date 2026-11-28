@@ -40,10 +40,10 @@ found_by: [2026-11-26 README §12.1 補盤, Q010]
 
 ## 同類掃描
 
-目前只有 2882 一檔金控同時有估值與 MOPS 季報。Q010 補爬 2891、2886 後可以看是否所有金控都偏低（支持假說 1）。
+目前只有 2882 一檔金控同時有估值與 MOPS 季報。[Q010](../questions/Q010-financial-holding-valuation.md) 補爬 2891、2886 後可以看是否所有金控都偏低（支持假說 1）。
 
 ## 修復方案
 
 1. 先確認：對照 TWSE BWIBBU 說明或證交所本益比計算方式，以及 2882 的普通股、特別股股數。
-2. 若是 L0：在 `db/poc/README.md` 的 `company_valuation` 段與 Q010 已知限制寫明「`eps_ttm` 是 TWSE PER 反推值，金控與公告 EPS 不同」，Q010 C2 對金控改用比值區間或排除。不改程式。
+2. 若是 L0：在 `db/poc/README.md` 的 `company_valuation` 段與 [Q010](../questions/Q010-financial-holding-valuation.md) 已知限制寫明「`eps_ttm` 是 TWSE PER 反推值，金控與公告 EPS 不同」，[Q010](../questions/Q010-financial-holding-valuation.md) C2 對金控改用比值區間或排除。不改程式。
 3. 若發現是我們取錯 PER 欄位：屬 L1，另行修正。

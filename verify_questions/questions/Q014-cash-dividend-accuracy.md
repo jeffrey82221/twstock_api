@@ -241,7 +241,7 @@ WHERE d.cash_dividend < 0 OR d.stock_dividend < 0 OR (coalesce(d.cash_dividend, 
    OR (o.close IS NOT NULL AND d.cash_dividend > 0.2 * o.close)
 ```
 
-### C6 field — 有現金股利的事件都有現金除息日，而且現金除息日 = 基準日（FinMind 的事件以除息日為 key，I012）
+### C6 field — 有現金股利的事件都有現金除息日，而且現金除息日 = 基準日（FinMind 的事件以除息日為 key，[I012](../issues/I012-finmind-dividend-window-drops-event.md)）
 ```sql
 SELECT stk_code, reference_date, cash_dividend, cash_ex_dividend_date
 FROM pop.dividend
@@ -252,9 +252,9 @@ WHERE stk_code IN ('2330','2317','2882','1101') AND cash_dividend > 0
 ## 已知限制
 - golden 是 TWSE 除權除息計算結果表（上市），上櫃股要改用 TPEx 的除權息結果；本題四檔都是上市。
 - 決策以「除息日所在年度」加總，不是「股利所屬年度」：2330 季配息的除息日比所屬季度晚約兩季，年度合計和公司公布的年度股利不同，但逐年比較的方向一致。
-- 與 Q005 的差別：Q005 C1 比的是 FinMind vs yfinance（一致性，2882 有使用者決定保留的 L0 違規）；本題兩邊都對照管線以外的 TWSE 除息結果（準確性），2023 年以前的配股還原問題（I003）不在窗口內。
+- 與 [Q005](Q005-income-dividend-consistency.md) 的差別：[Q005](Q005-income-dividend-consistency.md) C1 比的是 FinMind vs yfinance（一致性，2882 有使用者決定保留的 L0 違規）；本題兩邊都對照管線以外的 TWSE 除息結果（準確性），2023 年以前的配股還原問題（[I003](../issues/I003-yfinance-dividend-adjusted.md)）不在窗口內。
 
-- C5 出題試跑時 1 列違規：2882 2022-12-05 是國泰金現金增資的除權，FinMind 收成金額全 0 的「股利事件」（I024）。C5 的範圍刻意不限窗口：這個失效模式就是要對全歷史抓。
+- C5 出題試跑時 1 列違規：2882 2022-12-05 是國泰金現金增資的除權，FinMind 收成金額全 0 的「股利事件」（[I024](../issues/I024-dividend-rights-issue-as-event.md)）。C5 的範圍刻意不限窗口：這個失效模式就是要對全歷史抓。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |

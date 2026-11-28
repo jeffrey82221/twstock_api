@@ -86,11 +86,11 @@ L4：`raw_dividend_history_yfinance` 以「產業鏈公司全集」為 seed，�
 | `dividend_event_list` | 51 | 51 |
 | http_log 新增 | — | 0 |
 
-`pop_definition_drift` 全部 ok；`run_checks.py --all` 不變（23 PASS，Q005 C1 刻意 FAIL）；離線 493 passed。
+`pop_definition_drift` 全部 ok；`run_checks.py --all` 不變（23 PASS，[Q005](../questions/Q005-income-dividend-consistency.md) C1 刻意 FAIL）；離線 493 passed。
 
 相關的既有限制：其他 seed 本來就只從 `company_basic_info_list`（目前上市櫃）出發，所以已下市公司的估值、財報、月營收原本就不在資料庫裡。若之後要做無倖存者偏差的回測，需要另一份「歷史上市櫃名單」作為 seed，這是比本 issue 更大的範圍。
 
 ## 提交與 CI（指令 8）
 
 - 7e2cf86（本 issue）：PR #81 的 8 個 check 全部通過，含 test-live-sql。
-- 前一個 commit 36de80e 修的是 test-live-sql 的 prewarm 網址：I002 後還寫死 `as_of=2013-03-31`，API 回 400，所以 prewarm 沒有預熱，冷的 MOPS 下載超過 25 秒回 504。那次 CI 的 test-live-sql 仍失敗，但原因不同：該台 runner 從第一個請求起就被 TWSE／MOPS 回 307 WAF 封鎖頁（`rate_limited=True`）。下一台 runner（7e2cf86）全過。
+- 前一個 commit 36de80e 修的是 test-live-sql 的 prewarm 網址：[I002](I002-point-in-time-look-ahead.md) 後還寫死 `as_of=2013-03-31`，API 回 400，所以 prewarm 沒有預熱，冷的 MOPS 下載超過 25 秒回 504。那次 CI 的 test-live-sql 仍失敗，但原因不同：該台 runner 從第一個請求起就被 TWSE／MOPS 回 307 WAF 封鎖頁（`rate_limited=True`）。下一台 runner（7e2cf86）全過。

@@ -58,7 +58,7 @@ LEFT JOIN pop.company_valuation v ON v.stk_code = e.stk_code AND v.as_of = e.as_
 WHERE v.stk_code IS NULL AND e.as_of <= CURRENT_DATE
 ```
 
-### C2 availability — 已爬的估值 raw 列都可用（讀 raw：正規化表的 as_of 取自回應，失敗列的 as_of 會是 NULL，見 I004）
+### C2 availability — 已爬的估值 raw 列都可用（讀 raw：正規化表的 as_of 取自回應，失敗列的 as_of 會是 NULL，見 [I004](../issues/I004-normalized-as-of-from-response.md)）
 ```sql
 SELECT stk_code, as_of
 FROM pop.raw_company_valuation
@@ -106,5 +106,5 @@ WHERE stk_code IN ('2330','2317','6488') AND data_date < as_of - 12
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
 | 2026-11-25 | FAIL（C1、C2） | [run](../runs/2026-11-25_Q001.md) | 6488 無估值；2330／2317 通過 |
-| 2026-11-25 | FAIL（C2） | — | 指令 5 後重跑：C1 PASS（I004 修正）；C2 仍為 I005（上櫃無估值） |
-| 2026-11-26 | PASS | — | 資料庫重建＋retry_failed 後：5／5 PASS（I005 上櫃估值補上，6488 可用） |
+| 2026-11-25 | FAIL（C2） | — | 指令 5 後重跑：C1 PASS（[I004](../issues/I004-normalized-as-of-from-response.md) 修正）；C2 仍為 [I005](../issues/I005-otc-valuation-missing.md)（上櫃無估值） |
+| 2026-11-26 | PASS | — | 資料庫重建＋retry_failed 後：5／5 PASS（[I005](../issues/I005-otc-valuation-missing.md) 上櫃估值補上，6488 可用） |

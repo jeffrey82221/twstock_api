@@ -6,7 +6,7 @@ status: passing
 stocks: ["2330", "2317", "2454"]
 window: {since: 2025-01-01, until: 2026-01-01}
 pop_tables: [raw_yearly_financials, mops_quarterly_financials]
-crawl:                       # 出題時（2026-11-27）raw_yearly_financials 全表只有 4 列；這三檔的 MOPS 季報由 Q012 補過
+crawl:                       # 出題時（2026-11-27）raw_yearly_financials 全表只有 4 列；這三檔的 MOPS 季報由 [Q012](Q012-annual-eps-accuracy.md) 補過
   - seed: financial_year_list
     filters: {stk_code: ["2330", "2317", "2454"]}
     order_by: ["year_start_date"]
@@ -87,7 +87,7 @@ WHERE stk_code IN ('2330','2317','2454') AND (financials IS NULL OR financials->
 ```
 
 ### C5 temporal — TTM 用到的 4 季連續（第 1 季與第 4 季相隔 273–276 天），窗口內的 as_of
-全表 76 列有 2 列不連續（2001-01-01，FinMind 缺 2000Q1，I027）；本題只看窗口（2025、2026 年初）。
+全表 76 列有 2 列不連續（2001-01-01，FinMind 缺 2000Q1，[I027](../issues/I027-ttm-without-contiguity-check.md)）；本題只看窗口（2025、2026 年初）。
 ```sql
 WITH r AS (
   SELECT stk_code, as_of, ARRAY(SELECT jsonb_array_elements_text(financials->'eps'->'ttm_quarters'))::date[] AS q

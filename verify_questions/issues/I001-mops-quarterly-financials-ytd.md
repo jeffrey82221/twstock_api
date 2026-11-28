@@ -21,8 +21,8 @@ WHERE stk_code = '2330' AND fiscal_year IN (2025, 2026) ORDER BY fiscal_year, qu
 ```
 2330：2026 Q1 1,134,103／22.08 → Q2 2,404,483／49.33 → Q3 3,898,727／78.75；2025 Q4 EPS 66.26 = 全年 EPS（`financial_analysis` 2025）。
 
-- Q002 C5：季營收 vs 該季三個月月營收合計，12 組可比對、9 組不符（通過的都是 Q1）。
-- Q003 C4：年 EPS vs 四季 EPS 加總，15 組全部不符（加總約為年 EPS 的 2.3 倍）。
+- [Q002](../questions/Q002-growth-revenue-momentum.md) C5：季營收 vs 該季三個月月營收合計，12 組可比對、9 組不符（通過的都是 Q1）。
+- [Q003](../questions/Q003-quality-roe-debt.md) C4：年 EPS vs 四季 EPS 加總，15 組全部不符（加總約為年 EPS 的 2.3 倍）。
 
 ## 證據
 - 直接相減驗證：2330 2026「Q2」`revenue_millions` 2,404,483.69 = Q1 1,134,103.44 + 4–6 月月營收合計 1,270,380.25（完全吻合）；2025「Q4」EPS 66.26 = `financial_analysis` 2025 全年 EPS。
@@ -52,6 +52,6 @@ MOPS t163sb06／t163sb04 的彙總表是**年初至今累計**（Q2 = 1–6 月�
 ## 重爬與驗證
 
 - 直接呼叫：2330 2026 Q2 → `revenue_millions` 1,270,380.25（= 4–6 月月營收合計）、EPS 27.25；`data_ytd` 2,404,483.69／49.33。
-- crawl_delete_rows：`mops_quarterly_financials_quarter_list` 355 列（16 檔）、pin 355、0 次 API；接著 `pop_update_mat_views` 在 seed 為空時重建 `mops_quarterly_financials`（I004 一起），0 次重打。
+- crawl_delete_rows：`mops_quarterly_financials_quarter_list` 355 列（16 檔）、pin 355、0 次 API；接著 `pop_update_mat_views` 在 seed 為空時重建 `mops_quarterly_financials`（[I004](I004-normalized-as-of-from-response.md) 一起），0 次重打。
 - 重爬：依 http_log 還原原本的 356 組 (stk_code, 季末日)（比刪除多 1 組，為先前 rollback 過的請求），全部 insert；1101 一批遇 15 秒傳輸逾時、整批 rollback 後以 row_cnt=2 重試成功。結果 356 列、1 列 NULL（8463 2013-Q1，上市前，404 正常）。
-- 斷言：Q002 C5 PASS（12 組可比對）、Q003 C4 PASS（17 組可比對）。
+- 斷言：[Q002](../questions/Q002-growth-revenue-momentum.md) C5 PASS（12 組可比對）、[Q003](../questions/Q003-quality-roe-debt.md) C4 PASS（17 組可比對）。

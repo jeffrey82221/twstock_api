@@ -18,7 +18,7 @@ found_by: [Q011]
 SELECT stk_code, max(trade_date) FROM pop.ohlcv_daily WHERE trade_date >= DATE '2026-11-01' GROUP BY 1
 ```
 
-Q011 C6（freshness）3／3 違規。
+[Q011](../questions/Q011-technical-ma60-volatility.md) C6（freshness）3／3 違規。
 
 ## 證據
 
@@ -37,6 +37,6 @@ L3：母體包含尚未結束的期間，而期間型的回應在 insert 當下�
 
 ## 修復方案（待使用者決定）
 
-- **A（流程，不改程式）**：需要最新日 K 的題目（例：Q011），在指令 3 補爬時先用 `crawl_delete_rows` 刪掉當月那一列，再 `crawl_insert_filtered` 重爬（每檔 1 次 TWSE／TPEx）。寫進 README §8.3。
+- **A（流程，不改程式）**：需要最新日 K 的題目（例：[Q011](../questions/Q011-technical-ma60-volatility.md)），在指令 3 補爬時先用 `crawl_delete_rows` 刪掉當月那一列，再 `crawl_insert_filtered` 重爬（每檔 1 次 TWSE／TPEx）。寫進 README §8.3。
 - **B（L3）**：seed 只產生已結束的月份，當月改由另一個「當月日 K」seed 處理（rule 14、rule 20：不同更新節奏分 `_list`）。改 SQL 時依 §10.1 對照 db/poc/README.md 規則。
-- 建議先用 A；Q011 C6 是回歸防線。
+- 建議先用 A；[Q011](../questions/Q011-technical-ma60-volatility.md) C6 是回歸防線。

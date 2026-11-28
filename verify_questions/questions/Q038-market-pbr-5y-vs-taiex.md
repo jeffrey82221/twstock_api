@@ -6,13 +6,13 @@ status: passing
 stocks: []                   # 市場層級
 window: {since: 2021-11-05, until: 2026-11-27}
 pop_tables: [market_valuation_summary]
-crawl: []                    # 2017-05 起每月都已在 pop（Q006 C1）
+crawl: []                    # 2017-05 起每月都已在 pop（[Q006](Q006-market-per-percentile.md) C1）
 issues: []
 last_run: 2026-11-28
 ---
 
 ## 決策情境
-大盤 PBR 高於近 5 年第 80 百分位 → 減碼一成；低於第 20 百分位 → 加碼一成。Q006 用 PER、近 5 年，Q023 用 PBR、近 12 個月；這題用 PBR、近 5 年，並把 Q023 的「市值走勢 vs 加權指數」防線延伸到 Q006 的整個窗口（Q006 已知限制：沒有錯值防線）。C2 FAIL 時結論不可信。
+大盤 PBR 高於近 5 年第 80 百分位 → 減碼一成；低於第 20 百分位 → 加碼一成。[Q006](Q006-market-per-percentile.md) 用 PER、近 5 年，[Q023](Q023-market-cap-vs-taiex.md) 用 PBR、近 12 個月；這題用 PBR、近 5 年，並把 [Q023](Q023-market-cap-vs-taiex.md) 的「市值走勢 vs 加權指數」防線延伸到 [Q006](Q006-market-per-percentile.md) 的整個窗口（[Q006](Q006-market-per-percentile.md) 已知限制：沒有錯值防線）。C2 FAIL 時結論不可信。
 
 ## 決策 SQL
 ```sql
@@ -34,7 +34,7 @@ WHERE NOT EXISTS (SELECT 1 FROM pop.market_valuation_summary m
                   WHERE m.valuation_date = (date_trunc('month', g) + INTERVAL '4 days')::date AND m.market_pbr IS NOT NULL AND m.total_market_cap > 0)
 ```
 
-### C2 reasonableness — 估算總市值月變動 ÷ 加權指數月變動 介於 0.97 與 1.03（同 Q023 C2，窗口 5 年）
+### C2 reasonableness — 估算總市值月變動 ÷ 加權指數月變動 介於 0.97 與 1.03（同 [Q023](Q023-market-cap-vs-taiex.md) C2，窗口 5 年）
 2021-12 ～ 2026-11 共 60 個月實測 0.9844–1.0143（2026-11-28）。
 ```sql
 WITH taiex(d, idx) AS (VALUES
@@ -190,7 +190,7 @@ WHERE data_date >= DATE '2021-11-01' AND (market_pbr NOT BETWEEN 0.5 AND 10 OR m
 
 ## 已知限制
 - golden 是 61 個取樣日的加權指數收盤；延長窗口時要補。
-- C2 只驗走勢不驗水準（Q023 已知限制）。
+- C2 只驗走勢不驗水準（[Q023](Q023-market-cap-vs-taiex.md) 已知限制）。
 - 大盤 PBR 是 adapter 用估算股數加總算的，PBR 本身沒有獨立來源；C2 讓「總市值」有外部防線，淨值那一側沒有。
 
 ## 歷次結果

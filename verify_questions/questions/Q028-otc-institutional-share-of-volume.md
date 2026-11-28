@@ -6,14 +6,14 @@ status: passing
 stocks: ["5483", "3105", "3264"]
 window: {since: 2025-12-05, until: 2026-11-27}
 pop_tables: [institutional_net_buy_sell, ohlcv_daily]
-crawl: []                    # 出題時（2026-11-27）法人取樣由 Q026、日 K 由 Q024 補齊
+crawl: []                    # 出題時（2026-11-27）法人取樣由 [Q026](Q026-otc-foreign-ratio-internal.md)、日 K 由 [Q024](Q024-otc-semis-per-tpex.md) 補齊
 issues: []
 last_run: 2026-11-27
 ---
 
 ## 決策情境
 取樣日三大法人合計買賣超占當日成交量的比重（絕對值）12 次中有 ≥ 6 次超過 15% → 「法人主導」，股價對法人動向敏感，
-跟著 Q015 類的籌碼訊號操作；12 次都低於 5% → 「散戶主導」，籌碼訊號參考價值低。C2 或 C3 FAIL 時比重不可信。
+跟著 [Q015](Q015-flow-foreign-ratio-internal.md) 類的籌碼訊號操作；12 次都低於 5% → 「散戶主導」，籌碼訊號參考價值低。C2 或 C3 FAIL 時比重不可信。
 
 ## 決策 SQL
 ```sql
@@ -89,7 +89,7 @@ WHERE stk_code IN ('5483','3105','3264') AND as_of >= DATE '2025-12-05' AND mark
 ```
 
 ## 已知限制
-- 與 Q018 的差別：上櫃（TPEx 三大法人 vs TPEx tradingStock）。TPEx 的成交量是仟股、法人買賣超是股：C2 比的是「法人淨買超 ≤ 成交量」，成交量最多被捨入 500 股，對上限檢查沒有影響。
+- 與 [Q018](Q018-institutional-share-of-volume.md) 的差別：上櫃（TPEx 三大法人 vs TPEx tradingStock）。TPEx 的成交量是仟股、法人買賣超是股：C2 比的是「法人淨買超 ≤ 成交量」，成交量最多被捨入 500 股，對上限檢查沒有影響。
 - 法人買賣超每月只有取樣日一天；12 次取樣的比重是粗略訊號。
 
 ## 歷次結果

@@ -55,7 +55,7 @@ WHERE v.stk_code IS NULL
 ```
 
 ### C2 cross-source — 估值隱含 EPS（收盤價 ÷ PER，TWSE BWIBBU）= MOPS 近四季單季 EPS 合計（誤差 2% 或 0.05 元，排除 3 月取樣）
-同 README §6.1 C4。金控目前違規，見 I020。
+同 README §6.1 C4。金控目前違規，見 [I020](../issues/I020-2882-twse-per-eps-vs-mops.md)。
 ```sql
 WITH q AS (
   SELECT DISTINCT stk_code, fiscal_year, quarter, eps, available_date
@@ -94,7 +94,7 @@ WITH q AS (
 SELECT count(*) FROM m WHERE n_q = 4 AND span = 3
 ```
 
-### C3 uniqueness — 每檔每季只有一列季報（I019）
+### C3 uniqueness — 每檔每季只有一列季報（[I019](../issues/I019-financial-q3-frozen-as-previous-quarter.md)）
 ```sql
 SELECT stk_code, fiscal_year, quarter, array_agg(as_of ORDER BY as_of) AS as_ofs
 FROM pop.mops_quarterly_financials
@@ -119,9 +119,9 @@ WHERE stk_code IN ('2882','2891','2886') AND as_of >= DATE '2023-11-05'
 
 ## 已知限制
 - 虧損期間 PER 為 NULL，中位數只算非 NULL 月份。
-- 金控的 TWSE 隱含 EPS 與 MOPS EPS 有 6–7% 的系統性落差（I020，待確認是否為 TWSE 的股數口徑）。I020 確認前，C2 對金控的 FAIL 不代表決策用的 PER 錯，決策只用 TWSE 公布的 PER。
-- 2882 2026Q3 在 2026-11-14 取樣時被凍結成 Q2（I019），C3 會 FAIL；決策 SQL 用 `DISTINCT` 取季度，不受重複影響，但近四季 EPS 會少了 Q3。
-- 金融業沒有毛利率等科目（I009），本題不用。
+- 金控的 TWSE 隱含 EPS 與 MOPS EPS 有 6–7% 的系統性落差（[I020](../issues/I020-2882-twse-per-eps-vs-mops.md)，待確認是否為 TWSE 的股數口徑）。[I020](../issues/I020-2882-twse-per-eps-vs-mops.md) 確認前，C2 對金控的 FAIL 不代表決策用的 PER 錯，決策只用 TWSE 公布的 PER。
+- 2882 2026Q3 在 2026-11-14 取樣時被凍結成 Q2（[I019](../issues/I019-financial-q3-frozen-as-previous-quarter.md)），C3 會 FAIL；決策 SQL 用 `DISTINCT` 取季度，不受重複影響，但近四季 EPS 會少了 Q3。
+- 金融業沒有毛利率等科目（[I009](../issues/I009-mops-quarterly-financial-companies.md)），本題不用。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |

@@ -55,7 +55,7 @@ WHERE f.d IS NULL OR y.d IS NULL
 ```
 
 ### C2 cross-source — 同一除息日的每股現金股利，FinMind = yfinance（誤差 0.00001 元：yfinance 小數 6 位、FinMind 8 位）
-兩個不同上游與 adapter。Q014 已確認兩邊都等於 TWSE 除息結果表的調整後配息率。
+兩個不同上游與 adapter。[Q014](Q014-cash-dividend-accuracy.md) 已確認兩邊都等於 TWSE 除息結果表的調整後配息率。
 ```sql
 SELECT d.stk_code, d.cash_ex_dividend_date, d.cash_dividend AS finmind, y.cash_dividend AS yfinance
 FROM pop.dividend d JOIN pop.dividend_yfinance y ON y.stk_code = d.stk_code AND y.reference_date = d.cash_ex_dividend_date
@@ -86,7 +86,7 @@ WHERE stk_code IN ('2454','6488','3045') AND reference_date >= DATE '2023-01-01'
   AND (cash_payment_date < cash_ex_dividend_date OR cash_payment_date - cash_ex_dividend_date > 90)
 ```
 
-### C5 uniqueness — 同一檔 30 天內只有一個除息事件（兩張表；同 Q014 C4）
+### C5 uniqueness — 同一檔 30 天內只有一個除息事件（兩張表；同 [Q014](Q014-cash-dividend-accuracy.md) C4）
 ```sql
 SELECT 'dividend' AS src, a.stk_code, a.reference_date, b.reference_date AS other_date
 FROM (SELECT DISTINCT stk_code, reference_date FROM pop.dividend WHERE stk_code IN ('2454','6488','3045')) a
@@ -101,7 +101,7 @@ JOIN (SELECT DISTINCT stk_code, reference_date FROM pop.dividend_yfinance WHERE 
 
 ## 已知限制
 - `announcement_date` 是 FinMind 的「公告日期」＝除權息交易日的公告，通常在除息前 2–3 週（2454 七次都是 14–19 天），**不是董事會決議配息的日期**（2454「114年後半年度」的股利在 2026 年初就已決議）。第一版決策把它當成資金卡住的起點，屬 L7，已改寫決策情境。
-- C1、C2 只看現金股利 > 0 的事件：FinMind 會把增資／減資除權存成金額全 0 的事件（I024），yfinance 沒有這類事件，不算缺。
+- C1、C2 只看現金股利 > 0 的事件：FinMind 會把增資／減資除權存成金額全 0 的事件（[I024](../issues/I024-dividend-rights-issue-as-event.md)），yfinance 沒有這類事件，不算缺。
 - 6488 是上櫃、3045 與 2454 是上市；三檔 2023 年起配息頻率不同（季配、半年配、年配），C5 的 30 天規則對季配息也成立（間隔約 3 個月）。
 - 補爬時 FinMind 剛好用滿 §8.3 的 20 列上限，先看 `crawl_status(lookback_minutes=60)`。
 
