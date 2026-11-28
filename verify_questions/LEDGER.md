@@ -80,7 +80,7 @@
 
 ## 維度矩陣（pop 表 × DAMA 維度）
 
-格子寫最近一次的斷言結果與出處（README §6.4）。`(d)` 是 draft 出題時的試跑結果；`剖析` 是只有 §7.5 剖析涵蓋；推導欄位互推不算（[Q001](questions/Q001-valuation-per-percentile.md) C3 只算範圍部分、[Q005](questions/Q005-income-dividend-consistency.md) C3 不算）。**準確一欄**：`accuracy` 斷言：[Q012](questions/Q012-annual-eps-accuracy.md)（EPS，passing）、[Q014](questions/Q014-cash-dividend-accuracy.md)（現金股利，draft）；其餘只有官網抽查，是下一輪出題的第一優先。
+格子寫最近一次的斷言結果與出處（README §6.4）。`N/A` 是該維度對這張表不適用（例：沒有時間序列的主檔沒有及時性、文字欄位沒有精確性、沒有權威來源可比的內容沒有準確性），不計入 `DATA_QUALITY_DIMENSIONS.md` §4 的覆蓋率分母；判斷錯了就改回 `—`（盲區）。`(d)` 是 draft 出題時的試跑結果；`剖析` 是只有 §7.5 剖析涵蓋；推導欄位互推不算（[Q001](questions/Q001-valuation-per-percentile.md) C3 只算範圍部分、[Q005](questions/Q005-income-dividend-consistency.md) C3 不算）。**準確一欄**：`accuracy` 斷言：[Q012](questions/Q012-annual-eps-accuracy.md)（EPS，passing）、[Q014](questions/Q014-cash-dividend-accuracy.md)（現金股利，draft）；其餘只有官網抽查，是下一輪出題的第一優先。
 
 | pop 表 | 策略 | 完整 | 唯一 | 及時 | 有效 | 準確 | 一致 | 精確 | 可取得 | 合理 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -99,11 +99,11 @@
 | `foreign_ownership` | 籌碼 | Q004-C3 ✓ | 剖析；Q015-C4 ✓ | Q004-C4 ✓；Q015-C5 ✓ | Q004-C4 ✓ | — | Q015-C2、C3 ✓ | Q015-C6 ✓ | 剖析 | — |
 | `sbl_history` | 籌碼 | Q009-C3 ✓ | Q009-C1 ✓ | 剖析 | Q009-C5 ✓ | [Q009](questions/Q009-sbl-fee-pressure.md) 抽查 ✓（非斷言） | Q009-C2 ✓ | — | Q009-C4 ✓ | Q009-C6 ✓ |
 | `ohlcv_daily` | 技術 | Q011-C1 ✓ | Q011-C2 ✓ | Q011-C6 ✓（重爬當月後） | Q018-C4 ✓ | [Q011](questions/Q011-technical-ma60-volatility.md) 抽查 ✓（非斷言） | Q001-C4 ✓；Q011-C5 ✓；Q018-C3 ✓ | Q011-C3 ✓ | 剖析 | Q011-C4 ✓ |
-| `chain_info_list` | 產業 | Q017-C1 ✓；Q022-C1 ✓ | Q017-C3 ✓；Q022-C3 ✓ | — | Q022-C4 ✓ | — | Q022-C2 ✓（872 家） | — | Q008-C4 ✓ | — |
-| `company_basic_info_list` | 產業 | Q017-C1 ✓ | — | — | Q017-C4 ✓ | [Q017](questions/Q017-basic-info-capital-listing.md) 抽查 ✓（非斷言） | Q017-C2 ✓（5 列） | — | 依賴鏈 | Q017-C5 ✓ |
-| `company_business_items` | 產業 | 剖析 | 剖析（上游重複，合法） | — | — | — | — | — | Q008-C4 ✓ | — |
+| `chain_info_list` | 產業 | Q017-C1 ✓；Q022-C1 ✓ | Q017-C3 ✓；Q022-C3 ✓ | N/A | Q022-C4 ✓ | N/A | Q022-C2 ✓（872 家） | N/A | Q008-C4 ✓ | N/A |
+| `company_basic_info_list` | 產業 | Q017-C1 ✓ | — | N/A | Q017-C4 ✓ | [Q017](questions/Q017-basic-info-capital-listing.md) 抽查 ✓（非斷言） | Q017-C2 ✓（5 列） | N/A | 依賴鏈 | Q017-C5 ✓ |
+| `company_business_items` | 產業 | 剖析 | 剖析（上游重複，合法） | N/A | — | N/A | N/A | N/A | Q008-C4 ✓ | N/A |
 | `product_revenue` | 產業 | 剖析 | Q008-C5 ✓ | 剖析 | Q008-C2 ✓ | [Q008](questions/Q008-product-revenue-concentration.md) 抽查 ✓（非斷言） | Q008-C1 ✗（[I022](issues/I022-product-revenue-negative-items-dropped.md)）；C3 ✓ | — | 剖析 | — |
-| `finmind_news` | 事件 | Q036-C1 ✓ | 剖析 ✗（[I018](issues/I018-finmind-news-duplicates-single-day.md)） | Q036-C3 ✓ | Q036-C2 ✓ | — | — | — | 剖析 | — |
+| `finmind_news` | 事件 | Q036-C1 ✓ | 剖析 ✗（[I018](issues/I018-finmind-news-duplicates-single-day.md)） | Q036-C3 ✓ | Q036-C2 ✓ | N/A | N/A | N/A | 剖析 | N/A |
 
 ## 剖析基線（§7.5，2026-11-27 建立）
 
