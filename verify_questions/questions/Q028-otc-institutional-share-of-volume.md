@@ -6,7 +6,7 @@ status: passing
 stocks: ["5483", "3105", "3264"]
 window: {since: 2025-12-05, until: 2026-11-27}
 pop_tables: [institutional_net_buy_sell, ohlcv_daily]
-crawl: []                    # 出題時（2026-11-27）法人取樣由 [Q026](Q026-otc-foreign-ratio-internal.md)、日 K 由 [Q024](Q024-otc-semis-per-tpex.md) 補齊
+crawl: []                    # 出題時（2026-11-27）法人取樣由 Q026、日 K 由 Q024 補齊
 issues: []
 last_run: 2026-11-27
 ---

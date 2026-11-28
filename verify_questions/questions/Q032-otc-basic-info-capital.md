@@ -6,7 +6,7 @@ status: passing
 stocks: ["5483", "3105", "3264", "6488"]
 window: {since: null, until: 2026-11-27}
 pop_tables: [company_basic_info_list, chain_info_list, foreign_ownership, ohlcv_daily]
-crawl: []                    # 出題時（2026-11-27）外資持股由 [Q026](Q026-otc-foreign-ratio-internal.md)（6488 由 [Q004](Q004-flow-foreign-institutional.md)）補過、日 K 由 [Q024](Q024-otc-semis-per-tpex.md) 補過
+crawl: []                    # 出題時（2026-11-27）外資持股由 Q026（6488 由 Q004）補過、日 K 由 Q024 補過
 issues: []
 last_run: 2026-11-27
 ---

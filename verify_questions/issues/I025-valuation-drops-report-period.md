@@ -1,7 +1,7 @@
 ---
 id: I025
 title: company_valuation 丟掉 BWIBBU 的「財報年/季」與「股利年度」，無法判斷 PER／PBR 用的是哪一季財報
-severity: S3                 # 值本身沒錯，但缺了解讀所需的欄位：PBR 換季時的跳動與 [I020](I020-2882-twse-per-eps-vs-mops.md) 的 EPS 基準都無法驗證
+severity: S3                 # 值本身沒錯，但缺了解讀所需的欄位：PBR 換季時的跳動與 I020 的 EPS 基準都無法驗證
 dimension: 完整性
 layer: L1
 status: diagnosed

@@ -6,7 +6,7 @@ status: passing
 stocks: ["3264"]
 window: {since: 2025-10-01, until: 2026-10-31}
 pop_tables: [monthly_revenue_twse]
-crawl: []                    # 出題時（2026-11-27）由 [Q025](Q025-otc-revenue-quarterly-vs-monthly.md) 補過 2025/10–2026/10
+crawl: []                    # 出題時（2026-11-27）由 Q025 補過 2025/10–2026/10
 issues: []
 last_run: 2026-11-27
 ---

@@ -6,7 +6,7 @@ status: passing
 stocks: ["5483", "3105", "3264"]
 window: {since: 2025-12-05, until: 2026-11-27}
 pop_tables: [sbl_history, raw_sbl_history, ohlcv_daily]
-crawl:                       # 出題時（2026-11-27）三檔都沒有借券資料；日 K 已由 [Q024](Q024-otc-semis-per-tpex.md) 補到 2025-12 起
+crawl:                       # 出題時（2026-11-27）三檔都沒有借券資料；日 K 已由 Q024 補到 2025-12 起
   - seed: sbl_history_monthly_list
     filters: {stk_code: ["5483", "3105", "3264"]}
     order_by: ["month_start_date"]

@@ -11,7 +11,7 @@ crawl:                       # 出題時（2026-11-27）三檔都在母體（上
     filters: {stk_code: ["5483", "3105", "3264"]}
     order_by: ["valuation_date"]
     since: 2025-12-05
-    budget: 36               # TPEx peQryDate（[I005](../issues/I005-otc-valuation-missing.md)）；3 檔 × 12 個月
+    budget: 36               # TPEx peQryDate（I005）；3 檔 × 12 個月
   - seed: ohlcv_monthly_list
     filters: {stk_code: ["5483", "3105", "3264"]}
     order_by: ["month_start_date"]

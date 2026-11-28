@@ -6,7 +6,7 @@ status: passing
 stocks: ["5483", "3105", "3264", "6488"]
 window: {since: 2023-01-01, until: 2026-11-27}
 pop_tables: [dividend]
-crawl:                       # 出題時（2026-11-27）5483、3105、3264 由 [Q029](Q029-otc-dividend-two-sources.md)、6488 由 [Q020](Q020-dividend-dates-two-sources.md) 補過
+crawl:                       # 出題時（2026-11-27）5483、3105、3264 由 Q029、6488 由 Q020 補過
   - seed: dividend_event_list
     filters: {stk_code: ["5483", "3105", "3264", "6488"]}
     order_by: ["reference_date"]

@@ -6,7 +6,7 @@ status: passing
 stocks: ["5483", "3105", "3264", "6488"]
 window: {since: 2025-10-01, until: 2026-11-27}
 pop_tables: [monthly_revenue_twse, mops_quarterly_financials]
-crawl:                       # 出題時（2026-11-27）6488 已由 [Q002](Q002-growth-revenue-momentum.md) 補過；其他三檔都沒有月營收與季報
+crawl:                       # 出題時（2026-11-27）6488 已由 Q002 補過；其他三檔都沒有月營收與季報
   - seed: financial_month_twse_list
     filters: {stk_code: ["5483", "3105", "3264", "6488"]}
     order_by: ["as_of_date"]

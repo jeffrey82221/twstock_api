@@ -16,12 +16,12 @@ crawl:
   - seed: financial_month_twse_list
     filters: {stk_code: ["2330", "2454", "6488"]}
     order_by: ["as_of_date"]
-    budget: 39               # MOPS；13 個月 × 3 檔（取樣日 = 每月 10 日，[I002](../issues/I002-point-in-time-look-ahead.md)）
+    budget: 39               # MOPS；13 個月 × 3 檔（取樣日 = 每月 10 日，I002）
   - seed: mops_quarterly_financials_quarter_list
     filters: {stk_code: ["2330", "2454", "6488"]}
     order_by: ["quarter_end"]
     budget: 18               # MOPS；6 季 × 3 檔
-issues: []                   # [I002](../issues/I002-point-in-time-look-ahead.md) 已於 2026-11-26 closed
+issues: []                   # I002 已於 2026-11-26 closed
 last_run: 2026-11-27
 ---
 
