@@ -12,8 +12,8 @@ last_run: 2026-11-28
 ---
 
 ## 決策情境
-最近 3 個取樣日的平均新聞數（以 link 去重）> 之前 12 個取樣日平均的 1.5 倍 → 「新聞熱度升高」，搭配 Q011 看股價是否已反應；< 0.5 倍 → 「冷門」。
-`finmind_news` 每個取樣月只收取樣日當天、同一 link 會重複（I018），所以決策以 link 去重、只做相對比較，不解讀成「整個月的新聞數」。
+最近 3 個取樣日的平均新聞數（以 link 去重）> 之前 12 個取樣日平均的 1.5 倍 → 「新聞熱度升高」，搭配 [Q011](Q011-technical-ma60-volatility.md) 看股價是否已反應；< 0.5 倍 → 「冷門」。
+`finmind_news` 每個取樣月只收取樣日當天、同一 link 會重複（[I018](../issues/I018-finmind-news-duplicates-single-day.md)），所以決策以 link 去重、只做相對比較，不解讀成「整個月的新聞數」。
 
 ## 決策 SQL
 ```sql
@@ -46,7 +46,7 @@ SELECT as_of, news_date, title, source, link FROM pop.finmind_news
 WHERE stk_code = '2330' AND (link !~ '^https?://' OR coalesce(btrim(title), '') = '' OR coalesce(btrim(source), '') = '')
 ```
 
-### C3 timeliness — 新聞日落在取樣日或前一天（seed 只抓取樣日當天，I018；早於前一天或晚於取樣日代表日期錯置）
+### C3 timeliness — 新聞日落在取樣日或前一天（seed 只抓取樣日當天，[I018](../issues/I018-finmind-news-duplicates-single-day.md)；早於前一天或晚於取樣日代表日期錯置）
 全表 0 違規（2026-11-28）。
 ```sql
 SELECT as_of, news_date, title FROM pop.finmind_news
@@ -61,7 +61,7 @@ WHERE stk_code = '2330' AND as_of >= DATE '2025-08-05'
 ```
 
 ## 已知限制
-- **沒有唯一性斷言**：同一 link 重複是已知缺陷 I018（每月只收取樣日、同一 link 多個標題版本），決策用 `count(DISTINCT link)` 避開。I018 修好後補一個 `uniqueness` 斷言。
+- **沒有唯一性斷言**：同一 link 重複是已知缺陷 [I018](../issues/I018-finmind-news-duplicates-single-day.md)（每月只收取樣日、同一 link 多個標題版本），決策用 `count(DISTINCT link)` 避開。[I018](../issues/I018-finmind-news-duplicates-single-day.md) 修好後補一個 `uniqueness` 斷言。
 - 新聞數只代表取樣日當天，不是整月；比值只適合看相對變化。
 - 沒有錯值防線：新聞沒有第二個來源可比（候選：公司重大訊息 MOPS t05st01）。
 

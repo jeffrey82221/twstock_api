@@ -6,7 +6,7 @@ status: passing
 stocks: ["2317"]
 window: {since: 2025-01-01, until: 2026-09-30}
 pop_tables: [mops_quarterly_financials]
-crawl: []                    # 出題時（2026-11-28）2317 2023Q1–2026Q3 由 Q012 補過
+crawl: []                    # 出題時（2026-11-28）2317 2023Q1–2026Q3 由 [Q012](Q012-annual-eps-accuracy.md) 補過
 issues: []
 last_run: 2026-11-28
 ---
@@ -63,7 +63,7 @@ WHERE (y, q) <= (2026, 3)
                   AND m.revenue_millions IS NOT NULL AND m.eps IS NOT NULL)
 ```
 
-### C4 uniqueness — 同一季只出現在一個 as_of（I019 的失效模式）
+### C4 uniqueness — 同一季只出現在一個 as_of（[I019](../issues/I019-financial-q3-frozen-as-previous-quarter.md) 的失效模式）
 ```sql
 SELECT fiscal_year, quarter, array_agg(as_of ORDER BY as_of) AS as_ofs
 FROM pop.mops_quarterly_financials WHERE stk_code = '2317' AND fiscal_year IS NOT NULL
@@ -73,7 +73,7 @@ GROUP BY 1, 2 HAVING count(*) > 1
 ## 已知限制
 - golden 是新聞轉載的法說會數字（優分析，與科技新報、數位時代報導一致），不是公司新聞稿原文。
 - Q1、Q2 單季 EPS 沒有找到直接公布的數字（只能由前三季累計反推），所以 C1 只放 Q3；Q1、Q2 由 C2 的累計值間接驗證。
-- 2025 全年 EPS 13.61 由 Q012 C1／C2 驗過（四季加總 3.03＋3.20＋4.15＋3.23 = 13.61）。
+- 2025 全年 EPS 13.61 由 [Q012](Q012-annual-eps-accuracy.md) C1／C2 驗過（四季加總 3.03＋3.20＋4.15＋3.23 = 13.61）。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |

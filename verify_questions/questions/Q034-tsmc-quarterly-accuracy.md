@@ -63,7 +63,7 @@ SELECT count(DISTINCT quarter) FROM pop.mops_quarterly_financials WHERE stk_code
 ```
 
 ### C3 accuracy — 季 EPS = 新聞稿 EPS（誤差 0.015 元：新聞稿是稀釋 EPS、MOPS 是基本 EPS，台積電兩者最多差 0.01，再留捨入）；比對範圍與 C1 不同
-2025Q4（19.50 vs 19.51）、2026Q3（29.43 vs 29.42）差 0.01，與年度 2025（66.25 vs 66.26，Q012 已知限制）同一個定義差。
+2025Q4（19.50 vs 19.51）、2026Q3（29.43 vs 29.42）差 0.01，與年度 2025（66.25 vs 66.26，[Q012](Q012-annual-eps-accuracy.md) 已知限制）同一個定義差。
 ```sql
 WITH golden(y, q, eps) AS (VALUES
   (2025, 3, 17.44),   -- 出處：經濟日報 money.udn.com/money/amp/story/5607/9074245（第 3 季 EPS 17.44 元），取得於 2026-11-27
@@ -92,7 +92,7 @@ WHERE (y, q) <= (2026, 3)
                   AND m.revenue_millions IS NOT NULL AND m.eps IS NOT NULL)
 ```
 
-### C5 uniqueness — 同一季只出現在一個 as_of（I019 的失效模式）
+### C5 uniqueness — 同一季只出現在一個 as_of（[I019](../issues/I019-financial-q3-frozen-as-previous-quarter.md) 的失效模式）
 ```sql
 SELECT fiscal_year, quarter, array_agg(as_of ORDER BY as_of) AS as_ofs
 FROM pop.mops_quarterly_financials WHERE stk_code = '2330' AND fiscal_year IS NOT NULL
@@ -102,7 +102,7 @@ GROUP BY 1, 2 HAVING count(*) > 1
 ## 已知限制
 - golden 是新聞轉載的台積電財報新聞稿，營收只到千萬元或億元精度，C1 抓不到 5–50 百萬元以內的錯；C2 的上半年累計精度是百萬元，比較嚴。
 - **EPS 定義**：台積電新聞稿報稀釋 EPS，MOPS 季報是基本 EPS，2025Q4、2026Q3 差 0.01 元。C3 的 0.015 容許只針對這個定義差，其他公司稀釋與基本差距可能更大，不能直接沿用。
-- 2026-11-28（Q039）補充：Q2–Q4 的單季 EPS 是 MOPS 累計值相減得來（I001），相減本身也會有 ±0.01 的捨入；聯發科 2026Q2 DB 比公司公布值大 0.01（稀釋不會大於基本），只能用相減捨入解釋。台積電的 0.01 差（都落在 Q4、Q3 這種相減出來的季度）可能也是同一原因，兩者在台積電無法區分；容許值 0.015 不變。
+- 2026-11-28（[Q039](Q039-mediatek-q3-accuracy.md)）補充：Q2–Q4 的單季 EPS 是 MOPS 累計值相減得來（[I001](../issues/I001-mops-quarterly-financials-ytd.md)），相減本身也會有 ±0.01 的捨入；聯發科 2026Q2 DB 比公司公布值大 0.01（稀釋不會大於基本），只能用相減捨入解釋。台積電的 0.01 差（都落在 Q4、Q3 這種相減出來的季度）可能也是同一原因，兩者在台積電無法區分；容許值 0.015 不變。
 - 2026Q1 的 EPS 只有推算值（上半年 49.32 − Q2 27.25 = 22.07，DB 22.08），沒有放進 golden。
 
 ## 歷次結果

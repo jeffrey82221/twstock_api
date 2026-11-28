@@ -111,7 +111,7 @@ FROM pop.institutional_net_buy_sell WHERE stk_code IN ('2454','2882','1101') AND
 GROUP BY 2, 3 HAVING count(*) > 1
 ```
 
-### C5 timeliness — 實際交易日不晚於取樣日、也不早於取樣日 12 天以上（春節最長休市，同 Q001 C5）
+### C5 timeliness — 實際交易日不晚於取樣日、也不早於取樣日 12 天以上（春節最長休市，同 [Q001](Q001-valuation-per-percentile.md) C5）
 全表（外資 88 列、法人 506 列）0 違規（2026-11-27）。
 ```sql
 SELECT 'foreign' AS src, stk_code, as_of, data_date AS d FROM pop.foreign_ownership

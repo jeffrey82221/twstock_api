@@ -47,4 +47,4 @@ adapter 只實作上市來源。TPEx 有對應的「上櫃股票個股本益比�
 （2026-11-26，重建後）
 - `raw_company_valuation`：上櫃 211 列中 **208 列可用**（之前 0／211）；3 列 NULL 是 1264 在那 3 天不在 TPEx 本益比表（http_log 404，正當）。整體 usable 89.5% → 99.8%。
 - 6488 `date=2024-04-05` → `data_date` 2024-04-03、PER 12.22、收盤 555、`source = TPEx peQryDate + dailyQuotes`。
-- Q001：**5／5 PASS**（C2 原本因上櫃估值 NULL 失敗）。
+- [Q001](../questions/Q001-valuation-per-percentile.md)：**5／5 PASS**（C2 原本因上櫃估值 NULL 失敗）。

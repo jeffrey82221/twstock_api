@@ -6,7 +6,7 @@ status: passing
 stocks: ["2330", "2317", "6488"]
 window: {since: 2026-05-31, until: 2026-11-27}   # 最近 180 天
 pop_tables: [ohlcv_daily, sbl_history]
-crawl:                       # 出題時三檔近 180 天各 121 個交易日；當月那列要重爬才會更新（I021）
+crawl:                       # 出題時三檔近 180 天各 121 個交易日；當月那列要重爬才會更新（[I021](../issues/I021-ohlcv-current-month-frozen.md)）
   - seed: ohlcv_monthly_list
     filters: {stk_code: ["2330", "2317", "6488"]}
     order_by: ["month_start_date"]
@@ -95,7 +95,7 @@ JOIN (SELECT DISTINCT stk_code, completion_date FROM pop.sbl_history WHERE compl
 WHERE o.stk_code IN ('2330','2317','6488') AND o.trade_date >= CURRENT_DATE - 180
 ```
 
-### C6 freshness — 最新一筆是台北時間今天以前最近的平日（I021）
+### C6 freshness — 最新一筆是台北時間今天以前最近的平日（[I021](../issues/I021-ohlcv-current-month-frozen.md)）
 決策用的是最新收盤價與均線，晚一兩天就可能看錯是否跌破。DB 時區是 UTC，日期一律用台北時間（README §7.2）。
 ```sql
 WITH t AS (SELECT (now() AT TIME ZONE 'Asia/Taipei')::date AS today),
@@ -111,9 +111,9 @@ HAVING max(o.trade_date) < exp.expected
 ## 已知限制
 - C6 用「最近的平日」近似交易日：國定假日（例：春節、颱風假）前後會誤判，屬 L7，記在 run 的說明欄，不開 issue。
 - 對數報酬在除息日會多一個跳空（例：2330 每季配息約 1%），20 日波動度略為高估。
-- 當月的日 K 在 seed 列 insert 那天就凍結（I021），要看最新幾天必須先刪掉並重爬當月那一列（§10.2）。
+- 當月的日 K 在 seed 列 insert 那天就凍結（[I021](../issues/I021-ohlcv-current-month-frozen.md)），要看最新幾天必須先刪掉並重爬當月那一列（§10.2）。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
-| 2026-11-27 | passing（6／6） | [run](../runs/2026-11-27_Q011.md) | 先刪當月再重爬（I021）；三檔都跌破 MA60 → 不加碼；官網抽查 2 筆一致 |
+| 2026-11-27 | passing（6／6） | [run](../runs/2026-11-27_Q011.md) | 先刪當月再重爬（[I021](../issues/I021-ohlcv-current-month-frozen.md)）；三檔都跌破 MA60 → 不加碼；官網抽查 2 筆一致 |

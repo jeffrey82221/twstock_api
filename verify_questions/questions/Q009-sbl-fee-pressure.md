@@ -38,7 +38,7 @@ FROM s GROUP BY 1 ORDER BY 1
 
 ## 斷言（每句回傳違規列，0 列 = PASS）
 
-### C1 uniqueness — 同一筆還券紀錄只出現在一個 as_of（I017）
+### C1 uniqueness — 同一筆還券紀錄只出現在一個 as_of（[I017](../issues/I017-sbl-window-overlap-duplicates.md)）
 ```sql
 SELECT stk_code, transaction_date, transaction_type, quantity_lots, completion_date,
        array_agg(as_of ORDER BY as_of) AS as_ofs
@@ -103,7 +103,7 @@ WHERE stk_code IN ('2330','2317','6488') AND as_of >= DATE '2025-06-05'
 
 ## 已知限制
 - `sbl_history` 是「還券」紀錄（t13sa870），不是每日借券賣出餘額；費率反映的是到期還券的那批合約，對近期放空壓力有落後。
-- I017（借券視窗重疊）已在 2026-11-27 修正：正規化 SQL 只保留還券日落在 `(as_of − 1 個月, as_of]` 的紀錄，C1 是它的回歸防線。
+- [I017](../issues/I017-sbl-window-overlap-duplicates.md)（借券視窗重疊）已在 2026-11-27 修正：正規化 SQL 只保留還券日落在 `(as_of − 1 個月, as_of]` 的紀錄，C1 是它的回歸防線。
 - 2317、6488 的借券資料從 2025-06 起（seed 範圍），所以窗口從 2025-06-05 起。
 
 ## 歷次結果

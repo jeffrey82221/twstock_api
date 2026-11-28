@@ -6,13 +6,13 @@ status: passing
 stocks: ["3264"]
 window: {since: 2025-10-01, until: 2026-10-31}
 pop_tables: [monthly_revenue_twse]
-crawl: []                    # 出題時（2026-11-27）由 Q025 補過 2025/10–2026/10
+crawl: []                    # 出題時（2026-11-27）由 [Q025](Q025-otc-revenue-quarterly-vs-monthly.md) 補過 2025/10–2026/10
 issues: []
 last_run: 2026-11-27
 ---
 
 ## 決策情境
-2026 年 1–10 月每個月營收年增率都 > 0、最低也 > 15% → 「全年成長確立」；任一個月衰退 → 重新檢視。上櫃版的 Q021（上市 2330）。C1、C2 FAIL 時結論不可信。
+2026 年 1–10 月每個月營收年增率都 > 0、最低也 > 15% → 「全年成長確立」；任一個月衰退 → 重新檢視。上櫃版的 [Q021](Q021-tsmc-monthly-revenue-accuracy.md)（上市 2330）。C1、C2 FAIL 時結論不可信。
 
 ## 決策 SQL
 ```sql
@@ -73,7 +73,7 @@ WHERE NOT EXISTS (SELECT 1 FROM pop.monthly_revenue_twse m
                   WHERE m.stk_code = '3264' AND m.latest_month_label = to_char(g, 'YYYY/MM') AND m.latest_month_value IS NOT NULL)
 ```
 
-### C4 uniqueness — 同一營收月只出現在一個 as_of（I023 的失效模式，`otc` 頁）
+### C4 uniqueness — 同一營收月只出現在一個 as_of（[I023](../issues/I023-mops-revenue-page-truncated.md) 的失效模式，`otc` 頁）
 ```sql
 SELECT latest_month_label, array_agg(as_of ORDER BY as_of) AS as_ofs
 FROM pop.monthly_revenue_twse WHERE stk_code = '3264' AND latest_month_label IS NOT NULL
@@ -82,7 +82,7 @@ GROUP BY 1 HAVING count(*) > 1
 
 ## 已知限制
 - golden 是新聞轉載的公司月營收公告（科技新報、Win 投資），不是公司官網原文；兩家數字一致。
-- 只有 3264 一檔（上櫃版方法驗證）；上市版是 Q021（2330）。
+- 只有 3264 一檔（上櫃版方法驗證）；上市版是 [Q021](Q021-tsmc-monthly-revenue-accuracy.md)（2330）。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |

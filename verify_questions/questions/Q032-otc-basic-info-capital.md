@@ -6,14 +6,14 @@ status: passing
 stocks: ["5483", "3105", "3264", "6488"]
 window: {since: null, until: 2026-11-27}
 pop_tables: [company_basic_info_list, chain_info_list, foreign_ownership, ohlcv_daily]
-crawl: []                    # 出題時（2026-11-27）外資持股由 Q026（6488 由 Q004）補過、日 K 由 Q024 補過
+crawl: []                    # 出題時（2026-11-27）外資持股由 [Q026](Q026-otc-foreign-ratio-internal.md)（6488 由 [Q004](Q004-flow-foreign-institutional.md)）補過、日 K 由 [Q024](Q024-otc-semis-per-tpex.md) 補過
 issues: []
 last_run: 2026-11-27
 ---
 
 ## 決策情境
 這題是給其他題目用的「資料夠不夠」判斷：掛牌未滿 2 年的股票 → 估值百分位、3 年成長這類需要長歷史的決策一律不適用，結論要註明；
-實收資本額 < 100 億元 → 標記「中小型」，波動度門檻（Q011）要放寬解讀。C2 FAIL 時資本額不可信。
+實收資本額 < 100 億元 → 標記「中小型」，波動度門檻（[Q011](Q011-technical-ma60-volatility.md)）要放寬解讀。C2 FAIL 時資本額不可信。
 
 ## 決策 SQL
 ```sql
@@ -89,8 +89,8 @@ WHERE b.stk_code IN ('5483','3105','3264','6488')
 ```
 
 ## 已知限制
-- 與 Q017 的差別：四檔都是上櫃，基本資料走 TPEx OpenAPI、發行股數走 TPEx qfii（I006）。
-- C2 不適用有特別股的公司（Q017 已知限制）；本題四檔都沒有特別股。
+- 與 [Q017](Q017-basic-info-capital-listing.md) 的差別：四檔都是上櫃，基本資料走 TPEx OpenAPI、發行股數走 TPEx qfii（[I006](../issues/I006-otc-foreign-ownership-missing.md)）。
+- C2 不適用有特別股的公司（[Q017](Q017-basic-info-capital-listing.md) 已知限制）；本題四檔都沒有特別股。
 - C5 只看窗口內的日 K（5483、3105、3264 從 2025-12 起，6488 較早），掛牌前有價格才算違規，不檢查掛牌後的缺口。
 
 ## 歷次結果

@@ -11,7 +11,7 @@ crawl:                       # 出題時（2026-11-27）三檔都在母體（上
     filters: {stk_code: ["5483", "3105", "3264"]}
     order_by: ["valuation_date"]
     since: 2025-12-05
-    budget: 36               # TPEx peQryDate（I005）；3 檔 × 12 個月
+    budget: 36               # TPEx peQryDate（[I005](../issues/I005-otc-valuation-missing.md)）；3 檔 × 12 個月
   - seed: ohlcv_monthly_list
     filters: {stk_code: ["5483", "3105", "3264"]}
     order_by: ["month_start_date"]
@@ -22,7 +22,7 @@ last_run: 2026-11-27
 ---
 
 ## 決策情境
-目前 PER 低於自身近 12 個月第 20 百分位 → 列入觀察；高於第 80 百分位 → 不追價。上櫃股目前只有 6488 驗過 TPEx 路徑（Q001、Q011），這題擴大到三檔。
+目前 PER 低於自身近 12 個月第 20 百分位 → 列入觀察；高於第 80 百分位 → 不追價。上櫃股目前只有 6488 驗過 TPEx 路徑（[Q001](Q001-valuation-per-percentile.md)、[Q011](Q011-technical-ma60-volatility.md)），這題擴大到三檔。
 虧損期間 PER 為 NULL，百分位只算有值的月份；C2 FAIL 時估值不可信。
 
 ## 決策 SQL
@@ -84,7 +84,7 @@ WHERE stk_code IN ('5483','3105','3264') AND as_of >= DATE '2025-12-05'
                              WHEN close_price < 500 THEN 0.5 WHEN close_price < 1000 THEN 1 ELSE 5 END <> 0)
 ```
 
-### C4 reasonableness — 單日漲跌不超過 10%（用 `change` 推前一日參考價），成交均價在漲跌停內（容許 TPEx 仟股／仟元捨入，同 Q018 C3）
+### C4 reasonableness — 單日漲跌不超過 10%（用 `change` 推前一日參考價），成交均價在漲跌停內（容許 TPEx 仟股／仟元捨入，同 [Q018](Q018-institutional-share-of-volume.md) C3）
 ```sql
 SELECT stk_code, trade_date, close, change, volume, trade_value
 FROM pop.ohlcv_daily
@@ -103,9 +103,9 @@ GROUP BY 1, 2 HAVING count(*) > 1
 ```
 
 ## 已知限制
-- TPEx 的成交量與成交金額單位是仟股／仟元（Q018 已知限制），均價只有千元精度；大型上櫃股影響可忽略。
+- TPEx 的成交量與成交金額單位是仟股／仟元（[Q018](Q018-institutional-share-of-volume.md) 已知限制），均價只有千元精度；大型上櫃股影響可忽略。
 - 虧損期間 TPEx 不給 PER（與 TWSE 相同），PER 為 NULL 的月份不算進百分位。
-- 三檔都是上櫃半導體，結論只代表這三檔，不代表上櫃半導體整體（Q022：母體覆蓋率不到一半）。
+- 三檔都是上櫃半導體，結論只代表這三檔，不代表上櫃半導體整體（[Q022](Q022-chain-coverage-consistency.md)：母體覆蓋率不到一半）。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |

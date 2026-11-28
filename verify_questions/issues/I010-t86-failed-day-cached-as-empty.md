@@ -11,7 +11,7 @@ found_by: [I007 重爬（指令 5）]
 
 ## 症狀（附可重現的 SQL）
 
-修 I007 時重爬 448 列「row 為空」的法人資料，多數仍為空，且是**交易日**（例：2330 2017-06-05 週一）。
+修 [I007](I007-institutional-weekend-no-fallback.md) 時重爬 448 列「row 為空」的法人資料，多數仍為空，且是**交易日**（例：2330 2017-06-05 週一）。
 backend 磁碟快取 `/tmp/institutional_cache/twse/` 共 558 個日檔，其中 487 個是空的，**329 個空檔是週一到週五**（最早 2012-05-02），檔案時間為 2026-11-23。
 
 ```sql
@@ -37,7 +37,7 @@ ORDER BY r.as_of
 1. `_fetch_twse_t86_day`：只有 `stat` 明確表示「當日無資料」時才快取空 payload；其他非 OK 的 `stat` 視為失敗（不快取、記 source error），route 回 5xx（不被 DB 快取、不凍結）。
 2. 清掉 2026-11-23 起被錯誤快取的空日檔（只刪週一到週五、且 `stat` 未知的檔案；需先確認判斷方式）。
 3. 補 `tests/source/test_institutional_source.py` 的限流回應案例；`tests/upstream/` 檢查 T86 舊日期的回應格式。
-4. 依 §10.2 重爬 I007 留下的 448 列（排程在 TWSE 低峰、row_cnt 小）。
+4. 依 §10.2 重爬 [I007](I007-institutional-weekend-no-fallback.md) 留下的 448 列（排程在 TWSE 低峰、row_cnt 小）。
 
 ## 修復紀錄
 
@@ -55,6 +55,6 @@ ORDER BY r.as_of
 - 根因不只限流：**上游版面在舊日期不同，parser 一列都解析不到就把交易日快取成「非交易日」**——T86 2017-12-18 前 16 欄／2012 年 12 欄、TPEx dailyTrade 舊日期資料在 `tables[1]`（16 欄）、BWIBBU_d 2017-04 前 5 欄且沒有收盤價、MI_QFIIS 2009 年前 11 欄（固定位置把「異動原因」讀成陸資上限，S1）、MOPS t21sc03 2013 年前 10 欄（2010-01～2012-12 全部當成無營收）。全部改成**依欄位名稱解析**，並加上「上游有資料卻解析不到 → 視為失敗、不快取」的護欄。
 - 同類的「上游失敗被當成無資料」還有兩處，一併修正：`/api/ohlcv` per-stock-month（STOCK_DAY／tradingStock 失敗回 `[]` → 200 空月；改為 502）、`/product-revenue`（MOPS 失敗被快取成「從未申報」24 小時；改為記 source error、不快取）。
 - 再清一次快取：法人空日檔 10 個、MI_QFIIS 舊版面誤解析檔 63 個（2004-02-11～2009-04-03）。
-- 結果（重建 + `retry_failed.py` 後）：`raw_institutional_net_buy_sell` 522／533 可用（剩 11 列見 I011）；2330 2017-06-05 有完整法人資料；`raw_ohlcv_monthly` 空月 454 → 0；`raw_monthly_revenue_twse` 75.1% → 100%；`raw_sbl_history` 40.8% → 77.0%（其餘 85 列是 31 天視窗內真的沒有還券，http_log 404）；`raw_product_revenue` 23 → 2 列失敗。
-- Q004：**5／5 PASS**（C2 的外資自營商欄位在舊版面不存在，斷言改為以 0 計；外資欄已含自營，非放寬）。
+- 結果（重建 + `retry_failed.py` 後）：`raw_institutional_net_buy_sell` 522／533 可用（剩 11 列見 [I011](I011-raw-and-normalized-immv-diverge.md)）；2330 2017-06-05 有完整法人資料；`raw_ohlcv_monthly` 空月 454 → 0；`raw_monthly_revenue_twse` 75.1% → 100%；`raw_sbl_history` 40.8% → 77.0%（其餘 85 列是 31 天視窗內真的沒有還券，http_log 404）；`raw_product_revenue` 23 → 2 列失敗。
+- [Q004](../questions/Q004-flow-foreign-institutional.md)：**5／5 PASS**（C2 的外資自營商欄位在舊版面不存在，斷言改為以 0 計；外資欄已含自營，非放寬）。
 - 新增 `verify_questions/retry_failed.py`（README §10.5）：重爬被凍結的上游失敗列。

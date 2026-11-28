@@ -46,7 +46,7 @@ WHERE c.company_name <> b.short_name
 SELECT count(DISTINCT c.stk_code) FROM pop.chain_info_list c JOIN pop.company_basic_info_list b ON b.stk_code = c.stk_code
 ```
 
-### C3 uniqueness — 同一家公司在同一個子鏈只出現一次（同 Q017 C3，全表範圍）
+### C3 uniqueness — 同一家公司在同一個子鏈只出現一次（同 [Q017](Q017-basic-info-capital-listing.md) C3，全表範圍）
 ```sql
 SELECT ic_code, segment_key, top_code, sub_code, stk_code, count(*) AS n
 FROM pop.chain_info_list GROUP BY 1, 2, 3, 4, 5 HAVING count(*) > 1

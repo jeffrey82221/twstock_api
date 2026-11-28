@@ -12,7 +12,7 @@ found_by: [Q003]
 ## 症狀（附可重現的 SQL）
 
 年報（MOPS t51sb02）隔年才公布，seed 卻包含當年度 2026：`raw_financial_analysis` 2026 年 19／19 列（指令 1 盤點）全部 NULL，
-Q003 的三檔同樣全部 NULL。每列都是必定作廢的 API 呼叫，且 seed 列一旦 insert 就凍結，明年公布後也不會自動更新。
+[Q003](../questions/Q003-quality-roe-debt.md) 的三檔同樣全部 NULL。每列都是必定作廢的 API 呼叫，且 seed 列一旦 insert 就凍結，明年公布後也不會自動更新。
 
 ```sql
 SELECT year, count(*) AS total, count(*) FILTER (WHERE financial_analysis IS NULL) AS null_rows
@@ -42,4 +42,4 @@ seed 的時間邊界超過資料源實際覆蓋（rule 13）：年報要隔年�
 
 - `hidden.financial_analysis_year_list` 2026 年列數：0。
 - crawl_delete_rows `{year: 2026}`：刪 21 列、pin 21、0 次 API。
-- 斷言：Q003 C2 PASS。
+- 斷言：[Q003](../questions/Q003-quality-roe-debt.md) C2 PASS。

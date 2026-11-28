@@ -1,7 +1,7 @@
 ---
 id: I017
 title: 借券相鄰兩次取樣的 31 日視窗重疊，同一筆還券紀錄被兩個 as_of 各存一次
-severity: S2                 # 預設 S1（重複計入決策），實測 Q004 只偏 0.3–2.6%、結論不變，降為 S2
+severity: S2                 # 預設 S1（重複計入決策），實測 [Q004](../questions/Q004-flow-foreign-institutional.md) 只偏 0.3–2.6%、結論不變，降為 S2
 dimension: 唯一性
 layer: L1（adapter 視窗）／L5 可修
 status: closed
@@ -31,7 +31,7 @@ HAVING count(DISTINCT as_of) > 1
   - 3 月 5 日的視窗從 2 月 3 日開始，重疊 3 天。
   - 只有上一個月是 31 天時才不重疊。
 - 重複的列全部落在重疊日：在正規化表加上 `completion_date > as_of − INTERVAL '1 month'` 後，27,058 → 26,762 列，跨 as_of 重複 0 組。
-- 對決策的影響（Q004 決策 SQL 的借券張數合計）：
+- 對決策的影響（[Q004](../questions/Q004-flow-foreign-institutional.md) 決策 SQL 的借券張數合計）：
 
   | 股票 | 近 6 個月（原／去重） | 之前（原／去重） |
   | --- | ---: | ---: |
@@ -48,14 +48,14 @@ L1：視窗長度固定 31 天，沒有對齊取樣間隔。凍結在 pop 的回
 
 ## 同類掃描
 
-其他「每月取樣、每次回一段期間」的表，用各自的實體鍵查跨 as_of 重複（`snapshot.py` 的 `ENTITY_KEYS`）：`institutional_net_buy_sell`、`company_valuation`、`foreign_ownership`、`monthly_revenue_twse`、`dividend` 都是 0。`finmind_news` 的跨 as_of 重複只有 1 個 link（CMoney 個股概覽頁，每天都出現，不是視窗重疊），見 I018。
+其他「每月取樣、每次回一段期間」的表，用各自的實體鍵查跨 as_of 重複（`snapshot.py` 的 `ENTITY_KEYS`）：`institutional_net_buy_sell`、`company_valuation`、`foreign_ownership`、`monthly_revenue_twse`、`dividend` 都是 0。`finmind_news` 的跨 as_of 重複只有 1 個 link（CMoney 個股概覽頁，每天都出現，不是視窗重疊），見 [I018](I018-finmind-news-duplicates-single-day.md)。
 
 ## 修復方案（建議 A）
 
 - **A（L5，0 次上游呼叫）**：`db/poc/sbl_history.sql` 加 `WHERE custom.parse_iso_date(record->>'completion_date') > as_of - INTERVAL '1 month'`，再用 §10.5 的 `pin_seed_responses` → `update_mat_views(['sbl_history'])` → `unpin_responses` 重建，預計刪掉 296 列。規格相容（欄位不變），就地修改，不需要 `_v2`。限制：某個月份沒爬時，下一個月不會補回重疊日（目前 2330 249 個月連續、2317／6488 18 個月連續）。
 - **B（L1）**：adapter 的視窗起點改成「上一個取樣日 + 1 天」（`as_of − 1 個月 + 1 天`），新爬的列不再重疊；既有 370 個 seed 列要重爬 TWSE（約 370 次，超過 §8.3 每題 120 的上限，要分批）。
 - A 與 B 可以並用：A 清既有資料，B 讓 raw 回應本身乾淨。
-- 測試：`tests/sql/` 補一個檢查 `sbl_history.sql` 含視窗過濾的測試；Q009 C1 是回歸防線。
+- 測試：`tests/sql/` 補一個檢查 `sbl_history.sql` 含視窗過濾的測試；[Q009](../questions/Q009-sbl-fee-pressure.md) C1 是回歸防線。
 
 ## db/poc 規則檢查（方案 A）
 
@@ -82,8 +82,8 @@ L1：視窗長度固定 31 天，沒有對齊取樣間隔。凍結在 pop 的回
 - §10.5 只改正規化 SQL 的流程：`pin_seed_responses` pin 370 筆 → `update_mat_views(['sbl_history'])` 16.1 秒、`result: ok` → `unpin_responses` 370 筆。
 - 結果：`sbl_history` 27,058 → 26,762 列（−296）；`raw_sbl_history` 370 列不變；`job_control.http_log` 新增 0 筆（0 次上游呼叫）；之後 `pop_check_definitions` 0 drift。
 - `snapshot.py` 剖析：`sbl_history` 跨 as_of 重複 290 組／302 列 → 0。
-- 重跑斷言：Q009 C1 104 → 0 違規，Q009 6／6 PASS；Q004 5／5 PASS。全部問題卡重跑沒有新的 FAIL（剩下的 FAIL 都屬於其他 issue）。
-- Q004 決策（`as_of >= 2025-12-05`，借券張數合計）：
+- 重跑斷言：[Q009](../questions/Q009-sbl-fee-pressure.md) C1 104 → 0 違規，[Q009](../questions/Q009-sbl-fee-pressure.md) 6／6 PASS；[Q004](../questions/Q004-flow-foreign-institutional.md) 5／5 PASS。全部問題卡重跑沒有新的 FAIL（剩下的 FAIL 都屬於其他 issue）。
+- [Q004](../questions/Q004-flow-foreign-institutional.md) 決策（`as_of >= 2025-12-05`，借券張數合計）：
 
   | 股票 | 近 6 個月（前／後） | 之前（前／後） |
   | --- | ---: | ---: |
@@ -92,5 +92,5 @@ L1：視窗長度固定 31 天，沒有對齊取樣間隔。凍結在 pop 的回
   | 6488 | 69,718／69,718 | 67,217／65,333（−2.8%） |
 
   「近 6 個月 vs 之前」的方向三檔都沒變。
-- Q009 決策 SQL 原本自行去重，現在拿掉，結果相同。
-- 回歸防線：Q009 C1（唯一性）與 `snapshot.py` 剖析的 `sbl_history` 實體鍵。
+- [Q009](../questions/Q009-sbl-fee-pressure.md) 決策 SQL 原本自行去重，現在拿掉，結果相同。
+- 回歸防線：[Q009](../questions/Q009-sbl-fee-pressure.md) C1（唯一性）與 `snapshot.py` 剖析的 `sbl_history` 實體鍵。

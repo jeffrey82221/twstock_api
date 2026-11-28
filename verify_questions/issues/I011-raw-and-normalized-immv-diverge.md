@@ -50,6 +50,6 @@ pop 的物化設計讓同一個 seed 列的多個 IMMV 各自取得回應，沒�
 
 2026-11-26（上游已恢復，先 `curl` 確認）：
 
-- `raw_dividend` → `dividend`（51 列，12 秒＋0 秒，同時套用 I012 的修正）：raw 可用 33／51 → 51／51。
+- `raw_dividend` → `dividend`（51 列，12 秒＋0 秒，同時套用 [I012](I012-finmind-dividend-window-drops-event.md) 的修正）：raw 可用 33／51 → 51／51。
 - `raw_institutional_net_buy_sell` → `institutional_net_buy_sell`（533 列，12 秒＋0 秒，TWSE 日檔多數命中磁碟快取）：raw 失敗 11 → 0，正規化 533 列。
-- 之後 Q001–Q004 全 PASS；Q005 只剩 C1（I003，刻意保留）。
+- 之後 [Q001](../questions/Q001-valuation-per-percentile.md)–[Q004](../questions/Q004-flow-foreign-institutional.md) 全 PASS；[Q005](../questions/Q005-income-dividend-consistency.md) 只剩 C1（[I003](I003-yfinance-dividend-adjusted.md)，刻意保留）。

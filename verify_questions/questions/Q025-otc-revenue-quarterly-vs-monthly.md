@@ -6,7 +6,7 @@ status: passing
 stocks: ["5483", "3105", "3264", "6488"]
 window: {since: 2025-10-01, until: 2026-11-27}
 pop_tables: [monthly_revenue_twse, mops_quarterly_financials]
-crawl:                       # 出題時（2026-11-27）6488 已由 Q002 補過；其他三檔都沒有月營收與季報
+crawl:                       # 出題時（2026-11-27）6488 已由 [Q002](Q002-growth-revenue-momentum.md) 補過；其他三檔都沒有月營收與季報
   - seed: financial_month_twse_list
     filters: {stk_code: ["5483", "3105", "3264", "6488"]}
     order_by: ["as_of_date"]
@@ -23,7 +23,7 @@ last_run: 2026-11-27
 
 ## 決策情境
 最近 3 個月的月營收年增率都 > 20% → 「成長動能強」，列入觀察；有任一個月 < 0 → 不列入。
-上櫃月營收走的是 TPEx OpenAPI＋MOPS `otc/t21sc03` 彙總頁（I023 的截斷發生在 `sii` 頁，`otc` 頁也可能發生），C2、C3 FAIL 時結論不可信。
+上櫃月營收走的是 TPEx OpenAPI＋MOPS `otc/t21sc03` 彙總頁（[I023](../issues/I023-mops-revenue-page-truncated.md) 的截斷發生在 `sii` 頁，`otc` 頁也可能發生），C2、C3 FAIL 時結論不可信。
 
 ## 決策 SQL
 ```sql
@@ -61,7 +61,7 @@ WHERE NOT EXISTS (SELECT 1 FROM pop.mops_quarterly_financials f WHERE f.stk_code
 ```
 
 ### C2 cross-source — 季營收（MOPS t163sb06，百萬元）= 該季三個月月營收合計（TPEx／MOPS t21sc03）（誤差 2%）
-同 Q002 C5，換成上櫃。兩個不同的 MOPS 頁面與 adapter。
+同 [Q002](Q002-growth-revenue-momentum.md) C5，換成上櫃。兩個不同的 MOPS 頁面與 adapter。
 ```sql
 WITH q AS (
   SELECT DISTINCT stk_code, fiscal_year::int AS y, quarter::int AS qtr, revenue_millions
@@ -94,7 +94,7 @@ SELECT count(*) FROM (
 ) c
 ```
 
-### C3 uniqueness — 同一檔同一營收月只出現在一個 as_of（I023 的失效模式，這次在 `otc` 頁）
+### C3 uniqueness — 同一檔同一營收月只出現在一個 as_of（[I023](../issues/I023-mops-revenue-page-truncated.md) 的失效模式，這次在 `otc` 頁）
 ```sql
 SELECT stk_code, latest_month_label, array_agg(as_of ORDER BY as_of) AS as_ofs
 FROM pop.monthly_revenue_twse WHERE stk_code IN ('5483','3105','3264','6488') AND latest_month_label IS NOT NULL
@@ -118,7 +118,7 @@ WHERE stk_code IN ('5483','3105','3264','6488') AND latest_month_value % 1000 <>
 ```
 
 ## 已知限制
-- 2% 門檻同 Q002 C5：季報營收是合併報表、月營收也是合併，但季報可能有期後調整；超過 2% 先查是不是更正公告。
+- 2% 門檻同 [Q002](Q002-growth-revenue-momentum.md) C5：季報營收是合併報表、月營收也是合併，但季報可能有期後調整；超過 2% 先查是不是更正公告。
 - 決策只看年增率，沒有看季節性；上櫃小型股年增率波動大。
 
 ## 歷次結果

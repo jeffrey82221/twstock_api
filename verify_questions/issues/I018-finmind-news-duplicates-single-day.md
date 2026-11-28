@@ -33,7 +33,7 @@ L0：FinMind 的新聞資料以「標題版本＋來源」為單位，同一個 
 
 ## 同類掃描
 
-其他表的實體重複見 I017 的同類掃描與 LEDGER 剖析基線：`company_business_items` 也是上游清單重複（11 家、多 263 列），列為合法。
+其他表的實體重複見 [I017](I017-sbl-window-overlap-duplicates.md) 的同類掃描與 LEDGER 剖析基線：`company_business_items` 也是上游清單重複（11 家、多 263 列），列為合法。
 
 ## 修復方案（待使用者決定）
 

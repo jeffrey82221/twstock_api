@@ -110,7 +110,7 @@ WHERE (e.kind = 'annual' AND NOT EXISTS (
          WHERE m.stk_code = e.stk_code AND m.fiscal_year = e.year AND m.quarter = e.quarter AND m.eps IS NOT NULL))
 ```
 
-### C4 uniqueness — 同一檔同一季只出現在一個 as_of（I019 的失效模式）
+### C4 uniqueness — 同一檔同一季只出現在一個 as_of（[I019](../issues/I019-financial-q3-frozen-as-previous-quarter.md) 的失效模式）
 ```sql
 SELECT stk_code, fiscal_year, quarter, array_agg(as_of ORDER BY as_of) AS as_ofs
 FROM pop.mops_quarterly_financials

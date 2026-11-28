@@ -6,7 +6,7 @@ status: passing
 stocks: ["5483", "3105", "3264"]
 window: {since: 2025-12-05, until: 2026-11-27}
 pop_tables: [sbl_history, raw_sbl_history, ohlcv_daily]
-crawl:                       # 出題時（2026-11-27）三檔都沒有借券資料；日 K 已由 Q024 補到 2025-12 起
+crawl:                       # 出題時（2026-11-27）三檔都沒有借券資料；日 K 已由 [Q024](Q024-otc-semis-per-tpex.md) 補到 2025-12 起
   - seed: sbl_history_monthly_list
     filters: {stk_code: ["5483", "3105", "3264"]}
     order_by: ["month_start_date"]
@@ -38,7 +38,7 @@ FROM s GROUP BY 1 ORDER BY 1
 
 ## 斷言（每句回傳違規列，0 列 = PASS）
 
-### C1 uniqueness — 同一筆還券紀錄只出現在一個 as_of（I017）
+### C1 uniqueness — 同一筆還券紀錄只出現在一個 as_of（[I017](../issues/I017-sbl-window-overlap-duplicates.md)）
 ```sql
 SELECT stk_code, transaction_date, transaction_type, quantity_lots, completion_date,
        array_agg(as_of ORDER BY as_of) AS as_ofs
@@ -102,9 +102,9 @@ WHERE stk_code IN ('5483','3105','3264') AND as_of >= DATE '2025-12-05'
 ```
 
 ## 已知限制
-- `sbl_history` 是「還券」紀錄（t13sa870），不是每日借券賣出餘額；費率反映到期還券那批合約，對近期放空壓力有落後（同 Q009）。
+- `sbl_history` 是「還券」紀錄（t13sa870），不是每日借券賣出餘額；費率反映到期還券那批合約，對近期放空壓力有落後（同 [Q009](Q009-sbl-fee-pressure.md)）。
 - 上櫃股的借券量比上市大型股少，可能有月份沒有任何還券紀錄（raw 回 404）；C4 要求每個取樣月都可用，若違規先確認是不是真的沒有還券（合法無資料，寫進已知限制），不要直接開 issue。
-- 窗口只有 12 個月（2025-12 起），「之前」的基期比 Q009 短。
+- 窗口只有 12 個月（2025-12 起），「之前」的基期比 [Q009](Q009-sbl-fee-pressure.md) 短。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |

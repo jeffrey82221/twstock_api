@@ -40,7 +40,7 @@ Yahoo 的 `Ticker.dividends` 是依之後的配股（記為 split）與其他資
 ## 修復方案
 
 1. `app/yfinance_source.py`：取 `Ticker.splits`，每筆股利乘上「除息日之後所有 split 比例的乘積」還原成實際金額；回應加 `adjusted_for_splits: true`。
-2. 無法反推的情況（2882）列為 L0 已知限制，寫進 Q005「已知限制」與 `db/poc/README.md` 的 dividend_yfinance 章節：實際配發金額以 FinMind（`dividend`）為準。
+2. 無法反推的情況（2882）列為 L0 已知限制，寫進 [Q005](../questions/Q005-income-dividend-consistency.md)「已知限制」與 `db/poc/README.md` 的 dividend_yfinance 章節：實際配發金額以 FinMind（`dividend`）為準。
 3. 重爬：只需 `dividend_event_yfinance_list` 中「除息日之後有 split」的股票的列；需先列出受影響股票（Yahoo 逐檔查 splits）。
 
 ## 修復紀錄（2026-11-25，指令 5）
@@ -52,17 +52,17 @@ Yahoo 的 `Ticker.dividends` 是依之後的配股（記為 split）與其他資
 
 - 直接呼叫：1101 2021-08-12 → 3.368119（FinMind 3.36811984）。
 - 受影響範圍：`dividend_event_yfinance_list` 296 檔中 126 檔在某些事件之後有 split；刪除並重爬這些檔「最後一次 split 之前」的事件 163 列（51 秒、0 錯誤、每次刪除都通過 1:1 驗證）。
-- 斷言：Q005 C1 違規 3 → 2。剩下的 2 列都是 2882（比值 1.0157、Yahoo 沒有 split 紀錄）＝ **L0**，無法在本系統修正。
-- **待使用者決定**：接受 L0 殘留（把 2882 寫進 Q005「已知限制」並讓 C1 排除沒有 split 紀錄的調整），或維持 FAIL 作為「yfinance 股利不可當實際配發金額」的提醒。
+- 斷言：[Q005](../questions/Q005-income-dividend-consistency.md) C1 違規 3 → 2。剩下的 2 列都是 2882（比值 1.0157、Yahoo 沒有 split 紀錄）＝ **L0**，無法在本系統修正。
+- **待使用者決定**：接受 L0 殘留（把 2882 寫進 [Q005](../questions/Q005-income-dividend-consistency.md)「已知限制」並讓 C1 排除沒有 split 紀錄的調整），或維持 FAIL 作為「yfinance 股利不可當實際配發金額」的提醒。
 
 ## 使用者決定（2026-11-25）
 
 **維持 FAIL** 作為「yfinance 股利不可當實際配發金額」的提醒。L1 部分（配股還原）已修好；2882 的 1.0157 倍差異是 Yahoo 本身的資料（L0），本系統不再處理。
-- 本 issue 關閉；Q005 C1 維持 FAIL 是**刻意的**，回歸時 C1 的 2882 違規不算退化，其他股票出現新的違規才算。
+- 本 issue 關閉；[Q005](../questions/Q005-income-dividend-consistency.md) C1 維持 FAIL 是**刻意的**，回歸時 C1 的 2882 違規不算退化，其他股票出現新的違規才算。
 - 決策用途的實際配發金額一律以 FinMind（`pop.dividend`）為準。
 
 ## 附加證據（2026-11-26，指令 7：2330 2007／2008）
 
-Q005 C1 另有 2 列 2330（2007-06-08、2008-07-16）比值 0.995。Yahoo 在這兩天各有一筆 split（1.004999、1.005042），和除息日同一天，對應 0.5% 的小額配股。`split_unadjust_factors` 不乘同日的 split（依據 1101 2022-07-21：同日 split 1.0999，但 yfinance 與 FinMind 完全一致），所以這兩列少乘了 1.005。
+[Q005](../questions/Q005-income-dividend-consistency.md) C1 另有 2 列 2330（2007-06-08、2008-07-16）比值 0.995。Yahoo 在這兩天各有一筆 split（1.004999、1.005042），和除息日同一天，對應 0.5% 的小額配股。`split_unadjust_factors` 不乘同日的 split（依據 1101 2022-07-21：同日 split 1.0999，但 yfinance 與 FinMind 完全一致），所以這兩列少乘了 1.005。
 
-Yahoo 對同日配股是否往回調整現金股利，做法不一致（1101 2022 沒調、2330 2007／2008 有調），無法從 Yahoo 的資料分辨，屬 **L0**，和 2882 同類。Q005 C1 的保留範圍擴大為 2882 與這 2 列 2330。詳見 [runs/2026-11-26_Q005.md](../runs/2026-11-26_Q005.md)。
+Yahoo 對同日配股是否往回調整現金股利，做法不一致（1101 2022 沒調、2330 2007／2008 有調），無法從 Yahoo 的資料分辨，屬 **L0**，和 2882 同類。[Q005](../questions/Q005-income-dividend-consistency.md) C1 的保留範圍擴大為 2882 與這 2 列 2330。詳見 [runs/2026-11-26_Q005.md](../runs/2026-11-26_Q005.md)。
