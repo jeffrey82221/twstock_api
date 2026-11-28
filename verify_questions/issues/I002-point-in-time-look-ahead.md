@@ -13,8 +13,8 @@ found_by: [Q002]
 
 回測時「as_of 當天看得到的資料」不能包含當天尚未公布的數字。目前：
 
-- `monthly_revenue_twse`：as_of = 每月 1 日，卻已有上個月營收（法定期限次月 10 日）。Q002 C3：36／36 列違規。
-- `mops_quarterly_financials`：as_of = 季末日，卻已有當季財報（期限 Q1–Q3 季末後 45 天、Q4 90 天）。Q002 C4：73／73 列違規。
+- `monthly_revenue_twse`：as_of = 每月 1 日，卻已有上個月營收（法定期限次月 10 日）。[Q002](../questions/Q002-growth-revenue-momentum.md) C3：36／36 列違規。
+- `mops_quarterly_financials`：as_of = 季末日，卻已有當季財報（期限 Q1–Q3 季末後 45 天、Q4 90 天）。[Q002](../questions/Q002-growth-revenue-momentum.md) C4：73／73 列違規。
 
 ```sql
 SELECT stk_code, as_of, latest_month_label FROM pop.monthly_revenue_twse
@@ -62,4 +62,4 @@ as_of 被當成「資料期間的基準日」使用，資料庫沒有任何欄�
 - `mops_quarterly_financials`：356 列、**0 列 `available_date > as_of`**，每列 `data_date` = seed 的 `quarter_end`（1 列 8463 2013-Q1 為上市前的正當 404）。
 - `monthly_revenue_twse`：484 列、usable 100%。
 - 直接呼叫：2330 `as_of=2026-11-01` → 2026/09（`available_date` 2026-10-10）；`as_of=2026-11-10` → 2026/10；2330 `as_of=2024-05-10` → 2023 Q4；2882 `as_of=2025-08-20` → 2025 Q1（金融業 Q2 要 8/31）。
-- Q002：**6／6 PASS**（C3、C4 改為獨立重算期限並交叉檢查 `available_date`）。
+- [Q002](../questions/Q002-growth-revenue-momentum.md)：**6／6 PASS**（C3、C4 改為獨立重算期限並交叉檢查 `available_date`）。

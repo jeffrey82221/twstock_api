@@ -43,13 +43,39 @@ def load_crawl(qid: str) -> list[dict]:
     return yaml.safe_load(front).get("crawl") or []
 
 
+def _lit(v) -> str:
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def _since_filter(server, seed: str, filters: dict, column: str, since) -> list:
+    """`since`：crawl_insert_filtered 的 filters 只有 = 與 IN，沒有範圍。先從 hidden.<seed> 列出
+    時間欄 >= since 的值，轉成 IN 清單；否則 budget 會被窗口以外（較舊）的 pending 列吃掉（Q009）。"""
+    where = [f'"{column}" >= {_lit(since)}']
+    for k, v in filters.items():
+        vals = v if isinstance(v, list) else [v]
+        where.append(f'"{k}" IN ({", ".join(_lit(x) for x in vals)})')
+    rows = server.select(f'SELECT DISTINCT "{column}"::text AS v FROM hidden."{seed}" WHERE {" AND ".join(where)}',
+                         limit=5000)
+    return sorted(r["v"] for r in rows)
+
+
 def crawl(qid: str, dry_run: bool) -> list[dict]:
     with contextlib.redirect_stdout(sys.stderr):
         import server
     out = []
     for step in load_crawl(qid):
-        seed, filters, budget = step["seed"], step["filters"], int(step["budget"])
+        seed, filters, budget = step["seed"], dict(step["filters"]), int(step["budget"])
         order_by = step.get("order_by")
+        if step.get("since") is not None:
+            column = step.get("since_column") or order_by[0].split()[0]
+            values = _since_filter(server, seed, filters, column, step["since"])
+            if not values:
+                print(f"{seed:40s} pending=    0 inserted=   0    0.0s （hidden 沒有 {column} >= {step['since']} 的列）",
+                      flush=True)
+                out.append({"seed": seed, "filters": filters, "pending_before": 0, "inserted": 0,
+                            "seconds": 0.0, "errors": []})
+                continue
+            filters[column] = values
         probe = server.crawl_insert_filtered(seed, filters, row_cnt=1, order_by=order_by, dry_run=True)
         rec = {"seed": seed, "filters": filters, "pending_before": probe["pending_matching"],
                "inserted": 0, "seconds": 0.0, "errors": []}

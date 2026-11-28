@@ -1,0 +1,116 @@
+---
+id: Q029
+title: 上櫃 5483、3105、3264 近 4 年配息從除息到發放隔多久？FinMind 和 yfinance 的上櫃除息日與金額一致嗎？
+strategy: income             # §5.1 股利（上櫃邊界）
+status: failing
+stocks: ["5483", "3105", "3264"]
+window: {since: 2023-01-01, until: 2026-11-27}
+pop_tables: [dividend, dividend_yfinance]
+crawl:                       # 出題時（2026-11-27）三檔在兩張股利表都沒有列；3105 的 FinMind 股利歷史也還沒爬
+  - seed: company_finmind_list
+    filters: {stk_code: ["3105"]}
+    budget: 1                # FinMind
+  - seed: dividend_event_list
+    filters: {stk_code: ["5483", "3105", "3264"]}
+    order_by: ["reference_date"]
+    since: 2023-01-01
+    budget: 16               # FinMind；5483 8、3264 4、3105 約 3（合計 17，§8.3 上限 20）
+  - seed: dividend_event_yfinance_list
+    filters: {stk_code: ["5483", "3105", "3264"]}
+    order_by: ["reference_date"]
+    since: 2023-01-01
+    budget: 14               # yfinance；5483 8、3105 3、3264 3
+issues: [I026]
+last_run: 2026-11-27
+---
+
+## 決策情境
+「除息 → 發放」平均 > 45 天 → 除息後現金回流慢，不適合當短期現金流部位；≤ 45 天 → 適合。
+「公告 → 除息」平均 < 10 天 → 除息前可反應的時間太短（要參與除息得提早布局）。C2 FAIL 時金額不可信，C3、C4 FAIL 時天數不可信。
+（2026-11-27 第 11 輪改寫：原本把「公告 → 除息」當成資金卡住的天數，但 `announcement_date` 是除權息公告日，不是董事會決議日，見已知限制。）
+
+## 決策 SQL
+```sql
+SELECT stk_code, count(*) AS n_events,
+       round(avg(cash_ex_dividend_date - announcement_date), 1) AS avg_announce_to_ex_days,
+       round(avg(cash_payment_date - cash_ex_dividend_date), 1) AS avg_ex_to_pay_days,
+       round(sum(cash_dividend) FILTER (WHERE extract(year FROM reference_date) = 2025), 4) AS cash_2025
+FROM (SELECT DISTINCT stk_code, reference_date, announcement_date, cash_ex_dividend_date, cash_payment_date, cash_dividend
+      FROM pop.dividend WHERE stk_code IN ('5483','3105','3264') AND reference_date >= DATE '2023-01-01' AND cash_dividend > 0) d
+GROUP BY stk_code ORDER BY stk_code
+```
+
+## 斷言（每句回傳違規列，0 列 = PASS）
+
+### C1 completeness — 兩個來源的現金除息事件一一對得上（同一除息日；或 3 天內、金額相同——颱風休市時 yfinance 記第一個交易日）
+2026-11-27 第 20 輪加上「3 天內且金額相同」：5483 2024-07-25 TPEx 公告的除息日遇凱米颱風休市（7/24、7/25），yfinance 記成 7/26（第一個交易日），金額相同（§7.3 第 2 步，現實如此）。
+```sql
+WITH f AS (SELECT DISTINCT stk_code, cash_ex_dividend_date AS d, cash_dividend AS c FROM pop.dividend
+           WHERE stk_code IN ('5483','3105','3264') AND reference_date >= DATE '2023-01-01' AND cash_dividend > 0),
+     y AS (SELECT DISTINCT stk_code, reference_date AS d, cash_dividend AS c FROM pop.dividend_yfinance
+           WHERE stk_code IN ('5483','3105','3264') AND reference_date >= DATE '2023-01-01' AND cash_dividend > 0)
+SELECT 'only_finmind' AS side, f.stk_code, f.d AS ex_date, f.c AS cash FROM f
+WHERE NOT EXISTS (SELECT 1 FROM y WHERE y.stk_code = f.stk_code
+                  AND (y.d = f.d OR (abs(y.d - f.d) <= 3 AND abs(y.c - f.c) <= 0.00001)))
+UNION ALL
+SELECT 'only_yfinance', y.stk_code, y.d, y.c FROM y
+WHERE NOT EXISTS (SELECT 1 FROM f WHERE f.stk_code = y.stk_code
+                  AND (f.d = y.d OR (abs(f.d - y.d) <= 3 AND abs(f.c - y.c) <= 0.00001)))
+```
+
+### C2 cross-source — 同一除息日的每股現金股利，FinMind = yfinance（誤差 0.00001 元：yfinance 小數 6 位、FinMind 8 位）
+兩個不同上游與 adapter。[Q014](Q014-cash-dividend-accuracy.md) 已確認兩邊都等於 TWSE 除息結果表的調整後配息率。
+```sql
+SELECT d.stk_code, d.cash_ex_dividend_date, d.cash_dividend AS finmind, y.cash_dividend AS yfinance
+FROM pop.dividend d JOIN pop.dividend_yfinance y ON y.stk_code = d.stk_code AND y.reference_date = d.cash_ex_dividend_date
+WHERE d.stk_code IN ('5483','3105','3264') AND d.reference_date >= DATE '2023-01-01'
+  AND abs(d.cash_dividend - y.cash_dividend) > 0.00001
+```
+可比對列數（必須 > 0，否則 INCONCLUSIVE；補爬後預期 14：yfinance 的事件數）：
+```sql
+SELECT count(*) FROM pop.dividend d JOIN pop.dividend_yfinance y ON y.stk_code = d.stk_code AND y.reference_date = d.cash_ex_dividend_date
+WHERE d.stk_code IN ('5483','3105','3264') AND d.reference_date >= DATE '2023-01-01'
+```
+
+### C3 point-in-time — 公告日不晚於除權息日（看得到除息前就要先公告）
+全表 60 列 0 違規（2026-11-27）。
+```sql
+SELECT stk_code, reference_date, announcement_date, cash_ex_dividend_date, stock_ex_dividend_date
+FROM pop.dividend
+WHERE stk_code IN ('5483','3105','3264') AND reference_date >= DATE '2023-01-01'
+  AND announcement_date > coalesce(cash_ex_dividend_date, stock_ex_dividend_date)
+```
+
+### C4 reasonableness — 現金發放日在除息日之後 90 天內
+全表 52 列有發放日，0 違規（2026-11-27）。台股實務上發放日在除息後約 3–5 週；超過 90 天或早於除息日代表欄位錯置。
+```sql
+SELECT stk_code, reference_date, cash_ex_dividend_date, cash_payment_date
+FROM pop.dividend
+WHERE stk_code IN ('5483','3105','3264') AND reference_date >= DATE '2023-01-01' AND cash_payment_date IS NOT NULL
+  AND (cash_payment_date < cash_ex_dividend_date OR cash_payment_date - cash_ex_dividend_date > 90)
+```
+
+### C5 uniqueness — 同一檔 30 天內只有一個除息事件（兩張表；同 [Q014](Q014-cash-dividend-accuracy.md) C4）
+```sql
+SELECT 'dividend' AS src, a.stk_code, a.reference_date, b.reference_date AS other_date
+FROM (SELECT DISTINCT stk_code, reference_date FROM pop.dividend WHERE stk_code IN ('5483','3105','3264')) a
+JOIN (SELECT DISTINCT stk_code, reference_date FROM pop.dividend WHERE stk_code IN ('5483','3105','3264')) b
+  ON b.stk_code = a.stk_code AND b.reference_date > a.reference_date AND b.reference_date - a.reference_date < 30
+UNION ALL
+SELECT 'dividend_yfinance', a.stk_code, a.reference_date, b.reference_date
+FROM (SELECT DISTINCT stk_code, reference_date FROM pop.dividend_yfinance WHERE stk_code IN ('5483','3105','3264')) a
+JOIN (SELECT DISTINCT stk_code, reference_date FROM pop.dividend_yfinance WHERE stk_code IN ('5483','3105','3264')) b
+  ON b.stk_code = a.stk_code AND b.reference_date > a.reference_date AND b.reference_date - a.reference_date < 30
+```
+
+## 已知限制
+- 與 [Q020](Q020-dividend-dates-two-sources.md) 的差別：三檔都是上櫃。出題時 hidden 裡 3264 的 FinMind 事件 4 個、yfinance 3 個，C1 只比現金股利 > 0 的事件；若差 1 個，先看是不是 [I024](../issues/I024-dividend-rights-issue-as-event.md) 的金額全 0 除權事件或純股票股利。
+- `announcement_date` 是除權息公告日，不是董事會決議日（[Q020](Q020-dividend-dates-two-sources.md) 已知限制）。
+- 補爬前依 README §8.3 規則 6 數 `http_log` 的 FinMind 請求。
+
+- C2 FAIL（5483 2023-01-12：FinMind 3.20 vs yfinance 5.57）與 C1 剩下的 3264 2023-06-20（yfinance 沒有）都是 Yahoo 的資料錯，TPEx 除權除息結果表確認 FinMind 正確（[I026](../issues/I026-yfinance-otc-dividend-wrong-and-missing.md)，L0）。
+
+## 歷次結果
+| 日期 | 結果 | run | 備註 |
+| --- | --- | --- | --- |
+| 2026-11-27 | failing（C1、C2 FAIL） | [run](../runs/2026-11-27_Q029.md) | 開 [I026](../issues/I026-yfinance-otc-dividend-wrong-and-missing.md)（yfinance 上櫃股利錯值與缺事件，L0）；C1 依颱風休市改寫 |

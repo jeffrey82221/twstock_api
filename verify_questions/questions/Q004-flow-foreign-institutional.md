@@ -133,5 +133,5 @@ WHERE stk_code IN ('2330','2317','6488') AND as_of >= DATE '2025-12-05'
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
 | 2026-11-25 | FAIL（C1、C3） | [run](../runs/2026-11-25_Q004.md) | 假日取樣缺；6488 無外資持股 |
-| 2026-11-25 | FAIL（C1、C3） | — | 指令 5 後重跑：C1 違規 9 → 8（I007 重爬中斷，等 I010）；C3 為 I006 |
-| 2026-11-26 | PASS | — | I006 上櫃外資持股、I007／I010 法人重爬完成；C2 舊版欄位以 0 計：5／5 PASS |
+| 2026-11-25 | FAIL（C1、C3） | — | 指令 5 後重跑：C1 違規 9 → 8（[I007](../issues/I007-institutional-weekend-no-fallback.md) 重爬中斷，等 [I010](../issues/I010-t86-failed-day-cached-as-empty.md)）；C3 為 [I006](../issues/I006-otc-foreign-ownership-missing.md) |
+| 2026-11-26 | PASS | — | [I006](../issues/I006-otc-foreign-ownership-missing.md) 上櫃外資持股、[I007](../issues/I007-institutional-weekend-no-fallback.md)／[I010](../issues/I010-t86-failed-day-cached-as-empty.md) 法人重爬完成；C2 舊版欄位以 0 計：5／5 PASS |

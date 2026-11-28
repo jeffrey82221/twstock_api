@@ -26,7 +26,7 @@ WHERE reference_date IS DISTINCT FROM as_of
 - FinMind TaiwanStockDividend 以 `date` 欄過濾 start/end；`date` 是**除權息基準日**，晚於除息日約 5 天（2317 110 年：除息 2022-07-04、`date` 2022-07-10）。
 - `query_dividend` 用 `end_date = as_of` → 除息日當天查不到該次事件。`_pick_dividend` 本身用 `ref <= as_of`，沒有問題。
 - `/dividend?as_of=2022-07-20` 正確回 110 年；`/dividend/yfinance` 沒有這個問題（yfinance 以除息日為索引）。
-- Q005 C1（FinMind 與 yfinance 同一基準日比對）只比對得到錯位後剛好重疊的 32 組，沒有直接暴露。
+- [Q005](../questions/Q005-income-dividend-consistency.md) C1（FinMind 與 yfinance 同一基準日比對）只比對得到錯位後剛好重疊的 32 組，沒有直接暴露。
 
 ## 根因
 
@@ -43,5 +43,5 @@ L1：adapter 把 as_of 直接當上游的 end_date，但上游過濾欄位（基
 2026-11-26：清掉 `job_control.http_cache` 中 41 筆 `/dividend?as_of=` 快取，`pgivm.refresh_immv('pop.raw_dividend')` 再 `pop.dividend`（51 列，FinMind 51 次呼叫，正規化那次全部命中快取，兩表一致）。
 
 - `raw_dividend` 可用 33／51 → 51／51；`reference_date = as_of` 0 → 51／51；`dividend` 無 NULL 現金股利。
-- Q005 C1 可比對組數 32 → 50，違規仍 3（皆為 I003 的 yfinance 還原值，依使用者決定保留 FAIL）。
-- 同時解決 I011 的 FinMind 股利 19 列分歧。
+- [Q005](../questions/Q005-income-dividend-consistency.md) C1 可比對組數 32 → 50，違規仍 3（皆為 [I003](I003-yfinance-dividend-adjusted.md) 的 yfinance 還原值，依使用者決定保留 FAIL）。
+- 同時解決 [I011](I011-raw-and-normalized-immv-diverge.md) 的 FinMind 股利 19 列分歧。

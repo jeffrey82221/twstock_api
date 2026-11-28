@@ -51,7 +51,9 @@ RAW = {
     "raw_dividend": ("dividend", "dividend_event_list",
                      {"stk_code": "stk_code", "reference_date": "as_of"}),
     "raw_dividend_history": ("dividend_history", "company_finmind_list", {"stk_code": "stk_code"}),
-    "raw_dividend_history_yfinance": ("dividend_history", "company_list", {"stk_code": "stk_code"}),
+    # I015 起上游是 company_basic_info_list（db/poc/raw_dividend_history_yfinance.sql）；
+    # 寫成 company_list 會刪掉公司本身、重爬後這張 raw 卻不會重打
+    "raw_dividend_history_yfinance": ("dividend_history", "company_basic_info_list", {"stk_code": "stk_code"}),
     "raw_dividend_yfinance": ("dividend", "dividend_event_yfinance_list",
                               {"stk_code": "stk_code", "reference_date": "as_of"}),
     "raw_quarterly_financials_yfinance": ("financials", "financial_quarter_yfinance_list",

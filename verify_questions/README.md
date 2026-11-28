@@ -81,7 +81,8 @@ curl -s http://localhost:5002/api/health  # API 存活
 verify_questions/
 ├── README.md                   # 本文件：方法與 AI 指令
 ├── DATA_QUALITY_DIMENSIONS.md  # DAMA 資料品質維度的一般定義（§7.1 的依據）
-├── LEDGER.md                   # 總帳：問題狀態、issue 清單、維度矩陣、剖析基線、品質趨勢
+├── LEDGER.md                   # 總帳：問題狀態、issue 清單、維度矩陣、剖析基線、品質趨勢、最近兩輪的盤點發現
+├── LEDGER_HISTORY.md           # 更早的盤點發現（由新到舊）
 ├── questions/                  # 問題卡，一題一檔
 │   └── Q001-valuation-per-percentile.md
 ├── runs/                       # 每次執行一份：補爬紀錄、斷言結果、維度結論、決策資料、結論
@@ -90,8 +91,10 @@ verify_questions/
 │   └── I001-sbl-history-pre2015-404.md
 ├── checks/                     # 可重用的斷言模板（Jinja 參數，同 db/poc 的 {{ schema }} 慣例）
 │   └── ohlcv_daily/ohlc_consistency.sql
-├── snapshot.py                 # 指令 1 盤點：四個 MCP 呼叫＋維度剖析（§7.5）
+├── snapshot.py                 # 指令 1 盤點：四個 MCP 呼叫＋維度剖析（§7.5），和最近一份 snapshot 比較
+├── crawl_card.py               # 指令 3 補爬：依問題卡的 crawl 區塊 dry run → 分批 insert（§8.3 的 row_cnt 上限）
 ├── run_checks.py               # 執行問題卡的決策 SQL 與斷言
+├── upstream_peek.py            # 繞過 adapter 直接看上游原始頁面（準確性抽查、§9.1 診斷）
 ├── retry_failed.py             # 重爬被凍結的上游失敗列（§10.5）
 └── snapshots/                  # 每次盤點的 MCP 原始輸出與剖析
     └── 2026-11-24.json
@@ -104,9 +107,9 @@ verify_questions/
 
 | 步驟 | 做什麼 | 用到的 MCP tool | 產出 |
 | --- | --- | --- | --- |
-| 1 盤點 | 拍下資料庫現況，和上一份比較（`.venv/bin/python verify_questions/snapshot.py` 一次做完四個呼叫與 §7.5 維度剖析，並印出比較） | `crawl_pop_tables`、`pop_raw_quality`、`crawl_status(1440)`、`http_stats(1440)`、`select` | `snapshots/<日期>.json`、LEDGER 品質趨勢、維度矩陣、剖析基線 |
+| 1 盤點 | 拍下資料庫現況，和最近一份比較（`.venv/bin/python verify_questions/snapshot.py` 一次做完四個呼叫與 §7.5 維度剖析，並印出比較；同一天重跑時比的是今天稍早那份，檔案會被覆寫，所以要和 git 裡的版本比時用 `git show HEAD:verify_questions/snapshots/<日期>.json`） | `crawl_pop_tables`、`pop_raw_quality`、`crawl_status(1440)`、`http_stats(1440)`、`select` | `snapshots/<日期>.json`、LEDGER 品質趨勢、維度矩陣、剖析基線 |
 | 2 出題 | 依維度矩陣的空格、覆蓋缺口與策略維度（§5）寫問題卡 | `describe_table`、`select`（確認欄位與現有資料） | `questions/Q###.md`（`status: draft`） |
-| 3 補爬 | 依問題卡的 `crawl` 區塊補資料（規則見 §8） | `select` 看現有 → `crawl_insert_filtered` dry run → 實際寫入 | run 紀錄的「補爬」表 |
+| 3 補爬 | 依問題卡的 `crawl` 區塊補資料（規則見 §8；`.venv/bin/python verify_questions/crawl_card.py Q001 --dry-run` 先看 pending，再拿掉 `--dry-run` 執行） | `select` 看現有 → `crawl_insert_filtered` dry run → 實際寫入 | run 紀錄的「補爬」表 |
 | 4 取數 | 執行問題卡的決策 SQL | `select` | run 紀錄的「決策資料」與結論 |
 | 5 驗證 | 逐一執行斷言，判定 PASS / FAIL / INCONCLUSIVE（`.venv/bin/python verify_questions/run_checks.py Q001 --decision` 一次跑完決策 SQL 與所有斷言，每個斷言旁印出它的 DAMA 維度；印成 `[?]` 代表標籤不在 §7.1，要改），再依維度彙整 | `select` | run 紀錄的「斷言結果」與「維度結論」；失敗依 §7.3 分流 |
 | 6 診斷修復 | 根因分析（§9），修程式並閉環（§10） | `select`（含 `job_control.*`、`hidden.*`）、`poc_rebuild_views`、`pop_check_definitions`、`pop_update_mat_views`、`crawl_delete_rows`、`http_cache_evict`、`crawl_insert_filtered` | `issues/I###.md` 更新、程式 diff、測試結果 |
@@ -177,6 +180,7 @@ crawl:                       # 步驟 3 依序執行；budget = 本題此 seed �
   - seed: ohlcv_monthly_list
     filters: {stk_code: ["2330", "2317"]}
     order_by: ["month_start_date"]
+    since: 2023-11-01        # 選填：只補時間欄 >= since 的列（crawl_card.py 轉成 IN 清單；filters 沒有範圍條件）
     budget: 24
   - seed: mops_quarterly_financials_quarter_list
     filters: {stk_code: ["2330", "2317"]}
@@ -385,6 +389,12 @@ found_by: [Q005]
 
 ## 品質趨勢（每次盤點一行）
 | 日期 | raw 平均 usable%（可取得） | 最低三個 raw（usable%） | 全空欄位數（完整） | 實體重複列數（唯一） | 新開／關閉 issue |
+
+## 最新盤點發現／前次盤點發現
+（指令 1、7 的發現；只留最近兩輪，更早的搬到 LEDGER_HISTORY.md 最前面）
+
+## 重爬紀錄
+| 日期 | seed | filters | 刪除列數 | pinned | 重爬後狀態 | 相關 issue |
 ```
 
 `snapshots/<日期>.json` 的格式是 `{"taken_at": ..., "crawl_pop_tables": [...], "pop_raw_quality": [...], "crawl_status": [...], "http_stats": {...}, "profile": {...}}`。前五項是各 tool 的原始輸出；`profile` 是 §7.5 的剖析：`fields`（每表 `rows` 與每欄 `non_null` 列數）、`entity_dups`（每表的實體鍵、`keys` 重複組數、`extra_rows` 多出的列數）、`latest`（每表最新資料日）。
@@ -441,7 +451,15 @@ WHERE change IS NOT NULL AND close - change > 0
   AND abs(change) > (CASE WHEN trade_date >= DATE '2015-06-01' THEN 0.10 ELSE 0.07 END) * (close - change) + 0.01
 ```
 
-**accuracy**（骨架，不能直接執行）：golden 值由出題的 AI 從管線以外的權威來源取得，每列在註解寫出處與取得日期。不可從 `pop` 抄，否則只是拿自己比自己：
+**accuracy**（骨架，不能直接執行）：golden 值由出題的 AI 從管線以外的權威來源取得，每列在註解寫出處與取得日期。不可從 `pop` 抄，否則只是拿自己比自己。來源優先順序：
+
+1. 交易所／主管機關的結果表，而且和管線用的不是同一個 endpoint（例：TWSE 除權除息計算結果表 `rwd/zh/exRight/TWT49U`，Q014）。
+2. 公司年報、財報新聞稿（Q012 的台積電）。
+3. 新聞轉載的公司公告，至少兩家一致，並在已知限制寫明。
+
+沒有可比的水準值時，管線外的**參考序列**也能驗走勢：Q023 用 TWSE 加權指數（FMTQIK）的月變動驗估算總市值的月變動（比值 ±3%），抓單位錯與漏掉成分股，但不驗水準，標籤用 `reasonableness`。
+
+先確認 golden 和 DB 欄位的**定義相同**：董事會公告的整數股利 ≠ 調整流通股數後的實際配發率（2317 2026 年 7.2 vs 7.171792）；法說會的稀釋 EPS ≠ MOPS 的基本 EPS（2330 2025 年 66.25 vs 66.26）。定義不同時不放進 golden，寫進已知限制。季 EPS 另有一層：Q2–Q4 的單季值是 MOPS 累計值相減得來（I001），和公司直接公布的單季 EPS 會差 ±0.01（2454 2026Q2 15.27 vs 15.28），golden 容許值至少 0.01 並寫明原因（Q034、Q039）。
 
 ```sql
 WITH golden(stk_code, year, eps) AS (VALUES
@@ -458,11 +476,11 @@ WHERE f.eps IS NULL OR abs(f.eps - g.eps) > 0.005
 - 送進 `select` 前去掉 `--` 註解：`select` 會把 SQL 包成子查詢，結尾的註解會吃掉外層的 `) LIMIT`。`checks/` 模板的說明寫在註解裡，代入參數後要先去掉。
 - 回傳的欄位要足以直接診斷：主鍵、日期，以及出問題的值本身，不要只回 `count(*)`。
 - 標題寫成 `### Cn <標籤> — <說明>`，標籤取自 §7.1。
-- 比對類斷言（`internal`、`cross-source`、`temporal`、`unit`、`accuracy`）都要另附「可比對列數」查詢。可比對列數為 0 時，結果是 **INCONCLUSIVE**，不是 PASS。
+- 比對類斷言（`internal`、`cross-source`、`temporal`、`unit`、`accuracy`）都要另附「可比對列數」查詢。可比對列數為 0 時，結果是 **INCONCLUSIVE**，不是 PASS。可比對列數能事先算出來時（檔數 × 期數），寫在問題卡；實際少於預期時，PASS 也要追少掉的是哪幾組，因為缺的那幾組正是沒被驗到的地方（例：Q008 C3 預期 15、實際 12，追到 I023 的截斷頁）。
 - **兩邊要獨立**：比對類斷言的兩邊，不能有一邊是同一段程式由另一邊算出來的，否則必定成立。寫之前查 §9.4 的程式與 adapter 原始碼。已知的推導欄位：`company_valuation` 的 `eps_ttm`＝收盤價 ÷ PER、`bvps`＝收盤價 ÷ PBR、`dps`＝收盤價 × 殖利率；`market_valuation_summary` 的 `market_per`、`market_pbr`、`market_dividend_yield_pct` 由同表的加總欄位算出（都在 `app/valuation_source.py`）。這類比對只是算術檢查，不算任何維度的證據，也不填進維度矩陣。
 - 斷言只讀 `pop`，不讀 `poc`。`poc` view 每次查詢都會打 HTTP，結果不穩定，也會消耗額度。
 - **日期用台北時間**：DB 時區是 UTC，台北時間 00:00–08:00 的 `CURRENT_DATE` 還是前一天。freshness、PIT 這類跟「今天」比的斷言，用 `(now() AT TIME ZONE 'Asia/Taipei')::date`（例：Q011 C6）。只是畫格點上限的 `CURRENT_DATE` 差一天沒有影響，可以不改。
-- 門檻要寫出理由（例如 C5 的 12 天＝春節最長休市），放在斷言標題或「已知限制」。兩邊的單位或小數位不同時，門檻至少是較粗那邊的半個單位（例：百萬元對千元，誤差下限是 0.5 百萬元），小公司用百分比門檻時要特別檢查。
+- 門檻要寫出理由（例如 C5 的 12 天＝春節最長休市），放在斷言標題或「已知限制」。兩邊的單位或小數位不同時，門檻至少是較粗那邊的半個單位（例：百萬元對千元，誤差下限是 0.5 百萬元），小公司用百分比門檻時要特別檢查。先確認上游是四捨五入還是**捨去**：TWSE 外資持股比率是捨去到 0.01%，用 ±0.005 的四捨五入門檻全表 35／88 列誤判，改成單邊區間 `[0, 0.01)` 後 0 違規（Q015 C2）。
 - **規則要先對全表跑一次**：新規則先不限股票對全表執行，確認違規列不是「現實就是如此」。例：「交易日不是週末」不成立，`ohlcv_daily` 有 83 個 2010–2018 年的週六補行交易日。
 
 ### 7.3 斷言失敗後的分流
@@ -572,11 +590,16 @@ seed 的 INSERT 要求**所有欄位 NOT NULL**（[`pipeline.py` `_build_seed_in
 規則：
 
 1. **先看現有**：先用 `select` 查 `pop` 已有的列，能不爬就不爬。
-2. **dry run 再寫入**：看 `pending_matching` 和產生的 SQL，確認在預算內才以 `dry_run=false` 執行。
+2. **dry run 再寫入**：看 `pending_matching` 和產生的 SQL，確認在預算內才以 `dry_run=false` 執行。pending 遠大於 budget 時，先確認 DESC 取到的是窗口內的列：窗口有下限時在 crawl 步驟寫 `since`，否則窗口內補完後 budget 會被更舊的列吃掉（Q009：360 列 pending 全在窗口外）。
 3. **分批**：`row_cnt` 不超過上表，`timeout_seconds=300`。逾時會整批 rollback，此時把 `row_cnt` 減半重試。
-4. **爬完立刻驗可得性**：只看本次 insert 的列的 raw 可用率，不必等整體的 `pop_raw_quality`。
+4. **爬完立刻驗可得性**：只看本次 insert 的列的 raw 可用率，不必等整體的 `pop_raw_quality`。`found=true` 不代表內容完整：上游回 200 但頁面被截斷時，adapter 可能把缺的部分當成「沒資料」（I023）。所以再看一眼本次列的實體鍵有沒有重複（§7.5 的 `ENTITY_KEYS`，例：同一個營收月出現在兩個 as_of）。
 5. **當月的日 K 要重爬才會更新**：`ohlcv_monthly_list` 一列是一整個月，insert 當天就凍結（I021）。題目要用最近幾天的日 K 時，先用 `crawl_delete_rows` 刪掉當月那一列（先 dry run），再 `crawl_insert_filtered` 重爬，每檔 1 次 TWSE／TPEx 呼叫。
-6. **FinMind 先查額度**：先看 `crawl_status(lookback_minutes=60)`。FinMind 系 seed 的 `rows_inserted` 合計超過 200 時，延後這題的 FinMind 補爬。
+6. **FinMind 先查額度**：`crawl_status` 只算 cron（`crawl_runs`），**手動 `crawl_insert_filtered` 不會算進去**（第 11 輪：Q013 剛補爬 17 列 FinMind，`crawl_status` 仍是 0）。改數 `http_log` 裡打 FinMind 系 endpoint 的真實請求，加上 `crawl_status` 的 cron 列數，合計超過 200 時延後這題的 FinMind 補爬：
+   ```sql
+   SELECT count(*) FROM job_control.http_log
+   WHERE started_at > now() - INTERVAL '60 minutes'
+     AND url ~ '/revenue(\?|$)|/dividend(/history)?(\?|$)|/news/finmind|/financials(\?|$)'
+   ```
 7. **不動排程**：除非 issue 的修復步驟需要，不呼叫 `crawl_set_schedule`／`crawl_pause`。
 
 ## 9. 診斷手冊
@@ -593,6 +616,8 @@ seed 的 INSERT 要求**所有欄位 NOT NULL**（[`pipeline.py` `_build_seed_in
 | 時間序列有洞 | `hidden.<seed>` 有沒有產生該格點。有 → 爬取失敗；沒有 → seed 邊界 | L6／L3 |
 | 跨來源不一致 | 找第三方（官網）判定誰對；檢查單位與日期對齊（除息日 vs 基準日、as_of vs data_date） | L1／L5／L7 |
 | 同一 URL 重複請求多 | `http_stats` 的 `repeated_requests` | L4／L6（S4） |
+| 同一實體出現在兩個 as_of、可比對列數少於預期 | 直接打 API 看是不是 API 就回舊的一期；是的話用 `upstream_peek.py` 看上游頁面是否完整（大小、結尾、列數和相鄰期比） | L0＋L1（I023）／L3（I019） |
+| 合計對不上、而且全部偏同一個方向 | `upstream_peek.py` 看上游原始儲存格：adapter 是否丟掉了負數、空白或特殊列 | L1（I022） |
 
 ### 9.2 根因層級
 
@@ -776,6 +801,8 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 
 把下列文字貼給 Claude Code（在本專案目錄）。`<...>` 換成實際值。
 
+**品質提升總結的維護（所有指令共通）**：[`DATA_QUALITY_DIMENSIONS.md`](DATA_QUALITY_DIMENSIONS.md) §4 是各維度的品質提升總結與出題優先序，數字來自 LEDGER、問題卡與 run。任何指令只要改了下列任一項，就要在同一次 commit 重算並更新 §4（做法見該檔 §4.4），不要留到之後：新增或刪除問題卡、問題卡的斷言增減或標籤改變、最新斷言結果改變、issue 開立或 status 改變（含嚴重度、維度）、維度矩陣的格子改變、品質趨勢出現新的量測值。做法：先核對問題卡與最新 run 並更新矩陣，把不適用的格子標 `N/A`，再執行 `.venv/bin/python verify_questions/quality_summary.py`，把輸出貼進 §4.1，重算 §4.3 通過率並依「出題分數」更新「本次快照的判讀」，再更新 §4.2 的「已解決的問題」與可量測改善、檔頭的截止日期與題數／斷言數／issue 數。數字一律用腳本重算，不可只改文字。
+
 ### 指令 0：初始化（只做一次；2026-11-25 已完成，結果見 §10.3）
 
 ```text
@@ -791,7 +818,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 依 verify_questions/README.md §4 步驟 1 盤點資料庫：執行 .venv/bin/python verify_questions/snapshot.py
 （crawl_pop_tables、pop_raw_quality、crawl_status(lookback_minutes=1440)、http_stats(minutes=1440) 加上 §7.5 維度剖析），
 存成 snapshots/<今天>.json。與上一份 snapshot 及 LEDGER「剖析基線」比較，更新 LEDGER.md 的品質趨勢、維度矩陣與剖析基線；
-基線裡還沒分類的欄位與實體重複，依 §7.5 分類。列出：usable% 下降的 raw、新的全空欄位或非空率下降的欄位、
+基線裡還沒分類的欄位與實體重複，依 §7.5 分類。最後依上方「品質提升總結的維護」更新 DATA_QUALITY_DIMENSIONS.md §4。列出：usable% 下降的 raw、新的全空欄位或非空率下降的欄位、
 新出現或變多的實體重複、最新資料日異常的表、維度矩陣的空格（準確、唯一優先）、可疑的新現象（各附一句證據）。
 ```
 
@@ -799,11 +826,11 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 
 ```text
 依 verify_questions/README.md §5 出 <N> 題新問題卡（status: draft），格式照 §6.1。
-優先填 LEDGER 維度矩陣的空格（準確、唯一優先），再來是沒被覆蓋的 pop 表與 §12 的候選 issue。
+優先填 DATA_QUALITY_DIMENSIONS.md §4.3 排在前面的維度與 LEDGER 維度矩陣的空格（準確、唯一優先），再來是沒被覆蓋的 pop 表與 §12 的候選 issue。
 每題照 §5.2：斷言標題用 §7.1 的標籤、至少 3 個 DAMA 維度、至少一道錯值防線（先查 adapter，確認比對的兩邊獨立，§7.2）、
 至少一個邊界案例，補爬量要在 §8.3 預算內。accuracy 的 golden 值從管線以外的權威來源取得，註解寫出處與取得日期。
 門檻依 §7.2 寫出理由；新規則先對全表跑一次。每句 SQL 都先用 select 確認可執行。
-寫完列出清單（標題、策略、覆蓋的表 × 維度、預估補爬列數）給我審，不要補爬。
+寫完更新 DATA_QUALITY_DIMENSIONS.md §4（題數、斷言數、表覆蓋），列出清單（標題、策略、覆蓋的表 × 維度、預估補爬列數）給我審，不要補爬。
 ```
 
 ### 指令 3：執行問題
@@ -812,9 +839,9 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 依 verify_questions/README.md §4 步驟 3–5 執行 <Q###>：
 先 select 現有資料 → 依 §8 補爬（先 dry run，遵守 §8.1 依賴鏈與 §8.3 預算）→ 跑決策 SQL → 跑全部斷言。
 寫 runs/<今天>_<Q###>.md（格式 §6.2），含維度結論：九個維度各是 PASS、FAIL 或未驗證。
-決策結論會觸發動作時（例：列入觀察），對觸發結論的 1–2 個關鍵值做準確性抽查：查官網或公司公告，
+補爬用 crawl_card.py（先 --dry-run）。決策結論會觸發動作時（例：列入觀察），對觸發結論的 1–2 個關鍵值做準確性抽查：查官網或公司公告（MOPS 可用 upstream_peek.py），
 算進 §8.3 預算，上游封鎖時記 INCONCLUSIVE。更新問題卡的 status、last_run、歷次結果，以及 LEDGER（含維度矩陣）。
-斷言失敗依 §7.3 分流，需要時開 issue（格式 §6.3，填 dimension）。不要修改程式。
+斷言失敗依 §7.3 分流，需要時開 issue（格式 §6.3，填 dimension）。最後依「品質提升總結的維護」更新 DATA_QUALITY_DIMENSIONS.md §4（缺陷產出率、通過率）。不要修改程式。
 ```
 
 ### 指令 4：診斷
@@ -836,16 +863,17 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 補上能重現本 issue 的測試 → 跑該層的必跑測試 → 上線（重啟 API 或重建 view／IMMV，先 dry run）→
 依 §10.2 用 crawl_delete_rows 刪壞列（先 dry run）、必要時 http_cache_evict、crawl_insert_filtered 重爬 → 重跑 found_by 所列問題的斷言 →
 確認復發時有東西會報警：某個問題卡的斷言或 §7.5 剖析抓得到這個失效模式，沒有就在 found_by 的問題卡補一個斷言。
-每一步的實際數字寫回 issue；斷言全部通過才把 status 改為 closed。完成後執行指令 8（commit、push、確認 PR check 全過）。
+每一步的實際數字寫回 issue；斷言全部通過才把 status 改為 closed，並更新 DATA_QUALITY_DIMENSIONS.md §4（§4.2 寫該維度可量測的改善，§4.1 的未結負擔與修復率）。完成後執行指令 8（commit、push、確認 PR check 全過）。
 ```
 
 ### 指令 6：回歸
 
 ```text
-依 verify_questions/README.md §4 步驟 7 回歸：對所有 status 為 passing 的問題只跑斷言（不補爬），
+依 verify_questions/README.md §4 步驟 7 回歸：對所有 status 為 passing 的問題只跑斷言（不補爬；run_checks.py --status passing，
+它會先警告問題卡 status 與 LEDGER 不同步的題目，有警告先修正，否則該題會被漏掉），
 再跑 .venv/bin/python verify_questions/snapshot.py --no-save，對照 LEDGER「剖析基線」。
 變成 FAIL 的問題改為 failing；剖析相對基線退化（新的全空欄位、非空率下降、新的實體重複）也算退化。
-兩者都依 §7.3 開 issue 或附加到既有 issue。在 LEDGER 品質趨勢記一行。
+兩者都依 §7.3 開 issue 或附加到既有 issue。在 LEDGER 品質趨勢記一行，並更新 DATA_QUALITY_DIMENSIONS.md §4（通過率、新 issue）。
 ```
 
 ### 指令 7：一輪完整循環
@@ -853,7 +881,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 ```text
 依 verify_questions/README.md 跑一輪：
 §2 前置條件 → 指令 1 → 挑一題（優先順序：failing > 最久未跑的 draft > 最久未跑的 passing；跳過的題見下方）執行指令 3 →
-對新開的 issue 執行指令 4 → draft 少於 3 題時執行指令 2 補 3 題（優先填維度矩陣的空格）。補爬遵守 §8.3。
+對新開的 issue 執行指令 4 → 可跑的 draft（扣掉下方「挑題時跳過」的）少於 3 題時執行指令 2，補到 3 題，但每輪最多 2 題（指令 7 不修 issue，被擋住的 draft 會越積越多，不設上限的話出題會吃掉整輪；優先填維度矩陣的空格）。補爬遵守 §8.3。
 不要執行指令 5，把建議修復的 issue 依 §7.4 嚴重度排好（附維度）列給我。最後執行指令 8（commit、push、確認 PR check 全過）。
 ```
 
@@ -862,6 +890,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 - `failing` 但所有 FAIL 都是使用者決定保留的（寫在問題卡的已知限制，例：Q005 C1）。重跑只會得到同樣結果，視同 `passing`，由指令 6 回歸處理。
 - 決策或斷言依賴一個還沒修好的 issue 的 draft（`issues` 欄有未 closed 的 issue，而且該 issue 讓題目一定 FAIL，例：Q007 依賴 I016）。等 issue 修好再跑，那次執行就是 issue 的驗證。
 - 補爬會打到工作目錄有未 commit 改動的 endpoint 的題目（§2）。
+- 補爬依賴的上游正在出錯、會把錯的回應凍結進 pop 的題目（例：I023 的 MOPS 截斷頁還沒恢復時的 Q013）。先用 `upstream_peek.py` 確認恢復。
 
 跳過的題與理由寫進 LEDGER「最新盤點發現」。
 
@@ -871,7 +900,8 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 
 ```text
 依 verify_questions/README.md 指令 8 提交這次的改動：
-1. 跑該層的必跑測試（至少 `pytest -q` 全綠）。這次改到 db/poc/*.sql 或 db/setting.sql 時，確認 issue 的「db/poc 規則檢查」
+0. 確認 DATA_QUALITY_DIMENSIONS.md §4 已隨這次的問題卡、issue、LEDGER 變動重算（見「品質提升總結的維護」），並一起 stage。
+1. 跑該層的必跑測試（至少 `pytest -q` 全綠）。用 `| tail` 看結果時先 `set -o pipefail`，否則 `&&` 串的 commit 看的是 tail 的結束碼（第 21 輪就因此在 234 個 error 時照樣 commit）。本機記憶體不足時 pgserver 會被 macOS 以 SIGKILL 砍掉（`initdb: program "postgres" is needed` 或 `pg_ctl ... died with SIGKILL`），等記憶體恢復重跑，不要當成程式錯誤。這次改到 db/poc/*.sql 或 db/setting.sql 時，確認 issue 的「db/poc 規則檢查」
    已逐條填好（§10.1），而且 `pytest tests/sql/ -q` 全綠。
    只 stage 這次指令產生的檔案；工作目錄裡不屬於這次的改動（例如使用者進行中的 app/ 修改）不要一起 commit。
 2. git commit（訊息以 `robot:` 開頭，寫明 issue 編號、根因、修法、實測數字），然後 git push 到目前的 feature branch。
@@ -880,7 +910,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 4. 等這次 push 觸發的 CI 跑完（`gh pr checks <PR> --watch`），確認所有 check 都通過。
 5. 有 check 失敗就補救：用 `gh run view <run-id> --log-failed` 找出原因。
    - 程式或測試造成的（包括測試裡寫死、已和新邏輯不一致的值）：修好 → 回到第 1 步，再 commit、push、等 CI。
-   - 上游環境造成的（例如 TWSE／MOPS 對 CI runner 回 307 WAF 封鎖頁、`rate_limited=True`、FinMind 402）：
+   - 上游環境造成的（例如 TWSE／MOPS 對 CI runner 回 307 WAF 封鎖頁、`rate_limited=True`、FinMind 402；或 `test-live-sql` 某個 poc view `Operation timed out after 45001 milliseconds with 0 bytes received`，同一段 log 還有其他 endpoint 的 504——2026-11-27 出現兩次，`c1606a3` 與 `270af87`，都只改了 `verify_questions/`，rerun 後通過；`test-upstream` 的 TPEx OpenAPI `mopsfin_t187ap03_O` 對 runner 回 403 或 525，`1c86c23`、`89c2e89` 連兩次，本機同一 URL 回 200，rerun 後通過）：
      附上 log 證據，用 `gh run rerun <run-id> --failed` 重跑一次；重跑仍失敗才當成程式問題處理。
    重複直到所有 check 都通過。
 6. 把 commit hash、PR 連結、CI 結果（含補救過程）寫回對應的 issue 與 LEDGER。

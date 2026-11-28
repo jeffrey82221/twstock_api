@@ -2,7 +2,7 @@
 id: Q002
 title: 2330、2454、6488 月營收 YoY 是否連續 3 個月 > 20%，且季營收與月營收對得起來？
 strategy: growth
-status: failing
+status: passing
 stocks: ["2330", "2454", "6488"]
 window: {since: 2025-11-01, until: 2026-11-25}
 pop_tables: [monthly_revenue_twse, mops_quarterly_financials]
@@ -21,8 +21,8 @@ crawl:
     filters: {stk_code: ["2330", "2454", "6488"]}
     order_by: ["quarter_end"]
     budget: 18               # MOPS；6 季 × 3 檔
-issues: [I002]
-last_run: 2026-11-25
+issues: []                   # I002 已於 2026-11-26 closed
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -48,7 +48,7 @@ FROM r GROUP BY stk_code
 
 ## 斷言（每句回傳違規列，0 列 = PASS）
 
-### C1 completeness — 每檔每月 10 日（公告期限取樣日，I002）都有一筆有值的月營收
+### C1 completeness — 每檔每月 10 日（公告期限取樣日，[I002](../issues/I002-point-in-time-look-ahead.md)）都有一筆有值的月營收
 ```sql
 WITH e AS (
   SELECT s.stk_code, g::date AS as_of
@@ -145,12 +145,13 @@ SELECT * FROM s WHERE n = 12 AND abs(ttm_value - sum12) > 0.005 * sum12
 
 ## 已知限制
 - C3／C4 用的是法定最晚公布日；公司可能提早公布，所以違規代表「無法保證當時看得到」，不一定是「當時一定看不到」。
-- 2026-11-25 起（I002）API 的 as_of = 當時已公開；月營收 seed 每月 10 日取樣、季報 seed 在公告期限取樣（Q2 用金融業的 8/31）。
+- 2026-11-25 起（[I002](../issues/I002-point-in-time-look-ahead.md)）API 的 as_of = 當時已公開；月營收 seed 每月 10 日取樣、季報 seed 在公告期限取樣（Q2 用金融業的 8/31）。
 - `monthly_revenue_twse` 每列只有「最新月」，歷史月份要靠多列 as_of 拼出來。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
 | 2026-11-25 | FAIL（C3、C4、C5） | [run](../runs/2026-11-25_Q002.md) | 月營收可信；季報累計值、前視 |
-| 2026-11-25 | FAIL（C3、C4） | — | 指令 5 後重跑：C5 PASS（I001 修正）；C3、C4 待 I002 決策 |
-| 2026-11-26 | PASS | — | I002 採選項 B（as_of＝已公布）、取樣改每月 10 日、新增 `available_date`：6／6 PASS |
+| 2026-11-25 | FAIL（C3、C4） | — | 指令 5 後重跑：C5 PASS（[I001](../issues/I001-mops-quarterly-financials-ytd.md) 修正）；C3、C4 待 [I002](../issues/I002-point-in-time-look-ahead.md) 決策 |
+| 2026-11-26 | PASS | — | [I002](../issues/I002-point-in-time-look-ahead.md) 採選項 B（as_of＝已公布）、取樣改每月 10 日、新增 `available_date`：6／6 PASS |
+| 2026-11-27 | PASS（回歸 6／6） | — | 第 9 輪發現 front matter 沒有隨 11-26 的 PASS 更新（status 仍是 failing），指令 6 回歸一直漏跑；補正 status、issues、last_run |

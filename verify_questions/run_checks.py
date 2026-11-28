@@ -127,6 +127,25 @@ def run_card(card: dict, with_decision: bool = False) -> dict:
     return out
 
 
+def ledger_mismatches(cards: list[dict]) -> list[str]:
+    """問題卡的 status 與 LEDGER「問題」表不一致的題目。
+
+    兩邊不同步時，`--status passing`（指令 6 回歸）會漏掉題目：Q002 在 2026-11-26 修好後
+    LEDGER 寫 passing、問題卡仍是 failing，回歸一直沒跑到它（第 9 輪才發現）。"""
+    path = os.path.join(HERE, "LEDGER.md")
+    if not os.path.exists(path):
+        return []
+    ledger = {}
+    for m in re.finditer(r"^\| \[(Q\d+)\]\([^)]*\) \| [^|]* \| [^|]* \| ([a-z]+)", open(path, encoding="utf-8").read(), re.M):
+        ledger[m.group(1)] = m.group(2)
+    out = []
+    for c in cards:
+        qid, status = c["meta"].get("id"), c["meta"].get("status")
+        if qid in ledger and ledger[qid] != status:
+            out.append(f"{qid}: 問題卡 status={status}，LEDGER={ledger[qid]}")
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("ids", nargs="*")
@@ -137,6 +156,8 @@ def main() -> None:
     args = ap.parse_args()
     paths = sorted(glob.glob(os.path.join(HERE, "questions", "Q*.md")))
     cards = [parse_card(p) for p in paths]
+    for w in ledger_mismatches(cards):
+        print(f"WARN status 不同步 {w}", file=sys.stderr)
     if not args.all:
         if args.status:
             cards = [c for c in cards if c["meta"].get("status") == args.status]

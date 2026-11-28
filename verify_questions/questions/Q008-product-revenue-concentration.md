@@ -2,7 +2,7 @@
 id: Q008
 title: 1402、2308、3045、2882、1519 的營收是否過度集中在單一產品？產品營收和月營收對得起來嗎？
 strategy: industry
-status: draft
+status: failing
 stocks: ["1402", "2308", "3045", "2882", "1519"]
 window: {since: 2026-08-01, until: 2026-11-26}
 pop_tables: [product_revenue, monthly_revenue_twse, company_business_items, chain_info_list, company_basic_info_list]
@@ -20,9 +20,10 @@ crawl:
   - seed: financial_month_twse_list
     filters: {stk_code: ["1402", "2308", "3045", "2882", "1519"]}
     order_by: ["as_of_date"]
+    since: 2026-09-10        # crawl_card.py：只補窗口內的取樣月
     budget: 15               # TWSE／MOPS t21sc03；2026-09-10、10-10、11-10 → 8、9、10 月營收
-issues: []
-last_run: null
+issues: [I022]
+last_run: 2026-11-27
 ---
 
 ## 決策情境
@@ -60,13 +61,13 @@ GROUP BY stk_code, ym
 HAVING abs(sum(amount) - COALESCE(max(sales_return), 0) - max(total_revenue)) > 0.01 * max(total_revenue)
 ```
 
-### C2 validity — 各產品占比合計 = 100%（±1 個百分點），且每項介於 0 與 100
+### C2 validity — 名次是 (1)–(10) 或「其他」、名稱非空、金額非 0、營收淨額非負（單項占比不設上下限：MOPS 允許負數項目，金融業單項可超過營收淨額）
 ```sql
-SELECT stk_code, ym, sum(percentage) AS sum_pct, min(percentage) AS min_pct, max(percentage) AS max_pct
+SELECT stk_code, ym, rank, name, amount, total_revenue
 FROM pop.product_revenue
 WHERE stk_code IN ('1402','2308','3045','2882','1519')
-GROUP BY stk_code, ym
-HAVING abs(sum(percentage) - 100) > 1 OR min(percentage) < 0 OR max(percentage) > 100
+  AND (rank !~ '^(\(([1-9]|10)\)|其他)$' OR coalesce(btrim(name), '') = '' OR amount IS NULL OR amount = 0
+       OR total_revenue IS NULL OR total_revenue < 0 OR report_month IS NULL)
 ```
 
 ### C3 cross-source — 產品營收合計（MOPS t05st08）= 同月月營收（TWSE／MOPS t21sc03）（誤差 2%，兩者單位都是元）
@@ -106,10 +107,14 @@ HAVING count(*) > 1
 ```
 
 ## 已知限制
-- 出題時（2026-11-26）全表已有 16 組（stk_code, ym）違反 C1／C2，集中在金融業（兌換損益等科目可能為負）與集團企業（1402 可能有內部銷貨沖銷）。要確認是解析時漏了負數列（L1），還是 MOPS 本來就只列前幾名（L7），執行後再診斷。
+- C1 FAIL 的根因已確認是 adapter 丟掉負數項目（[I022](../issues/I022-product-revenue-negative-items-dropped.md)，L1），不是 MOPS 只列前幾名。
+- MOPS 的產品列可以是負數：一般公司是「產品別調整」（1519 112/06 的備註原文），金融業是損失科目；金融業的單項也會超過營收淨額（2882 115/10 利息淨收益 > 營收淨額）。所以 C2 不限制單項占比範圍（2026-11-27 改寫，原寫法「每項介於 0 與 100」不符合現實），占比加總交給 C1。
+- 決策門檻「第一大產品 > 70%」對金融業沒有意義（收益科目有正有負），金融業的集中度結論一律不採用。
+- C3 的可比對列數預期 = 檔數 × 月數（本題 15）。少於預期時要追：2026-11-27 只有 12，追到 [I023](../issues/I023-mops-revenue-page-truncated.md)（月營收缺 9 月）。
 - 2882 為金融業，「產品」是收益科目；C1／C2 若只在金融業 FAIL，先查 MOPS 原始頁面。
 - `rank` 欄的「其他」列不在 1..N 名次內，C5 仍要求唯一。
 
 ## 歷次結果
 | 日期 | 結果 | run | 備註 |
 | --- | --- | --- | --- |
+| 2026-11-27 | failing（C1 FAIL，其餘 PASS） | [run](../runs/2026-11-27_Q008.md) | 開 [I022](../issues/I022-product-revenue-negative-items-dropped.md)、[I023](../issues/I023-mops-revenue-page-truncated.md)；C2 依現實改寫；1519 變壓器 78.27% → 單一產品集中 |

@@ -36,7 +36,7 @@ WHERE stk_code = '2330' AND as_of >= DATE '2025-12-05' ORDER BY as_of
 1. `institutional_source.get_institutional_net_buy_sell`：payload 為空時往前回溯，最多 10 個日曆日（全市場 payload 依日期磁碟快取，跨股共用）；`row.trade_date` 為實際交易日，頂層 `trade_date` 維持查詢日（seed 主鍵不變）。回溯 10 天仍無資料才回 `row=None`。
 2. rule 18：欄位不變 → 就地修正。
 3. 測試：`tests/source/` 新增 institutional 的回溯案例（目前沒有專屬 source 測試）。
-4. 重爬：`raw_institutional_net_buy_sell` 中 `row` 為 null 的列（目前 Q004 三檔 9 列；全表需先查）。
+4. 重爬：`raw_institutional_net_buy_sell` 中 `row` 為 null 的列（目前 [Q004](../questions/Q004-flow-foreign-institutional.md) 三檔 9 列；全表需先查）。
 
 ## 修復紀錄（2026-11-25，指令 5）
 
@@ -47,11 +47,11 @@ WHERE stk_code = '2330' AND as_of >= DATE '2025-12-05' ORDER BY as_of
 
 - 直接呼叫：2330 2026-09-05（週六）→ `data_date` 2026-09-04、合計 1,969,801。
 - 重爬（**未完成**）：`row` 為空的 raw 列共 448 列（112 個日期），crawl_delete_rows 全部刪除（pin、0 次 API）。重新 insert 到 288 列時發現：
-  1. 大部分空列其實是**交易日**（例：2017-06-05 週一），不是假日，根因是 I010（T86 把失敗回應快取成空的交易日）；
+  1. 大部分空列其實是**交易日**（例：2017-06-05 週一），不是假日，根因是 [I010](I010-t86-failed-day-cached-as-empty.md)（T86 把失敗回應快取成空的交易日）；
   2. 回溯為這些日期增加 TWSE 請求，TWSE 開始回封鎖頁（`contactPhone` HTML、T86 直接請求 307），已停止重爬。
-- 現況：288 列已重新 insert（多數仍空，等 I010）、160 列在 hidden 中待爬（原本就是空資料，沒有遺失有效資料）。Q004 C1 違規 9 → 8。
-- 下一步：等 TWSE 解封 → 先修 I010 → 清掉錯誤的空快取 → 再依 §10.2 重爬這 448 列。
+- 現況：288 列已重新 insert（多數仍空，等 [I010](I010-t86-failed-day-cached-as-empty.md)）、160 列在 hidden 中待爬（原本就是空資料，沒有遺失有效資料）。[Q004](../questions/Q004-flow-foreign-institutional.md) C1 違規 9 → 8。
+- 下一步：等 TWSE 解封 → 先修 [I010](I010-t86-failed-day-cached-as-empty.md) → 清掉錯誤的空快取 → 再依 §10.2 重爬這 448 列。
 
 （2026-11-26，重建後）
 - 指令 5 中斷時尚未重爬的列（不在備份中）以 `crawl_insert_filtered` 補 8 列（2330／2317／6488 的 2026-04-05、07-05、09-05，全為週末取樣日）→ 全部回溯到前一個交易日。
-- Q004 C1 PASS。
+- [Q004](../questions/Q004-flow-foreign-institutional.md) C1 PASS。
