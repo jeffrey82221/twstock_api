@@ -6,7 +6,7 @@ status: passing
 stocks: ["2454"]
 window: {since: 2025-01-01, until: 2026-09-30}
 pop_tables: [mops_quarterly_financials]
-crawl: []                    # 出題時（2026-11-28）2454 2023Q1–2026Q3 由 [Q012](Q012-annual-eps-accuracy.md) 補過
+crawl: []                    # 出題時（2026-11-28）2454 2023Q1–2026Q3 由 Q012 補過
 issues: []
 last_run: 2026-11-28
 ---

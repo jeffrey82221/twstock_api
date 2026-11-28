@@ -6,7 +6,7 @@ status: passing
 stocks: ["2330", "2317", "2454"]
 window: {since: 2025-01-01, until: 2026-01-01}
 pop_tables: [raw_yearly_financials, mops_quarterly_financials]
-crawl:                       # 出題時（2026-11-27）raw_yearly_financials 全表只有 4 列；這三檔的 MOPS 季報由 [Q012](Q012-annual-eps-accuracy.md) 補過
+crawl:                       # 出題時（2026-11-27）raw_yearly_financials 全表只有 4 列；這三檔的 MOPS 季報由 Q012 補過
   - seed: financial_year_list
     filters: {stk_code: ["2330", "2317", "2454"]}
     order_by: ["year_start_date"]

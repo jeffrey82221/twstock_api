@@ -6,7 +6,7 @@ status: passing
 stocks: []                   # 市場層級
 window: {since: 2025-11-05, until: 2026-11-27}
 pop_tables: [market_valuation_summary]
-crawl: []                    # 出題時（2026-11-27）2017-05 起每月都已在 pop（[Q006](Q006-market-per-percentile.md) C1）
+crawl: []                    # 出題時（2026-11-27）2017-05 起每月都已在 pop（Q006 C1）
 issues: []
 last_run: 2026-11-27
 ---

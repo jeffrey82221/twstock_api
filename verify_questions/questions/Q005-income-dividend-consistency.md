@@ -7,7 +7,7 @@ stocks: ["2330", "2317", "2882", "1101"]
 window: {since: 2021, until: 2026-11-25}
 pop_tables: [dividend, dividend_yfinance, company_valuation]
 crawl:
-  - seed: company_list                       # 1101 尚未進母體（[Q003](Q003-quality-roe-debt.md) 會先補）
+  - seed: company_list                       # 1101 尚未進母體（Q003 會先補）
     filters: {stk_code: "1101"}
     budget: 1
   - seed: company_finmind_list

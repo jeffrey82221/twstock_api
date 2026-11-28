@@ -11,7 +11,7 @@ crawl:                       # 出題時（2026-11-27）三檔在兩張表都沒
     filters: {stk_code: ["5483", "3105", "3264"]}
     order_by: ["month_start_date"]
     since: 2025-12-05
-    budget: 36               # TPEx qfii（[I006](../issues/I006-otc-foreign-ownership-missing.md)）；3 檔 × 12 個月
+    budget: 36               # TPEx qfii（I006）；3 檔 × 12 個月
   - seed: institutional_monthly_list
     filters: {stk_code: ["5483", "3105", "3264"]}
     order_by: ["month_start_date"]

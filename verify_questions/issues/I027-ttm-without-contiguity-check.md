@@ -1,6 +1,6 @@
 ---
 id: I027
-title: TTM 取「最近 N 個有資料的期」而不檢查是否連續，上游缺一期時 TTM 會跨 N＋1 期（FinMind 季財報 2 列、[I023](I023-mops-revenue-page-truncated.md) 的月營收也是這個機制）
+title: TTM 取「最近 N 個有資料的期」而不檢查是否連續，上游缺一期時 TTM 會跨 N＋1 期（FinMind 季財報 2 列、I023 的月營收也是這個機制）
 severity: S1                 # 值看起來正常；目前實際受影響的只有 2001-01-01 的 2 列，但機制在三個 TTM 計算都有
 dimension: 一致性
 layer: L1（＋L0：上游缺期）

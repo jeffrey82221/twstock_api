@@ -6,7 +6,7 @@ status: passing
 stocks: ["2330", "2317", "6488"]
 window: {since: 2026-05-31, until: 2026-11-27}   # 最近 180 天
 pop_tables: [ohlcv_daily, sbl_history]
-crawl:                       # 出題時三檔近 180 天各 121 個交易日；當月那列要重爬才會更新（[I021](../issues/I021-ohlcv-current-month-frozen.md)）
+crawl:                       # 出題時三檔近 180 天各 121 個交易日；當月那列要重爬才會更新（I021）
   - seed: ohlcv_monthly_list
     filters: {stk_code: ["2330", "2317", "6488"]}
     order_by: ["month_start_date"]

@@ -6,7 +6,7 @@ status: passing
 stocks: ["2330", "2317", "6488", "2454"]
 window: {since: 2026-06-05, until: 2026-11-27}
 pop_tables: [institutional_net_buy_sell, ohlcv_daily]
-crawl:                       # 出題時（2026-11-27）四檔近 6 個月的法人取樣與日 K 應已齊（[Q004](Q004-flow-foreign-institutional.md)、[Q011](Q011-technical-ma60-volatility.md)、[Q015](Q015-flow-foreign-ratio-internal.md)、[Q016](Q016-valuation-pbr-percentile.md) 補過）
+crawl:                       # 出題時（2026-11-27）四檔近 6 個月的法人取樣與日 K 應已齊（Q004、Q011、Q015、Q016 補過）
   - seed: institutional_monthly_list
     filters: {stk_code: ["2330", "2317", "6488", "2454"]}
     order_by: ["month_start_date"]

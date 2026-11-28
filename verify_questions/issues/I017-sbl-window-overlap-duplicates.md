@@ -1,7 +1,7 @@
 ---
 id: I017
 title: 借券相鄰兩次取樣的 31 日視窗重疊，同一筆還券紀錄被兩個 as_of 各存一次
-severity: S2                 # 預設 S1（重複計入決策），實測 [Q004](../questions/Q004-flow-foreign-institutional.md) 只偏 0.3–2.6%、結論不變，降為 S2
+severity: S2                 # 預設 S1（重複計入決策），實測 Q004 只偏 0.3–2.6%、結論不變，降為 S2
 dimension: 唯一性
 layer: L1（adapter 視窗）／L5 可修
 status: closed

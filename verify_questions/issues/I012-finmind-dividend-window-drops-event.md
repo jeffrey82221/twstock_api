@@ -6,7 +6,7 @@ layer: L1（adapter：query_dividend 取數窗口）
 status: closed
 pop_tables: [raw_dividend, dividend]
 seeds: [dividend_event_list]
-found_by: [2026-11-26 [I011](I011-raw-and-normalized-immv-diverge.md) 調查 raw_dividend 時發現]
+found_by: [2026-11-26 I011 調查 raw_dividend 時發現]
 ---
 
 ## 症狀（附可重現的 SQL）

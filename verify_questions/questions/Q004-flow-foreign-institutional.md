@@ -19,7 +19,7 @@ crawl:
     filters: {stk_code: ["2330", "2317", "6488"]}
     order_by: ["month_start_date"]
     budget: 36               # TWSE t13sa870
-issues: [I006, [I007](../issues/I007-institutional-weekend-no-fallback.md), I010]
+issues: [I006, I007, I010]
 last_run: 2026-11-26
 ---
 
