@@ -34,9 +34,11 @@ def main():
     ledger = open(os.path.join(HERE, "LEDGER.md"), encoding="utf-8").read()
 
     assertions = collections.Counter()
+    tags = collections.Counter()
     for f in glob.glob(os.path.join(HERE, "questions", "Q*.md")):
         for m in re.finditer(r"^### C\d+ ([\w-]+)", open(f, encoding="utf-8").read(), re.M):
             assertions[TAG_TO_DIM[m.group(1)]] += 1
+            tags[m.group(1)] += 1
 
     issues = collections.defaultdict(lambda: [0, 0, 0])  # 已修、未結、未結負擔
     ids = set()
@@ -72,6 +74,9 @@ def main():
     total_yield = len(ids) / sum(assertions.values())
     avg_burden = sum(v[2] for v in issues.values()) / len(DIMS)
 
+    # 獨立性：標籤為 accuracy（對照管線外 golden 值）或 cross-source（兩個來源）的斷言數，
+    # 只有準確、一致兩個維度有這類標籤；cross-source 無法從標籤判斷兩邊是否真的獨立（README §7.2）
+    indep = {"準確": tags["accuracy"], "一致": tags["cross-source"]}
     print(f"{rows} 張表、{sum(assertions.values())} 條斷言、{len(ids)} 個 issue；平均未結負擔 {avg_burden:.1f}\n")
     print("| 維度 | 斷言數 | 表覆蓋（有斷言／適用） | 覆蓋缺口 | 最近結果 ✓／✗ | Issue（已修／未結） | 未結負擔 | 缺陷產出率 | 後果係數 | **出題分數** | 先修？ |")
     print("| --- | ---: | ---: | ---: | --- | --- | ---: | ---: | ---: | ---: | --- |")
@@ -88,6 +93,10 @@ def main():
         print(f"| {FULL[d]} | {assertions[d]} | {cover[d]}／{applicable[d]} | {gap:.0%} "
               f"| {ok[d]}／{bad[d]} | {fixed + opened}（{fixed}／{opened}） | {burden} "
               f"| {yld:.0%} | {CONSEQUENCE[d]} | **{score:.2f}** | {flag} |")
+    print()
+    for d, n in indep.items():
+        print(f"獨立性 {FULL[d]}：{n}／{assertions[d]} = {n / assertions[d]:.0%}")
+    print(f"一致性各標籤：" + "、".join(f"{t} {tags[t]}" for t in ("internal", "cross-source", "temporal", "unit", "consistency")))
 
 
 if __name__ == "__main__":
