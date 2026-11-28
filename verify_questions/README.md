@@ -801,6 +801,8 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 
 把下列文字貼給 Claude Code（在本專案目錄）。`<...>` 換成實際值。
 
+**品質提升總結的維護（所有指令共通）**：[`DATA_QUALITY_DIMENSIONS.md`](DATA_QUALITY_DIMENSIONS.md) §4 是各維度的品質提升總結與出題優先序，數字來自 LEDGER 與問題卡。任何指令只要改了下列任一項，就要在同一次 commit 重算並更新 §4（做法見該檔 §4.4），不要留到之後：新增或刪除問題卡、問題卡的斷言增減或標籤改變、issue 開立或 status 改變（含嚴重度、維度）、維度矩陣的格子改變、品質趨勢出現新的量測值。更新內容：§4.1 的表、§4.2 該維度的「已解決的問題」與可量測改善、§4.3 的排序與「下一步」（排序依 KPI 重新判斷，不是照抄上一版）、檔頭的截止日期與題數／斷言數／issue 數。數字要重算，不可只改文字。
+
 ### 指令 0：初始化（只做一次；2026-11-25 已完成，結果見 §10.3）
 
 ```text
@@ -816,7 +818,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 依 verify_questions/README.md §4 步驟 1 盤點資料庫：執行 .venv/bin/python verify_questions/snapshot.py
 （crawl_pop_tables、pop_raw_quality、crawl_status(lookback_minutes=1440)、http_stats(minutes=1440) 加上 §7.5 維度剖析），
 存成 snapshots/<今天>.json。與上一份 snapshot 及 LEDGER「剖析基線」比較，更新 LEDGER.md 的品質趨勢、維度矩陣與剖析基線；
-基線裡還沒分類的欄位與實體重複，依 §7.5 分類。列出：usable% 下降的 raw、新的全空欄位或非空率下降的欄位、
+基線裡還沒分類的欄位與實體重複，依 §7.5 分類。最後依上方「品質提升總結的維護」更新 DATA_QUALITY_DIMENSIONS.md §4。列出：usable% 下降的 raw、新的全空欄位或非空率下降的欄位、
 新出現或變多的實體重複、最新資料日異常的表、維度矩陣的空格（準確、唯一優先）、可疑的新現象（各附一句證據）。
 ```
 
@@ -824,11 +826,11 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 
 ```text
 依 verify_questions/README.md §5 出 <N> 題新問題卡（status: draft），格式照 §6.1。
-優先填 LEDGER 維度矩陣的空格（準確、唯一優先），再來是沒被覆蓋的 pop 表與 §12 的候選 issue。
+優先填 DATA_QUALITY_DIMENSIONS.md §4.3 排在前面的維度與 LEDGER 維度矩陣的空格（準確、唯一優先），再來是沒被覆蓋的 pop 表與 §12 的候選 issue。
 每題照 §5.2：斷言標題用 §7.1 的標籤、至少 3 個 DAMA 維度、至少一道錯值防線（先查 adapter，確認比對的兩邊獨立，§7.2）、
 至少一個邊界案例，補爬量要在 §8.3 預算內。accuracy 的 golden 值從管線以外的權威來源取得，註解寫出處與取得日期。
 門檻依 §7.2 寫出理由；新規則先對全表跑一次。每句 SQL 都先用 select 確認可執行。
-寫完列出清單（標題、策略、覆蓋的表 × 維度、預估補爬列數）給我審，不要補爬。
+寫完更新 DATA_QUALITY_DIMENSIONS.md §4（題數、斷言數、表覆蓋），列出清單（標題、策略、覆蓋的表 × 維度、預估補爬列數）給我審，不要補爬。
 ```
 
 ### 指令 3：執行問題
@@ -839,7 +841,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 寫 runs/<今天>_<Q###>.md（格式 §6.2），含維度結論：九個維度各是 PASS、FAIL 或未驗證。
 補爬用 crawl_card.py（先 --dry-run）。決策結論會觸發動作時（例：列入觀察），對觸發結論的 1–2 個關鍵值做準確性抽查：查官網或公司公告（MOPS 可用 upstream_peek.py），
 算進 §8.3 預算，上游封鎖時記 INCONCLUSIVE。更新問題卡的 status、last_run、歷次結果，以及 LEDGER（含維度矩陣）。
-斷言失敗依 §7.3 分流，需要時開 issue（格式 §6.3，填 dimension）。不要修改程式。
+斷言失敗依 §7.3 分流，需要時開 issue（格式 §6.3，填 dimension）。最後依「品質提升總結的維護」更新 DATA_QUALITY_DIMENSIONS.md §4（缺陷產出率、通過率）。不要修改程式。
 ```
 
 ### 指令 4：診斷
@@ -861,7 +863,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 補上能重現本 issue 的測試 → 跑該層的必跑測試 → 上線（重啟 API 或重建 view／IMMV，先 dry run）→
 依 §10.2 用 crawl_delete_rows 刪壞列（先 dry run）、必要時 http_cache_evict、crawl_insert_filtered 重爬 → 重跑 found_by 所列問題的斷言 →
 確認復發時有東西會報警：某個問題卡的斷言或 §7.5 剖析抓得到這個失效模式，沒有就在 found_by 的問題卡補一個斷言。
-每一步的實際數字寫回 issue；斷言全部通過才把 status 改為 closed。完成後執行指令 8（commit、push、確認 PR check 全過）。
+每一步的實際數字寫回 issue；斷言全部通過才把 status 改為 closed，並更新 DATA_QUALITY_DIMENSIONS.md §4（§4.2 寫該維度可量測的改善，§4.1 的未結負擔與修復率）。完成後執行指令 8（commit、push、確認 PR check 全過）。
 ```
 
 ### 指令 6：回歸
@@ -871,7 +873,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 它會先警告問題卡 status 與 LEDGER 不同步的題目，有警告先修正，否則該題會被漏掉），
 再跑 .venv/bin/python verify_questions/snapshot.py --no-save，對照 LEDGER「剖析基線」。
 變成 FAIL 的問題改為 failing；剖析相對基線退化（新的全空欄位、非空率下降、新的實體重複）也算退化。
-兩者都依 §7.3 開 issue 或附加到既有 issue。在 LEDGER 品質趨勢記一行。
+兩者都依 §7.3 開 issue 或附加到既有 issue。在 LEDGER 品質趨勢記一行，並更新 DATA_QUALITY_DIMENSIONS.md §4（通過率、新 issue）。
 ```
 
 ### 指令 7：一輪完整循環
@@ -898,6 +900,7 @@ python verify_questions/retry_failed.py raw_monthly_revenue_twse --apply --inclu
 
 ```text
 依 verify_questions/README.md 指令 8 提交這次的改動：
+0. 確認 DATA_QUALITY_DIMENSIONS.md §4 已隨這次的問題卡、issue、LEDGER 變動重算（見「品質提升總結的維護」），並一起 stage。
 1. 跑該層的必跑測試（至少 `pytest -q` 全綠）。用 `| tail` 看結果時先 `set -o pipefail`，否則 `&&` 串的 commit 看的是 tail 的結束碼（第 21 輪就因此在 234 個 error 時照樣 commit）。本機記憶體不足時 pgserver 會被 macOS 以 SIGKILL 砍掉（`initdb: program "postgres" is needed` 或 `pg_ctl ... died with SIGKILL`），等記憶體恢復重跑，不要當成程式錯誤。這次改到 db/poc/*.sql 或 db/setting.sql 時，確認 issue 的「db/poc 規則檢查」
    已逐條填好（§10.1），而且 `pytest tests/sql/ -q` 全綠。
    只 stage 這次指令產生的檔案；工作目錄裡不屬於這次的改動（例如使用者進行中的 app/ 修改）不要一起 commit。
